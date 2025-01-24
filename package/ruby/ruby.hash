@@ -1,0 +1,7 @@
+# https://www.ruby-lang.org/en/news/2024/09/03/3-3-5-released/
+sha512  dd5c6a7f74854e143e0ca46b9d7c0d1983fc4886f5f733cd108345dbf4b21f61ad978ad6806e05a57b7af28fd9216dd38d7145808188bbb3695a7f3a4eda3883  ruby-3.3.5.tar.xz
+
+# License files, Locally calculated
+sha256  e849b28d324423e636a3e6bc5d583cdaf4bd046c2b20872c53886b612d01a4a1  LEGAL
+sha256  967586d538a28955ec2541910cf63c5ac345fcdea94bfb1f1705a1f6eb36bcbb  COPYING
+sha256  36a9a6e7347214bbba599a412617204e65bff065dcbe5c46f5cb454c80de9eb0  BSDL
