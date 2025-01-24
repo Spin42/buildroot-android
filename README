@@ -1,3 +1,25 @@
+# Buildroot for Fairphone2
+
+## Prerequisite
+
+Make sure lk2nd is flashed on the boot partition.
+
+1. Download latest lk2nd image here: [lk2nd-msm8974.img](https://github.com/msm8916-mainline/lk2nd/releases/download/20.0/lk2nd-msm8974.img)
+2. Reboot your fp2 in fastboot mode.
+3. Run `fastboot flash boot lk2nd.img`
+4. Reboot your phone.
+
+## Build the buildroot system
+
+1. Run `make fairphone2_defconfig`
+2. Run `make all`
+3. Reboot your fp2 in fastboot mode.
+4. Run `fastboot flash userdata output/images/sdcard.img`
+5. Reboot your phone
+6. Plug a keyboard to your fp2
+
+## Standard buildroot README
+
 Buildroot is a simple, efficient and easy-to-use tool to generate embedded
 Linux systems through cross-compilation.
 
