@@ -6,7 +6,7 @@ Make sure lk2nd is flashed on the boot partition.
 
 1. Download latest lk2nd image here: [lk2nd-msm8974.img](https://github.com/msm8916-mainline/lk2nd/releases/download/20.0/lk2nd-msm8974.img)
 2. Reboot your fp2 in fastboot mode.
-3. Run `fastboot flash boot lk2nd.img`
+3. Run `fastboot flash boot lk2nd-msm8974.img`
 4. Reboot your phone.
 
 ## Build the buildroot system
