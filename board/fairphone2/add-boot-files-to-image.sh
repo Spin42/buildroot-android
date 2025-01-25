@@ -15,15 +15,14 @@ mkdir -p "${MOUNT_POINT}"
 LOOP_DEVICE=$(sudo losetup --find --show -Pf "${IMAGE}")
 
 # Mount the loop device
-sudo mount "${LOOP_DEVICE}p1" "${MOUNT_POINT}"
+sudo mount "${LOOP_DEVICE}" "${MOUNT_POINT}"
 
-UUID=$(sudo blkid -s UUID -o value "${LOOP_DEVICE}p1")
+UUID=$(sudo blkid -s UUID -o value "${LOOP_DEVICE}")
 
 # adding partition mount info to /etc/fstab
 echo "Adding partition mount info to /etc/fstab..."
 touch /tmp/fstab
-#echo "UUID=${UUID} / ext2 defaults 0 0" >> /tmp/fstab
-echo "/dev/mmcblk0p20p1 / ext2 defaults 0 0" >> /tmp/fstab
+echo "UUID=${UUID} / ext2 defaults 0 0" >> /tmp/fstab
 
 # Copy files into the image
 echo "Copying files into the image..."
