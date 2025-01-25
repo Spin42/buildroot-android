@@ -17,6 +17,7 @@ Make sure lk2nd is flashed on the boot partition.
 4. Run `fastboot flash userdata output/images/sdcard.img`
 5. Reboot your phone
 6. Plug a keyboard to your fp2
+7. Login: root, password: root
 
 ## Standard buildroot README
 
