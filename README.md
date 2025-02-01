@@ -1,4 +1,4 @@
-# Buildroot for Fairphone2 - NOT YET FULLY WORKING, UNDER HEAVY DEVELOPMENT
+# Buildroot for Fairphone2 - UNDER DEVELOPMENT, USE AT YOUR OWN RISK
 
 ## Prerequisite
 
@@ -16,8 +16,8 @@ Make sure lk2nd is flashed on the boot partition.
 3. Reboot your fp2 in fastboot mode.
 4. Run `fastboot flash userdata output/images/sdcard.img`
 5. Reboot your phone
-6. Plug a keyboard to your fp2
-7. Login: root, password: root
+6. With your phone plugged to your computer via USB, you should see a new network interface, set a static ip 10.0.0.2/24 to it (the fp2 will be 10.0.0.1)
+7. Type `ssh root@10.0.0.1`, password is `root`
 
 ## Standard buildroot README
 
