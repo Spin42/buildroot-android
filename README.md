@@ -11,8 +11,8 @@ Make sure lk2nd is flashed on the boot partition.
 
 ## Build the buildroot system
 
-1. Run `make fairphone2_defconfig`
-2. Run `make all`
+1. Run `cd buildroot && make BR2_EXTERNAL=../buildroot-external/ fairphone2_defconfig`
+2. Run `make BR2_EXTERNAL=../buildroot-external/ all`
 3. Reboot your fp2 in fastboot mode.
 4. Run `fastboot flash userdata output/images/sdcard.img`
 5. Reboot your phone
@@ -42,8 +42,8 @@ network={
 
 ## Using WIFI (before flashing)
 
-1. Edit `board/fairphone2/overlay/etc/netwotk/interfaces` and `board/fairphone2/overlay/etc/wpa_supplicant.conf` as described in the previous section
-2. Run `make all`
+1. Edit `buildroot-external/board/fairphone2/overlay/etc/netwotk/interfaces` and `buildroot-external/board/fairphone2/overlay/etc/wpa_supplicant.conf` as described in the previous section
+2. Run `cd buildroot && make BR2_EXTERNAL=../buildroot-external/ all`
 3. Reboot your phone in fastboot mode
 4. Run `fastboot flash userdata output/images/sdcard.img`
 5. Run `fastboot reboot`
