@@ -1,6 +1,6 @@
 #
 # Automatically generated file; DO NOT EDIT.
-# Buildroot -g2b3ecc55-dirty Configuration
+# Buildroot -g136fd688-dirty Configuration
 #
 BR2_HAVE_DOT_CONFIG=y
 BR2_HOST_GCC_AT_LEAST_4_9=y
@@ -1178,6 +1178,7 @@ BR2_PACKAGE_LINUX_FIRMWARE_QCOM_ADRENO=y
 # BR2_PACKAGE_WILC3000_FIRMWARE is not set
 # BR2_PACKAGE_WILINK_BT_FIRMWARE is not set
 # BR2_PACKAGE_ZD1211_FIRMWARE is not set
+BR2_PACKAGE_FP2_FIRMWARE=y
 # BR2_PACKAGE_18XX_TI_UTILS is not set
 # BR2_PACKAGE_A10DISP is not set
 # BR2_PACKAGE_ACPICA is not set
