@@ -1,0 +1,4 @@
+config BR2_PACKAGE_FP2_FIRMWARE
+        bool "Fairphone 2 Firmware"
+        help
+          This package provides all firmware binaries for Fairphone 2.

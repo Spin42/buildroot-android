@@ -1,0 +1,1 @@
+source "$BR2_EXTERNAL_FP2_PATH/package/fp2-firmware/Config.in"
