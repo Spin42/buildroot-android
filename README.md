@@ -38,7 +38,17 @@ network={
 }
 ```
 4. Make sure you save both of these files, then type `reboot`
-4. Once network is started, you should be able to see your fp2 on your wifi network
+5. Once network is started, you should be able to see your fp2 on your wifi network
+
+## Using WIFI (before flashing)
+
+1. Edit `board/fairphone2/overlay/etc/netwotk/interfaces` and `board/fairphone2/overlay/etc/wpa_supplicant.conf` as described in the previous section
+2. Run `make all`
+3. Reboot your phone in fastboot mode
+4. Run `fastboot flash userdata output/images/sdcard.img`
+5. Run `fastboot reboot`
+6. You should see your phone on your wifi network once it's restarted
+
 ## Standard buildroot README
 
 Buildroot is a simple, efficient and easy-to-use tool to generate embedded
