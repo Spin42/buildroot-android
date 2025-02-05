@@ -16,9 +16,29 @@ Make sure lk2nd is flashed on the boot partition.
 3. Reboot your fp2 in fastboot mode.
 4. Run `fastboot flash userdata output/images/sdcard.img`
 5. Reboot your phone
-6. With your phone plugged to your computer via USB, you should see a new network interface, set a static ip 10.0.0.2/24 to it (the fp2 will be 10.0.0.1)
+6. With your phone plugged to your computer via USB, you should see a new network interface, it should be assigned the 10.0.0.2 ip automatically (the fp2 will be 10.0.0.1)
 7. Type `ssh root@10.0.0.1`, password is `root`
 
+## Using WIFI (after flashing)
+
+1. Make sure you can ssh to your FP2 by following the previous section
+2. Edit `/etc/network/interfaces` with vi on your FP2 and uncomment the following lines:
+```
+auto wlan0
+iface wlan0 inet dhcp
+  pre-up wpa_supplicant -i wlan0 -c /etc/wpa_supplicant.conf -B
+  post-down killall -q wpa_supplicant
+```
+3. You then need to edit your SSID and passkey in `/etc/wpa_supplicant.conf`
+```
+network={
+    #key_mgmt=WPA-PSK
+    ssid="YOURSSID"
+    psk="YOURPSK"
+}
+```
+4. Make sure you save both of these files, then type `reboot`
+4. Once network is started, you should be able to see your fp2 on your wifi network
 ## Standard buildroot README
 
 Buildroot is a simple, efficient and easy-to-use tool to generate embedded
