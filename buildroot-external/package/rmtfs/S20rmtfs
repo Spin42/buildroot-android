@@ -1,0 +1,49 @@
+#!/bin/sh
+
+DAEMON="rmtfs"
+RMTFS_ARGS="-P -r -s"
+PIDFILE="/var/run/$DAEMON.pid"
+
+start() {
+        printf 'Starting %s: ' "$DAEMON"
+        start-stop-daemon --start --background --make-pidfile \
+                --pidfile "$PIDFILE" --exec "/usr/bin/$DAEMON" \
+		-- $RMTFS_ARGS
+        status=$?
+        if [ "$status" -eq 0 ]; then
+                echo "OK"
+        else
+                echo "FAIL"
+        fi
+        return "$status"
+}
+
+stop() {
+        printf 'Stopping %s: ' "$DAEMON"
+        start-stop-daemon --stop --pidfile "$PIDFILE"
+        status=$?
+        if [ "$status" -eq 0 ]; then
+                echo "OK"
+        else
+                echo "FAIL"
+                return "$status"
+        fi
+        rm -f "$PIDFILE"
+        return "$status"
+}
+
+restart() {
+        stop
+        start
+}
+
+case "$1" in
+        start|stop|restart)
+                "$1";;
+        reload)
+                # Restart, since there is no true "reload" feature.
+                restart;;
+        *)
+                echo "Usage: $0 {start|stop|restart|reload}"
+                exit 1
+esac

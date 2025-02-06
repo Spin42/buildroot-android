@@ -1,0 +1,5 @@
+config BR2_PACKAGE_RMTFS
+        bool "Qualcomm Remote Filesystem Service (RMTFS)"
+	depends on BR2_PACKAGE_QRTR
+        help
+          Qualcomm Remote Filesystem Service Implementation.
