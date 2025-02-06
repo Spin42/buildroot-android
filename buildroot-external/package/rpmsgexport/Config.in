@@ -1,0 +1,4 @@
+config BR2_PACKAGE_RPMSGEXPORT
+        bool "rpmsgexport"
+        help
+          Create rpmsg endpoint devices.
