@@ -1,1 +1,4 @@
 source "$BR2_EXTERNAL_FP2_PATH/package/fp2-firmware/Config.in"
+source "$BR2_EXTERNAL_FP2_PATH/package/qrtr/Config.in"
+source "$BR2_EXTERNAL_FP2_PATH/package/rmtfs/Config.in"
+source "$BR2_EXTERNAL_FP2_PATH/package/rpmsgexport/Config.in"
