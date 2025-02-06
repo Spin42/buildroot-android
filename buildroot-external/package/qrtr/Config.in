@@ -1,0 +1,4 @@
+config BR2_PACKAGE_QRTR
+        bool "Qualcomm IPC Router userspace reference (QRTR)"
+        help
+          Userspace reference for net/qrtr in the Linux kernel.
