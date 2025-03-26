@@ -1,0 +1,4 @@
+config BR2_PACKAGE_CITROS_INITRAMFS
+        bool "Citros Initramfs"
+        help
+          This initramfs uses special kernel command line parameters and kpartx to mount subpartitions in case the boot partition and system partitions were flashed inside an existing partition.

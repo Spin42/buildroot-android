@@ -1,0 +1,4 @@
+config BR2_PACKAGE_SIM_SELECTOR
+        bool "SIM card selector service"
+        help
+          Waits for the modem to be present and selects the used sim card slot that has a sim card present.
