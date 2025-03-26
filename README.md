@@ -16,38 +16,13 @@ Make sure lk2nd is flashed on the boot partition.
 3. Reboot your fp2 in fastboot mode.
 4. Run `fastboot flash userdata output/images/sdcard.img`
 5. Reboot your phone
-6. With your phone plugged to your computer via USB, you should see a new network interface, it should be assigned the 10.0.0.2 ip automatically (the fp2 will be 10.0.0.1)
-7. Type `ssh root@10.0.0.1`, password is `root`
+6. With your phone plugged to your computer via USB, you should see a new network interface, it should be assigned the 10.0.42.2 ip automatically (the fp2 will be 10.0.42.1)
+7. Type `ssh root@10.0.42.1`, password is `root`
 
 ## Using WIFI (after flashing)
 
 1. Make sure you can ssh to your FP2 by following the previous section
-2. Edit `/etc/network/interfaces` with vi on your FP2 and uncomment the following lines:
-```
-auto wlan0
-iface wlan0 inet dhcp
-  pre-up wpa_supplicant -i wlan0 -c /etc/wpa_supplicant.conf -B
-  post-down killall -q wpa_supplicant
-```
-3. You then need to edit your SSID and passkey in `/etc/wpa_supplicant.conf`
-```
-network={
-    #key_mgmt=WPA-PSK
-    ssid="YOURSSID"
-    psk="YOURPSK"
-}
-```
-4. Make sure you save both of these files, then type `reboot`
-5. Once network is started, you should be able to see your fp2 on your wifi network
-
-## Using WIFI (before flashing)
-
-1. Edit `buildroot-external/board/fairphone2/overlay/etc/netwotk/interfaces` and `buildroot-external/board/fairphone2/overlay/etc/wpa_supplicant.conf` as described in the previous section
-2. Run `cd buildroot && make BR2_EXTERNAL=../buildroot-external/ all`
-3. Reboot your phone in fastboot mode
-4. Run `fastboot flash userdata output/images/sdcard.img`
-5. Run `fastboot reboot`
-6. You should see your phone on your wifi network once it's restarted
+2. Use `nmcli --ask dev wifi connect <YOURSSID>`
 
 ## Standard buildroot README
 
