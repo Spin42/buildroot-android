@@ -24,6 +24,12 @@ Make sure lk2nd is flashed on the boot partition.
 1. Make sure you can ssh to your FP2 by following the previous section
 2. Use `nmcli --ask dev wifi connect <YOURSSID>`
 
+## Using the 4G connection (after flashing)
+
+1. Make sure you can ssh to your FP2 by following the instructions above
+2. Use `nmcli connection add type gsm ifname '*' con-name gsm apn <YOUR APN>`
+3. Then type `nmcli connection up gsm`
+
 ## Standard buildroot README
 
 Buildroot is a simple, efficient and easy-to-use tool to generate embedded
