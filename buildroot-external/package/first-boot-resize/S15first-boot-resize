@@ -1,0 +1,23 @@
+#!/bin/sh
+
+NAME="First-boot-resize"
+
+case "$1" in 
+    start)
+       printf "$NAME : Resizing rootfs to whole partition : "
+       resize2fs /dev/mmcblk0p20 >/dev/null 2>&1
+       echo "OK"
+       echo "$NAME : Self-removing."
+       rm $0
+       ;;
+    stop)
+       echo "Cannot stop $NAME"
+       ;;
+    restart)
+       echo "Cannot restart $NAME"
+       ;;
+    *)
+       echo "Usage: $0 {start|stop|restart}"
+esac
+   
+exit 0 
