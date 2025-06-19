@@ -1,0 +1,4 @@
+config BR2_PACKAGE_FIRST_BOOT_RESIZE
+        bool "First boot rootfs resize"
+        help
+          One-time service to resize root filesystem
