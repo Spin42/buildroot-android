@@ -1,0 +1,4 @@
+config BR2_PACKAGE_UNUDHCPD
+        bool "Unudhcpd"
+        help
+          Dhcp server that delivers only one IP.
