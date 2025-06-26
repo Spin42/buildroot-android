@@ -1,0 +1,15 @@
+config BR2_PACKAGE_CITRONICS_INITRAMFS
+        bool "Citronics initramfs"
+        depends on !BR2_STATIC_LIBS
+        depends on BR2_USE_MMU
+        depends on BR2_TOOLCHAIN_HAS_THREADS
+        select BR2_TOOLCHAIN_BUILDROOT_CXX
+        select BR2_PACKAGE_BUSYBOX
+        select BR2_PACKAGE_UNUDHCPD
+        select BR2_PACKAGE_MULTIPATH_TOOLS
+        select BR2_PACKAGE_PARTED
+        select BR2_PACKAGE_E2FSPROGS
+        select BR2_PACKAGE_E2FSPROGS_RESIZE2FS
+        select BR2_PACKAGE_UTIL_LINUX_BINARIES
+        help
+          Builds and installs citronics initramfs.
