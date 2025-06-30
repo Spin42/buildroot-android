@@ -1,4 +1,4 @@
-deviceinfo_name="Lemon"
-deviceinfo_codename="lemon"
+deviceinfo_name="Fairphone 2"
+deviceinfo_codename="fp2"
 deviceinfo_getty="ttyMSM0;115200"
 deviceinfo_arch="armv7"
