@@ -1,0 +1,7 @@
+/dev/mmcblk0p20p2 /              		ext4    	defaults 0 0
+/dev/mmcblk0p20p1 /boot                 ext2        defaults 0 0
+proc        /proc           proc        defaults    0 0
+sysfs		 /sys			sysfs		defaults 0 0
+devtmpfs    /dev    devtmpfs    defaults    0 0
+configfs	/sys/kernel/config	configfs	defaults 0 0
+devpts		/dev/pts		devpts		defaults 0 0
