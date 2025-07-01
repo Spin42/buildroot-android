@@ -1,2 +1,2 @@
-name: FP2
-desc: Buildroot external tree to run on Fairphone 2
+name: CITRONICS
+desc: Buildroot external tree for citronics devices
