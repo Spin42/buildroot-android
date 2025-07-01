@@ -1,34 +1,22 @@
-# Buildroot for Fairphone2 - UNDER DEVELOPMENT, USE AT YOUR OWN RISK
+# Buildroot for Citronics boards
 
-## Prerequisite
+This repository will allow you to build a buildroot image for the Citronics supported devices:
+* [Fairphone 2](./docs/fairphone2.md)
+* Lemon
 
-Make sure lk2nd is flashed on the boot partition.
+These systems don't include a bootloader by default. You can find some important information about it in the [bootloader documentation](./docs/bootloader.md).
 
-1. Download latest lk2nd image here: [lk2nd-msm8974.img](https://github.com/msm8916-mainline/lk2nd/releases/download/20.0/lk2nd-msm8974.img)
-2. Reboot your fp2 in fastboot mode.
-3. Run `fastboot flash boot lk2nd-msm8974.img`
-4. Reboot your phone.
+If you want to understand how partitioning is used, or you plan on implementing a more complex partition table, then head out to the [partitioning documentation](./docs/partitioning.md)
 
 ## Build the buildroot system
 
-1. Run `cd buildroot && make BR2_EXTERNAL=../buildroot-external/ fairphone2_defconfig`
+1. Run `cd buildroot && make BR2_EXTERNAL=../buildroot-external/ fairphone2_defconfig` # Or another defconfig
 2. Run `make BR2_EXTERNAL=../buildroot-external/ all`
-3. Reboot your fp2 in fastboot mode.
+3. Reboot your device in fastboot mode.
 4. Run `fastboot flash userdata output/images/sdcard.img`
-5. Reboot your phone
-6. With your phone plugged to your computer via USB, you should see a new network interface, it should be assigned the 10.0.42.2 ip automatically (the fp2 will be 10.0.42.1)
+5. Reboot your device
+6. With your device plugged to your computer via USB, you should see a new network interface, it should be assigned the 10.0.42.2 ip automatically (the fp2 will be 10.0.42.1)
 7. Type `ssh root@10.0.42.1`, password is `root`
-
-## Using WIFI (after flashing)
-
-1. Make sure you can ssh to your FP2 by following the previous section
-2. Use `nmcli --ask dev wifi connect <YOURSSID>`
-
-## Using the 4G connection (after flashing)
-
-1. Make sure you can ssh to your FP2 by following the instructions above
-2. Use `nmcli connection add type gsm ifname '*' con-name gsm apn <YOUR APN>`
-3. Then type `nmcli connection up gsm`
 
 ## Standard buildroot README
 
