@@ -4,73 +4,20 @@
 #
 ################################################################################
 
-CITRONICS_INITRAMFS_VERSION = 13694b8
+CITRONICS_INITRAMFS_VERSION = 6e058d7
 CITRONICS_INITRAMFS_SITE = https://github.com/Citronics/initramfs.git
 CITRONICS_INITRAMFS_SITE_METHOD = git
 CITRONICS_INITRAMFS_LICENSE_FILES = LICENSE
 
 CITRONICS_INITRAMFS_STAGING = $(@D)/initramfs-root
 CITRONICS_INITRAMFS_SRC_DIR = initramfs/usr/share/citronics-initramfs
-CITRONICS_BINARIES = unudhcpd telnetd busybox kpartx dmsetup sfdisk parted resize2fs
-OVERLAY_DIR := $(BR2_EXTERNAL_FP2_PATH)/board/fairphone2/overlay
+CITRONICS_BINARIES = unudhcpd busybox kpartx dmsetup parted resize2fs blkid sfdisk lsblk partprobe udevd udevadm kmod e2fsck telnetd
+
+DEFCONFIG_NAME = $(subst ",,$(notdir $(BR2_DEFCONFIG)))
+BOARD_NAME = $(patsubst %_defconfig,%,$(DEFCONFIG_NAME))
+BOARD_DIR = $(BR2_EXTERNAL)/board/$(BOARD_NAME)
 
 KERNEL_VERSION := $(shell find $(TARGET_DIR)/lib/modules -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | head -n1)
-
-define copy_libs_for_binary
-	# Use readelf to find needed libs and copy them if missing
-	for lib in $$(readelf -d $(1) 2>/dev/null | grep NEEDED | sed -n 's/.*\[\(.*\)\].*/\1/p'); do \
-		found=0; \
-		for libdir in $(TARGET_DIR)/lib $(TARGET_DIR)/usr/lib; do \
-			if [ -e $$libdir/$$lib ]; then \
-				echo "  Copying library $$lib from $$libdir"; \
-				mkdir -p $(CITRONICS_INITRAMFS_STAGING)/lib; \
-				cp -aL $$libdir/$$lib $(CITRONICS_INITRAMFS_STAGING)/lib/; \
-				found=1; \
-				break; \
-			else \
-				# Look in subdirs too
-				path=$$(find $$libdir -type f -name "$$lib" 2>/dev/null | head -n1); \
-				if [ -n "$$path" ]; then \
-					echo "  Copying library $$lib from $$path"; \
-					mkdir -p $(CITRONICS_INITRAMFS_STAGING)/lib; \
-					cp -aL "$$path" $(CITRONICS_INITRAMFS_STAGING)/lib/; \
-					found=1; \
-					break; \
-				fi; \
-			fi; \
-		done; \
-		if [ $$found -eq 0 ]; then \
-			echo "  Warning: library $$lib not found in any known lib directory"; \
-		fi; \
-	done; \
-	# Also copy interpreter itself (like ld-linux*.so) if needed
-	interp=$$(readelf -l $(1) 2>/dev/null | grep "interpreter" | sed -n 's/.*\[\(.*\)\].*/\1/p'); \
-	if [ -n "$$interp" ]; then \
-		interpname=$$(basename $$interp); \
-		found_interp=0; \
-		for libdir in $(TARGET_DIR)/lib $(TARGET_DIR)/usr/lib; do \
-			if [ -e $$libdir/$$interpname ]; then \
-				echo "  Copying interpreter $$interpname from $$libdir"; \
-				mkdir -p $(CITRONICS_INITRAMFS_STAGING)/lib; \
-				cp -aL $$libdir/$$interpname $(CITRONICS_INITRAMFS_STAGING)/lib/; \
-				found_interp=1; \
-				break; \
-			else \
-				path=$$(find $$libdir -type f -name "$$interpname" 2>/dev/null | head -n1); \
-				if [ -n "$$path" ]; then \
-					echo "  Copying interpreter $$interpname from $$path"; \
-					mkdir -p $(CITRONICS_INITRAMFS_STAGING)/lib; \
-					cp -aL "$$path" $(CITRONICS_INITRAMFS_STAGING)/lib/; \
-					found_interp=1; \
-					break; \
-				fi; \
-			fi; \
-		done; \
-		if [ $$found_interp -eq 0 ]; then \
-			echo "  Warning: interpreter $$interpname not found in any known lib directory"; \
-		fi; \
-	fi;
-endef
 
 define CITRONICS_INITRAMFS_BUILD_CMDS
 	true
@@ -88,7 +35,7 @@ define CITRONICS_INITRAMFS_INSTALL_TARGET_CMDS
 	cp -aL $(@D)/$(CITRONICS_INITRAMFS_SRC_DIR)/* $(CITRONICS_INITRAMFS_STAGING)/
 	mkdir -p $(CITRONICS_INITRAMFS_STAGING)/usr/share/deviceinfo
 	cp -RaL $(CITRONICS_INITRAMFS_STAGING)/misc $(CITRONICS_INITRAMFS_STAGING)/usr/share/misc
-	cp -aL $(BR2_EXTERNAL)/board/fairphone2/overlay/usr/share/deviceinfo/deviceinfo $(CITRONICS_INITRAMFS_STAGING)/usr/share/deviceinfo
+	cp -RaL $(BOARD_DIR)/overlay/usr/share/deviceinfo $(CITRONICS_INITRAMFS_STAGING)/usr/share/
 
 	mkdir -p $(CITRONICS_INITRAMFS_STAGING)/lib/modules/$(KERNEL_VERSION)
 	@echo "Detected kernel version: $(KERNEL_VERSION)"
@@ -125,12 +72,16 @@ define CITRONICS_INITRAMFS_INSTALL_TARGET_CMDS
             echo "  Copying $$src to $$dest"; \
             mkdir -p "$$(dirname $$dest)"; \
             cp -aL "$$src" "$$dest"; \
+    		$(BR2_EXTERNAL)/package/citronics-initramfs/scripts/copy_libs_for_binary.sh $$src $(TARGET_DIR) $(CITRONICS_INITRAMFS_STAGING) ;\
         fi; \
-        $(call copy_libs_for_binary,$$src)
     done
 
 	cd $(CITRONICS_INITRAMFS_STAGING)/bin && \
-		ln -sf busybox sh \
+		ln -sf busybox sh && \
+		ln -sf busybox telnetd && \
+		ln -sf busybox getty \
+
+	cp -R $(TARGET_DIR)/usr/lib/udev $(CITRONICS_INITRAMFS_STAGING)/usr/lib/
 
 	# Create CPIO archive
 	(cd $(CITRONICS_INITRAMFS_STAGING) && \

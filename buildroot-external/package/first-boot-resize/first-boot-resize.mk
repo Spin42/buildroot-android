@@ -5,7 +5,7 @@
 ################################################################################
 
 FIRST_BOOT_RESIZE_VERSION = 1.0
-FIRST_BOOT_RESIZE_SITE = $(BR2_EXTERNAL_FP2_PATH)/package/first-boot-resize
+FIRST_BOOT_RESIZE_SITE = $(BR2_EXTERNAL)/package/first-boot-resize
 FIRST_BOOT_RESIZE_SITE_METHOD = local
 
 define FIRST_BOOT_RESIZE_INSTALL_TARGET_CMDS
