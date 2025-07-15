@@ -1,0 +1,4 @@
+config BR2_PACKAGE_GRATE_FIRMWARE
+        bool "Grate Firmware"
+        help
+          This package provides all firmware binaries for Grate devices.

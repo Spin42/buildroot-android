@@ -1,2 +1,2 @@
-name: FP2
-desc: Buildroot external tree to run on Fairphone 2
+name: ANDROID
+desc: Buildroot external tree to run on Android devices
