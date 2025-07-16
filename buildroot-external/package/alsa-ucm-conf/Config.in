@@ -1,0 +1,4 @@
+config BR2_PACKAGE_ALSA_UCM_CONF
+	bool "alsa-ucm-conf"
+	help
+	  Install ALSA Use Case Manager (UCM) configuration files from GitHub.
