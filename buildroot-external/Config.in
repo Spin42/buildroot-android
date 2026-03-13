@@ -1,4 +1,5 @@
 source "$BR2_EXTERNAL_ANDROID_PATH/package/fp2-firmware/Config.in"
+source "$BR2_EXTERNAL_ANDROID_PATH/package/fp3-firmware/Config.in"
 source "$BR2_EXTERNAL_ANDROID_PATH/package/grate-firmware/Config.in"
 source "$BR2_EXTERNAL_ANDROID_PATH/package/qrtr/Config.in"
 source "$BR2_EXTERNAL_ANDROID_PATH/package/rmtfs/Config.in"
