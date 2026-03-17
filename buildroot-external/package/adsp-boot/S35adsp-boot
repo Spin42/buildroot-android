@@ -1,0 +1,157 @@
+#!/bin/sh
+#
+# S35adsp-boot - Boot the ADSP after all required services are ready
+#
+# With auto_boot=false in the kernel, the ADSP remoteproc won't start
+# automatically. This script ensures all required services (pd_mapper,
+# tqftpserv, rmtfs) are running before starting the ADSP.
+#
+# Dependencies (must run after):
+#   S20rmtfs      - Remote filesystem service
+#   S28hexagonfs  - HexagonFS populated
+#   S30pd-mapper  - Protection domain mapper (or in-kernel qcom_pd_mapper)
+#   S31tqftpserv  - TFTP server for ADSP
+#   S32hexagonrpcd - FastRPC daemon
+#
+
+ADSP_RPROC=""
+
+find_adsp_rproc() {
+	for rproc in /sys/class/remoteproc/remoteproc*; do
+		[ -d "$rproc" ] || continue
+		if grep -q "adsp" "$rproc/firmware" 2>/dev/null; then
+			ADSP_RPROC="$rproc"
+			return 0
+		fi
+		# Also check the device name
+		local name
+		name=$(basename "$(readlink "$rproc/device")" 2>/dev/null)
+		if echo "$name" | grep -qi "c200000"; then
+			ADSP_RPROC="$rproc"
+			return 0
+		fi
+	done
+	return 1
+}
+
+wait_for_qrtr() {
+	local attempts=0
+	while [ $attempts -lt 20 ]; do
+		if [ -d /sys/class/net/qrtr* ] 2>/dev/null || \
+		   lsmod | grep -q qrtr 2>/dev/null; then
+			return 0
+		fi
+		attempts=$((attempts + 1))
+		sleep 0.25
+	done
+	return 1
+}
+
+load_modules() {
+	# Ensure QRTR transport is loaded
+	modprobe qrtr 2>/dev/null
+	modprobe qrtr_smd 2>/dev/null
+
+	# Ensure pd_mapper is loaded (in-kernel)
+	modprobe qcom_pd_mapper 2>/dev/null
+
+	# Ensure FASTRPC is loaded (module is named 'fastrpc', not 'qcom_fastrpc')
+	modprobe fastrpc 2>/dev/null
+
+	# Ensure sysmon is loaded
+	modprobe qcom_sysmon 2>/dev/null
+
+	# Ensure SNS_REG (sensor registry QMI service) is loaded
+	modprobe qcom_sns_reg 2>/dev/null
+
+	# Ensure remoteproc is loaded
+	modprobe qcom_q6v5_pas 2>/dev/null
+}
+
+start() {
+	printf 'Starting ADSP: '
+
+	# Load all required modules
+	load_modules
+
+	# Wait for QRTR to be ready
+	if ! wait_for_qrtr; then
+		echo "FAIL (QRTR not ready)"
+		return 1
+	fi
+
+	# Small delay to let pd_mapper register its QMI service
+	sleep 1
+
+	# Find the ADSP remoteproc
+	if ! find_adsp_rproc; then
+		echo "FAIL (ADSP remoteproc not found)"
+		return 1
+	fi
+
+	# Disable crash recovery so we get ONE crash + clean dmesg
+	echo disabled > "$ADSP_RPROC/recovery" 2>/dev/null
+
+	# Check current state
+	local state
+	state=$(cat "$ADSP_RPROC/state" 2>/dev/null)
+	if [ "$state" = "running" ]; then
+		echo "OK (already running)"
+		return 0
+	fi
+
+	# Boot the ADSP
+	echo start > "$ADSP_RPROC/state" 2>/dev/null
+	status=$?
+
+	if [ "$status" -eq 0 ]; then
+		# Wait a moment and check if it's actually running
+		sleep 2
+		state=$(cat "$ADSP_RPROC/state" 2>/dev/null)
+		if [ "$state" = "running" ]; then
+			echo "OK"
+		else
+			echo "WARN (state: $state)"
+		fi
+	else
+		echo "FAIL"
+	fi
+
+	return "$status"
+}
+
+stop() {
+	printf 'Stopping ADSP: '
+
+	if ! find_adsp_rproc; then
+		echo "OK (not found)"
+		return 0
+	fi
+
+	local state
+	state=$(cat "$ADSP_RPROC/state" 2>/dev/null)
+	if [ "$state" != "running" ]; then
+		echo "OK (not running)"
+		return 0
+	fi
+
+	# WARNING: Stopping ADSP remoteproc can trigger watchdog reboot
+	# on MSM8953. Only stop if explicitly requested.
+	echo "SKIP (stopping ADSP may trigger watchdog reboot)"
+	return 0
+}
+
+restart() {
+	stop
+	start
+}
+
+case "$1" in
+	start|stop|restart)
+		"$1";;
+	reload)
+		restart;;
+	*)
+		echo "Usage: $0 {start|stop|restart|reload}"
+		exit 1
+esac
