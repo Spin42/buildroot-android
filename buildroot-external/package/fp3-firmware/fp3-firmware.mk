@@ -41,6 +41,35 @@ define FP3_FIRMWARE_INSTALL_TARGET_CMDS
 	$(INSTALL) -D -m 0644 $(@D)/wlan/prima/WCNSS_qcom_cfg.ini $(TARGET_DIR)/lib/firmware/wlan/prima/WCNSS_qcom_cfg.ini
 	# Modem config files
 	cp -a $(@D)/modem_pr $(TARGET_DIR)/lib/firmware/modem_pr
+	# DTS firmware-name symlinks (DTS expects qcom/msm8953/fairphone/fp3/<fw>.mbn)
+	# ADSP: adsp.mdt + adsp.b00-b14
+	for f in $(TARGET_DIR)/lib/firmware/adsp.mdt $(TARGET_DIR)/lib/firmware/adsp.b*; do \
+		ln -sf ../../../../$$(basename $$f) \
+			$(TARGET_DIR)/lib/firmware/qcom/msm8953/fairphone/fp3/$$(basename $$f); \
+	done
+	# MBA
+	ln -sf ../../../../mba.mbn \
+		$(TARGET_DIR)/lib/firmware/qcom/msm8953/fairphone/fp3/mba.mbn
+	# WCNSS: wcnss.mdt + wcnss.b*
+	for f in $(TARGET_DIR)/lib/firmware/wcnss.mdt $(TARGET_DIR)/lib/firmware/wcnss.b*; do \
+		ln -sf ../../../../$$(basename $$f) \
+			$(TARGET_DIR)/lib/firmware/qcom/msm8953/fairphone/fp3/$$(basename $$f); \
+	done
+	# WCNSS NV bin
+	ln -sf ../../../../wlan/prima/WCNSS_qcom_wlan_nv.bin \
+		$(TARGET_DIR)/lib/firmware/qcom/msm8953/fairphone/fp3/WCNSS_qcom_wlan_nv.bin
+	# Modem (MPSS): modem.mdt + modem.b*
+	for f in $(TARGET_DIR)/lib/firmware/modem.mdt $(TARGET_DIR)/lib/firmware/modem.b*; do \
+		ln -sf ../../../../$$(basename $$f) \
+			$(TARGET_DIR)/lib/firmware/qcom/msm8953/fairphone/fp3/$$(basename $$f); \
+	done
+	# .mbn aliases (DTS firmware-name uses .mbn extension, actual files are .mdt)
+	ln -sf adsp.mdt $(TARGET_DIR)/lib/firmware/qcom/msm8953/fairphone/fp3/adsp.mbn
+	ln -sf wcnss.mdt $(TARGET_DIR)/lib/firmware/qcom/msm8953/fairphone/fp3/wcnss.mbn
+	ln -sf modem.mdt $(TARGET_DIR)/lib/firmware/qcom/msm8953/fairphone/fp3/modem.mbn
+	# Sensor registry (sns.reg for in-kernel QCOM_SNS_REG driver)
+	$(INSTALL) -D -m 644 $(BR2_EXTERNAL_ANDROID_PATH)/package/fp3-firmware/sns.reg \
+		$(TARGET_DIR)/lib/firmware/qcom/sensors/sns.reg
 endef
 
 $(eval $(generic-package))
