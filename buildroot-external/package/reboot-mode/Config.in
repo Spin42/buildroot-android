@@ -1,0 +1,7 @@
+config BR2_PACKAGE_REBOOT_MODE
+	bool "reboot-mode"
+	help
+	  Small utility to reboot into a specific mode (bootloader,
+	  recovery, edl). Uses LINUX_REBOOT_CMD_RESTART2 which on
+	  Qualcomm devices triggers the bootloader to enter the
+	  requested mode.

@@ -1,0 +1,62 @@
+#!/bin/sh
+
+DAEMON="hexagonrpcd"
+FASTRPC_DEV="/dev/fastrpc-adsp"
+# HexagonFS root auto-detected from /proc/device-tree/compatible:
+#   /usr/share/qcom/sdm632/Fairphone/fp3
+PIDFILE_ROOT="/var/run/${DAEMON}-root.pid"
+
+start() {
+	printf 'Starting %s: ' "$DAEMON"
+
+	# Ensure fastrpc device exists
+	if [ ! -c "$FASTRPC_DEV" ]; then
+		modprobe qcom_fastrpc 2>/dev/null
+		sleep 1
+	fi
+
+	if [ ! -c "$FASTRPC_DEV" ]; then
+		echo "FAIL (no $FASTRPC_DEV)"
+		return 1
+	fi
+
+	# Start root PD instance (provides fastrpc_shell_0, DSP libs)
+	# NOTE: Do NOT use -s (sensor PD attach) — it sends
+	# FASTRPC_IOCTL_INIT_ATTACH_SNS which crashes the ADSP on
+	# MSM8953 SMGR firmware. The sensor PD must auto-spawn from
+	# within the ADSP firmware's RCINIT/TMS framework.
+	start-stop-daemon --start --background --make-pidfile \
+		--pidfile "$PIDFILE_ROOT" --exec "/usr/bin/$DAEMON" \
+		-- -d adsp -f "$FASTRPC_DEV"
+	status=$?
+	if [ "$status" -ne 0 ]; then
+		echo "FAIL (root PD)"
+		return "$status"
+	fi
+
+	echo "OK"
+	return 0
+}
+
+stop() {
+	printf 'Stopping %s: ' "$DAEMON"
+	start-stop-daemon --stop --pidfile "$PIDFILE_ROOT" 2>/dev/null
+	rm -f "$PIDFILE_ROOT"
+	echo "OK"
+	return 0
+}
+
+restart() {
+	stop
+	start
+}
+
+case "$1" in
+	start|stop|restart)
+		"$1";;
+	reload)
+		restart;;
+	*)
+		echo "Usage: $0 {start|stop|restart|reload}"
+		exit 1
+esac

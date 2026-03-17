@@ -1,0 +1,134 @@
+#!/bin/sh
+#
+# S28hexagonfs - Mount Android partitions and populate HexagonFS
+#
+# This must run BEFORE pd-mapper (S30), tqftpserv (S31) and hexagonrpcd (S32)
+# so that the ADSP has access to firmware files, DSP libraries, ACDB data,
+# and sensor configuration when it boots.
+#
+
+HEXFS="/usr/share/qcom/sdm632/Fairphone/fp3"
+
+# Android partition mount points
+MNT_VENDOR="/mnt/vendor"
+MNT_PERSIST="/mnt/persist"
+MNT_DSP="/mnt/dsp"
+
+# Android partition devices (Fairphone 3 specific)
+DEV_VENDOR="/dev/mmcblk0p32"
+DEV_PERSIST="/dev/mmcblk0p34"
+DEV_DSP="/dev/mmcblk0p13"
+
+populate_socinfo() {
+	local socdir="$HEXFS/socinfo"
+	mkdir -p "$socdir"
+	for f in soc_id revision serial_number machine family \
+		 pmic_model pmic_die_revision hw_platform \
+		 platform_version platform_subtype; do
+		if [ -f "/sys/devices/soc0/$f" ]; then
+			cp "/sys/devices/soc0/$f" "$socdir/$f"
+		fi
+	done
+
+	# Mainline kernel doesn't expose hw_platform or platform_subtype
+	# via sysfs. The ADSP firmware may need these to determine sensor
+	# configuration. Fairphone 3 is an MTP-type platform (type 8).
+	if [ ! -f "$socdir/hw_platform" ]; then
+		echo "MTP" > "$socdir/hw_platform"
+	fi
+	if [ ! -f "$socdir/platform_subtype" ]; then
+		echo "Unknown" > "$socdir/platform_subtype"
+	fi
+	if [ ! -f "$socdir/platform_version" ]; then
+		echo "0" > "$socdir/platform_version"
+	fi
+}
+
+populate_acdb() {
+	local src="$MNT_VENDOR/etc/acdbdata"
+	local dst="$HEXFS/acdb"
+	if [ -d "$src" ]; then
+		mkdir -p "$dst"
+		cp -a "$src"/* "$dst/" 2>/dev/null
+	fi
+}
+
+populate_dsp() {
+	local src="$MNT_DSP"
+	local dst="$HEXFS/dsp/adsp"
+	if [ -d "$src" ]; then
+		mkdir -p "$dst"
+		cp -a "$src"/* "$dst/" 2>/dev/null
+	fi
+}
+
+populate_sensors() {
+	local dst="$HEXFS/sensors"
+
+	# sensors/config/ — from vendor (or empty)
+	mkdir -p "$dst/config"
+	if [ -d "$MNT_VENDOR/etc/sensors" ]; then
+		# Copy sensor_def_qcomdev.conf into config dir if present
+		for f in "$MNT_VENDOR/etc/sensors"/*; do
+			[ -f "$f" ] && cp "$f" "$dst/config/" 2>/dev/null
+		done
+	fi
+
+	# sensors/registry/ — from persist
+	mkdir -p "$dst/registry"
+	if [ -d "$MNT_PERSIST/sensors" ]; then
+		cp -a "$MNT_PERSIST/sensors"/* "$dst/registry/" 2>/dev/null
+	fi
+
+	# sensors/sns_reg.conf — registry config file
+	# The ADSP reads this as /vendor/etc/sensors/sns_reg_config
+	# For SMGR-based firmware, this may need to be empty or contain
+	# specific configuration. Create it if it doesn't exist.
+	if [ ! -f "$dst/sns_reg.conf" ]; then
+		touch "$dst/sns_reg.conf"
+	fi
+}
+
+start() {
+	printf 'Populating HexagonFS: '
+
+	# Mount Android partitions (read-only)
+	mkdir -p "$MNT_VENDOR" "$MNT_PERSIST" "$MNT_DSP"
+	mount -o ro "$DEV_VENDOR" "$MNT_VENDOR" 2>/dev/null
+	mount -t ext4 -o ro "$DEV_PERSIST" "$MNT_PERSIST" 2>/dev/null
+	mount -o ro "$DEV_DSP" "$MNT_DSP" 2>/dev/null
+
+	# Create HexagonFS directory structure
+	mkdir -p "$HEXFS"
+
+	populate_socinfo
+	populate_acdb
+	populate_dsp
+	populate_sensors
+
+	echo "OK"
+}
+
+stop() {
+	printf 'Cleaning up HexagonFS: '
+	rm -rf "$HEXFS"
+	umount "$MNT_DSP" 2>/dev/null
+	umount "$MNT_PERSIST" 2>/dev/null
+	umount "$MNT_VENDOR" 2>/dev/null
+	echo "OK"
+}
+
+restart() {
+	stop
+	start
+}
+
+case "$1" in
+	start|stop|restart)
+		"$1";;
+	reload)
+		restart;;
+	*)
+		echo "Usage: $0 {start|stop|restart|reload}"
+		exit 1
+esac

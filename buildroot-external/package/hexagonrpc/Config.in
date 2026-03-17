@@ -1,0 +1,8 @@
+config BR2_PACKAGE_HEXAGONRPC
+	bool "Hexagon FastRPC userspace (hexagonrpc)"
+	help
+	  Hexagon FastRPC userspace implementation providing hexagonrpcd
+	  (reverse tunnel daemon for DSP file/memory serving), chrecd
+	  (Context Hub Runtime Environment client), and libhexagonrpc.
+
+	  https://github.com/linux-msm/hexagonrpc

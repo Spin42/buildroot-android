@@ -1,0 +1,59 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Buildroot <buildroot@buildroot.org>
+Date: Thu, 13 Mar 2026 00:00:00 +0000
+Subject: [PATCH] add compat defines for older kernel headers
+
+The fastrpc UAPI header in kernel 5.4 does not include
+FASTRPC_IOCTL_MMAP, FASTRPC_IOCTL_INIT_ATTACH_SNS, or
+struct fastrpc_req_mmap which were added in later kernels.
+Add compat definitions so hexagonrpc builds with older headers.
+
+Signed-off-by: Buildroot <buildroot@buildroot.org>
+---
+ hexagonrpcd/apps_mem.c | 17 +++++++++++++++++
+ hexagonrpcd/rpcd.c     |  6 ++++++
+ 2 files changed, 23 insertions(+)
+
+diff --git a/hexagonrpcd/apps_mem.c b/hexagonrpcd/apps_mem.c
+--- a/hexagonrpcd/apps_mem.c
++++ b/hexagonrpcd/apps_mem.c
+@@ -26,6 +26,23 @@
+ #include <misc/fastrpc.h>
+ #include <sys/ioctl.h>
+ 
++/* Compat: these were added after kernel 5.4 */
++#ifndef FASTRPC_IOCTL_MMAP
++struct fastrpc_req_mmap {
++	__s32 fd;
++	__u32 flags;
++	__u64 vaddrin;
++	__u64 size;
++	__u64 vaddrout;
++};
++struct fastrpc_req_munmap {
++	__u64 vaddrout;
++	__u64 size;
++};
++#define FASTRPC_IOCTL_MMAP	_IOWR('R', 6, struct fastrpc_req_mmap)
++#define FASTRPC_IOCTL_MUNMAP	_IOWR('R', 7, struct fastrpc_req_munmap)
++#endif
++
+ #include "aee_error.h"
+ #include "apps_mem.h"
+ #include "interfaces/apps_mem.def"
+diff --git a/hexagonrpcd/rpcd.c b/hexagonrpcd/rpcd.c
+--- a/hexagonrpcd/rpcd.c
++++ b/hexagonrpcd/rpcd.c
+@@ -24,6 +24,12 @@
+ #include <libhexagonrpc/fastrpc.h>
+ #include <libhexagonrpc/interfaces/remotectl.def>
+ #include <misc/fastrpc.h>
++
++/* Compat: FASTRPC_IOCTL_INIT_ATTACH_SNS was added after kernel 5.4 */
++#ifndef FASTRPC_IOCTL_INIT_ATTACH_SNS
++#define FASTRPC_IOCTL_INIT_ATTACH_SNS	_IO('R', 8)
++#endif
++
+ #include <unistd.h>
+ #include <signal.h>
+ #include <stdbool.h>

@@ -1,0 +1,27 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: buildroot <buildroot@buildroot.org>
+Date: Thu, 13 Mar 2026 00:00:00 +0000
+Subject: [PATCH] meson.build: fix build when systemd is not found
+
+When systemd is not found and systemd-unit-prefix is not set,
+the variable systemd_system_unit_dir is never defined, causing
+meson to error out with "Unknown variable". Initialize it to
+an empty string so the conditional on line 37 works correctly.
+
+Signed-off-by: buildroot <buildroot@buildroot.org>
+---
+ meson.build | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/meson.build b/meson.build
+index 1111111..2222222 100644
+--- a/meson.build
++++ b/meson.build
+@@ -16,6 +16,7 @@ add_project_arguments('-DHAVE_ZSTD', language : 'c')
+ # Not required to build the executable,
+ # only to automatically retrieve the install dir for unit files
+ systemd = dependency('systemd', required : false)
++systemd_system_unit_dir = ''
+ if get_option('systemd-unit-prefix') != ''
+   systemd_system_unit_dir = get_option('systemd-unit-prefix')
+ elif systemd.found()
