@@ -67,6 +67,7 @@ define FP3_FIRMWARE_INSTALL_TARGET_CMDS
 	ln -sf adsp.mdt $(TARGET_DIR)/lib/firmware/qcom/msm8953/fairphone/fp3/adsp.mbn
 	ln -sf wcnss.mdt $(TARGET_DIR)/lib/firmware/qcom/msm8953/fairphone/fp3/wcnss.mbn
 	ln -sf modem.mdt $(TARGET_DIR)/lib/firmware/qcom/msm8953/fairphone/fp3/modem.mbn
+	ln -sf a506_zap.mdt $(TARGET_DIR)/lib/firmware/qcom/msm8953/fairphone/fp3/a506_zap.mbn
 	# Sensor registry (sns.reg for in-kernel QCOM_SNS_REG driver)
 	$(INSTALL) -D -m 644 $(BR2_EXTERNAL_ANDROID_PATH)/package/fp3-firmware/sns.reg \
 		$(TARGET_DIR)/lib/firmware/qcom/sensors/sns.reg
