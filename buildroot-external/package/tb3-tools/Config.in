@@ -1,0 +1,7 @@
+config BR2_PACKAGE_TB3_TOOLS
+	bool "tb3-tools"
+	help
+	  Lenovo TB3-710F helpers: PMIC register access through the PMIC
+	  wrapper (tb3-pmic) and reboot-mode, which reboots into the
+	  bootloader or recovery by marking the PMIC RTC power-down bits
+	  that LK reads.

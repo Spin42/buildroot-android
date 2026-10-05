@@ -1,0 +1,40 @@
+#!/bin/sh
+# Initramfs PID 1: hand over to the persistent root on userdata (mmcblk0p7); if that is missing or
+# broken, keep running this initramfs as a rescue system.
+#   touch /.rescue on the persistent root, or boot without eMMC, to force the rescue system.
+ROOTDEV=/dev/mmcblk0p7
+NEWROOT=/newroot
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+# the cpio carries a static /dev (with /dev/console); always put devtmpfs on top so the eMMC nodes exist
+mount -t devtmpfs devtmpfs /dev
+
+say() { echo "[tb3-init] $*" > /dev/console 2>&1; echo "[tb3-init] $*"; }
+
+# the eMMC is probed by the kernel before userspace starts, but give it a moment
+for i in 1 2 3 4 5 6 7 8 9 10; do [ -b $ROOTDEV ] && break; sleep 1; done
+
+if [ -b $ROOTDEV ]; then
+	e2fsck -p $ROOTDEV >/dev/null 2>&1   # exit 1 = errors corrected, fine
+	mkdir -p $NEWROOT
+	if mount -t ext4 -o rw,noatime $ROOTDEV $NEWROOT 2>/dev/null; then
+		if [ -x $NEWROOT/sbin/init ] && [ ! -e $NEWROOT/.rescue ]; then
+			say "switching to persistent root on $ROOTDEV"
+			mount -o move /dev $NEWROOT/dev
+			mount -o move /proc $NEWROOT/proc
+			mount -o move /sys $NEWROOT/sys
+			exec switch_root $NEWROOT /sbin/init
+		fi
+		say "no usable /sbin/init on $ROOTDEV (or /.rescue set): staying in rescue"
+		umount $NEWROOT
+	else
+		say "cannot mount $ROOTDEV as ext4: staying in rescue"
+	fi
+else
+	say "$ROOTDEV not found: staying in rescue"
+fi
+
+umount /proc /sys 2>/dev/null
+exec /sbin/init

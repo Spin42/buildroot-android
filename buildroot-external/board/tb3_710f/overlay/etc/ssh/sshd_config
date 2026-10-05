@@ -1,0 +1,6 @@
+# Development image: root login with password or key.
+PermitRootLogin yes
+PasswordAuthentication yes
+PermitEmptyPasswords no
+AuthorizedKeysFile	.ssh/authorized_keys
+Subsystem	sftp	/usr/libexec/sftp-server
