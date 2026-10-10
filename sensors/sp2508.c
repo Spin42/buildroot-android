@@ -174,6 +174,7 @@ static const struct cci_reg_sequence sp2508_init_regs[] = {
 	{ CCI_REG8(0xa1), 0x05 },
 	{ CCI_REG8(0xaa), 0x00 },
 	{ CCI_REG8(0xac), 0x01 },
+	{ CCI_REG8(0x3f), 0x00 }, /* mirror and flip, orientation of the vendor driver */
 };
 
 struct sp2508 {

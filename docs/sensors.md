@@ -126,8 +126,9 @@ Supplies are enabled one by one (not with the bulk API) because the order matter
 - Gain unit: the stock converts the MTK gain (64 = 1x) to `reg = 0x10 * gain/64`, i.e. a linear 1/16 code, and
   clamps it to 0x10..0x90. A libcamera `CameraSensorHelper` for the SP2508 needs `gain = code / 16`.
 - The register init is written when streaming starts (after power-on); the digital gain registers of page 2 are set
-  to 0xb0 by the stock init and left there. The stock sets 0x3f = 0 (HV mirror) for all modes; the init has no write
-  to 0x3f, the sensor default is kept, so no flip controls are exposed.
+  to 0xb0 by the stock init and left there. The stock sets 0x3f = 0 (HV mirror) for all modes and the
+  raw_B order is valid with it; the driver writes it after the init table and exposes no flip controls (changing
+  it would change the Bayer order).
 
 ## SP0A20 (YUV)
 
