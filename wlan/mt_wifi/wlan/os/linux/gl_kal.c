@@ -780,223 +780,21 @@ VOID kalHifAhbKalWakeLockTimeout(
 
 #if CFG_ENABLE_FW_DOWNLOAD
 
-static struct file *filp = NULL;
-static uid_t orgfsuid;
-static gid_t orgfsgid;
-static mm_segment_t orgfs;
-
 /*----------------------------------------------------------------------------*/
 /*!
-* \brief This function is provided by GLUE Layer for internal driver stack to
-*        open firmware image in kernel space
+* \brief Load the firmware image WIFI_RAM_CODE_<chip> through request_firmware().
 *
-* \param[in] prGlueInfo     Pointer of GLUE Data Structure
-*
-* \retval WLAN_STATUS_SUCCESS.
-* \retval WLAN_STATUS_FAILURE.
-*
-*/
-/*----------------------------------------------------------------------------*/
-WLAN_STATUS
-kalFirmwareOpen (
-    IN P_GLUE_INFO_T                prGlueInfo
-    )
-{
-	UINT_8 aucFilePath[50];
-
-    /* FIX ME: since we don't have hotplug script in the filesystem
-     * , so the request_firmware() KAPI can not work properly
-     */
-
-    /* save uid and gid used for filesystem access.
-     * set user and group to 0(root) */
-    struct cred *cred = (struct cred *) get_current_cred();
-    orgfsuid = cred->fsuid;
-    orgfsgid = cred->fsgid;
-    cred->fsuid = cred->fsgid = 0;
-
-    ASSERT(prGlueInfo);
-
-
-    orgfs = get_fs();
-    set_fs(get_ds());
-
-
-    /* open the fw file */
-#if defined(MT6620) & CFG_MULTI_ECOVER_SUPPORT
-    switch(mtk_wcn_wmt_hwver_get()) {
-    case WMTHWVER_MT6620_E1:
-    case WMTHWVER_MT6620_E2:
-    case WMTHWVER_MT6620_E3:
-    case WMTHWVER_MT6620_E4:
-    case WMTHWVER_MT6620_E5:
-        filp = filp_open("/etc/firmware/"CFG_FW_FILENAME, O_RDONLY, 0);
-        break;
-
-    case WMTHWVER_MT6620_E6:
-    default:
-        filp = filp_open("/etc/firmware/"CFG_FW_FILENAME"_E6", O_RDONLY, 0);
-        break;
-    }
-#elif defined(MT5931) && CFG_MULTI_ECOVER_SUPPORT
-    switch (wlanGetEcoVersion(prGlueInfo->prAdapter)) {
-    case HWVER_MT5931_E1:
-    case HWVER_MT5931_E2:
-        filp = filp_open("/etc/firmware/"CFG_FW_FILENAME"_E2", O_RDONLY, 0);
-        break;
-    case HWVER_MT5931_E3:
-    default:
-        filp = filp_open("/etc/firmware/"CFG_FW_FILENAME, O_RDONLY, 0);
-        break;
-    }
-#elif defined(MT6628)
-//    filp = filp_open("/etc/firmware/"CFG_FW_FILENAME"_MT6628", O_RDONLY, 0);
-//    filp = filp_open("/etc/firmware/"CFG_FW_FILENAME"_MT6582", O_RDONLY, 0);
-	kalMemZero(aucFilePath, sizeof(aucFilePath));
-	kalMemCopy(aucFilePath, "/etc/firmware/"CFG_FW_FILENAME"_",
-		strlen("/etc/firmware/"CFG_FW_FILENAME"_"));
-	glGetChipInfo(prGlueInfo, &aucFilePath[strlen("/etc/firmware/"CFG_FW_FILENAME"_")]);
-
-	DBGLOG(INIT, TRACE, ("open file: %s\n", aucFilePath));
-
-    filp = filp_open(aucFilePath, O_RDONLY, 0);
-#else
-    filp = filp_open("/etc/firmware/"CFG_FW_FILENAME, O_RDONLY, 0);
-#endif
-    if (IS_ERR(filp)) {
-        DBGLOG(INIT, INFO, ("Open FW image: %s failed\n", CFG_FW_FILENAME));
-        goto error_open;
-    }
-    DBGLOG(INIT, INFO, ("Open FW image: %s done\n", CFG_FW_FILENAME));
-    return WLAN_STATUS_SUCCESS;
-
-error_open:
-    /* restore */
-    set_fs(orgfs);
-    cred->fsuid = orgfsuid;
-    cred->fsgid = orgfsgid;
-    put_cred(cred);
-    return WLAN_STATUS_FAILURE;
-}
-
-
-/*----------------------------------------------------------------------------*/
-/*!
-* \brief This function is provided by GLUE Layer for internal driver stack to
-*        release firmware image in kernel space
-*
-* \param[in] prGlueInfo     Pointer of GLUE Data Structure
-*
-* \retval WLAN_STATUS_SUCCESS.
-* \retval WLAN_STATUS_FAILURE.
-*
-*/
-/*----------------------------------------------------------------------------*/
-WLAN_STATUS
-kalFirmwareClose (
-    IN P_GLUE_INFO_T                prGlueInfo
-    )
-{
-    ASSERT(prGlueInfo);
-
-    if ((filp != NULL) && !IS_ERR(filp)) {
-        /* close firmware file */
-        filp_close(filp, NULL);
-
-        /* restore */
-        set_fs(orgfs);
-        {
-            struct cred *cred = (struct cred *) get_current_cred();
-            cred->fsuid = orgfsuid;
-            cred->fsgid = orgfsgid;
-            put_cred(cred);
-        }
-        filp = NULL;
-    }
-
-    return WLAN_STATUS_SUCCESS;
-}
-
-/*----------------------------------------------------------------------------*/
-/*!
-* \brief This function is provided by GLUE Layer for internal driver stack to
-*        load firmware image in kernel space
-*
-* \param[in] prGlueInfo     Pointer of GLUE Data Structure
-*
-* \retval WLAN_STATUS_SUCCESS.
-* \retval WLAN_STATUS_FAILURE.
-*
-*/
-/*----------------------------------------------------------------------------*/
-WLAN_STATUS
-kalFirmwareLoad (
-    IN P_GLUE_INFO_T                prGlueInfo,
-    OUT PVOID                       prBuf,
-    IN UINT_32                      u4Offset,
-    OUT PUINT_32                    pu4Size
-    )
-{
-    ASSERT(prGlueInfo);
-    ASSERT(pu4Size);
-    ASSERT(prBuf);
-
-    //l = filp->f_path.dentry->d_inode->i_size;
-
-    /* the object must have a read method */
-    if ((filp == NULL) || IS_ERR(filp) || (filp->f_op == NULL) || (filp->f_op->read == NULL)) {
-        goto error_read;
-    } else {
-        filp->f_pos = u4Offset;
-        *pu4Size = filp->f_op->read(filp, prBuf, *pu4Size, &filp->f_pos);
-    }
-
-    return WLAN_STATUS_SUCCESS;
-
-error_read:
-    return WLAN_STATUS_FAILURE;
-}
-
-/*----------------------------------------------------------------------------*/
-/*!
-* \brief This function is provided by GLUE Layer for internal driver stack to
-*        query firmware image size in kernel space
-*
-* \param[in] prGlueInfo     Pointer of GLUE Data Structure
-*
-* \retval WLAN_STATUS_SUCCESS.
-* \retval WLAN_STATUS_FAILURE.
-*
-*/
-/*----------------------------------------------------------------------------*/
-
-WLAN_STATUS
-kalFirmwareSize (
-    IN P_GLUE_INFO_T                prGlueInfo,
-    OUT PUINT_32                     pu4Size
-    )
-{
-    ASSERT(prGlueInfo);
-    ASSERT(pu4Size);
-
-    *pu4Size = filp->f_path.dentry->d_inode->i_size;
-
-    return WLAN_STATUS_SUCCESS;
-}
-
-
-/*----------------------------------------------------------------------------*/
-/*!
-* \brief This routine is used to load firmware image
+* The image is copied into a zero padded vmalloc buffer so that the download
+* code may round the last section up to 4 bytes. The returned pointer serves as
+* the mapping handle as well as the buffer.
 *
 * \param pvGlueInfo     Pointer of GLUE Data Structure
-* \param ppvMapFileBuf  Pointer of pointer to memory-mapped firmware image
-* \param pu4FileLength  File length and memory mapped length as well
-
-* \retval Map File Handle, used for unammping
+* \param ppvMapFileBuf  Pointer of pointer to the image
+* \param pu4FileLength  Image length
+*
+* \retval Mapping handle, NULL when the image is not available
 */
 /*----------------------------------------------------------------------------*/
-
 PVOID
 kalFirmwareImageMapping (
     IN P_GLUE_INFO_T    prGlueInfo,
@@ -1004,55 +802,49 @@ kalFirmwareImageMapping (
     OUT PUINT_32        pu4FileLength
     )
 {
+    const struct firmware *prFw = NULL;
+    PVOID prFwBuffer;
+    UINT_8 aucFileName[40];
+    INT_32 i4Ret;
+
     DEBUGFUNC("kalFirmwareImageMapping");
 
     ASSERT(prGlueInfo);
     ASSERT(ppvMapFileBuf);
     ASSERT(pu4FileLength);
 
-    do {
-        /* <1> Open firmware */
-        if (kalFirmwareOpen(prGlueInfo) != WLAN_STATUS_SUCCESS) {
-			DBGLOG(INIT, TRACE, ("kalFirmwareOpen fail!\n"));
-            break;
-        } else {
-            UINT_32 u4FwSize = 0;
-            PVOID prFwBuffer = NULL;
-            /* <2> Query firmare size */
-            kalFirmwareSize(prGlueInfo, &u4FwSize);
-            /* <3> Use vmalloc for allocating large memory trunk */
-            prFwBuffer = vmalloc(ALIGN_4(u4FwSize));
-            /* <4> Load image binary into buffer */
-            if (kalFirmwareLoad(prGlueInfo, prFwBuffer, 0, &u4FwSize) != WLAN_STATUS_SUCCESS) {
-                vfree(prFwBuffer);
-                kalFirmwareClose(prGlueInfo);
-				DBGLOG(INIT, TRACE, ("kalFirmwareLoad fail!\n"));
-                break;
-            }
-            /* <5> write back info */
-            *pu4FileLength = u4FwSize;
-            *ppvMapFileBuf = prFwBuffer;
+    kalMemZero(aucFileName, sizeof(aucFileName));
+    kalMemCopy(aucFileName, CFG_FW_FILENAME"_", strlen(CFG_FW_FILENAME"_"));
+    glGetChipInfo(prGlueInfo, &aucFileName[strlen(CFG_FW_FILENAME"_")]);
 
-            return prFwBuffer;
-        }
+    i4Ret = request_firmware(&prFw, aucFileName, (struct device *) prGlueInfo->rHifInfo.Dev);
+    if (i4Ret) {
+        DBGLOG(INIT, ERROR, ("request_firmware(%s) failed: %d\n", aucFileName, i4Ret));
+        return NULL;
+    }
 
-    } while (FALSE);
+    prFwBuffer = vzalloc(ALIGN_4(prFw->size));
+    if (prFwBuffer) {
+        kalMemCopy(prFwBuffer, prFw->data, prFw->size);
+        *pu4FileLength = prFw->size;
+        *ppvMapFileBuf = prFwBuffer;
+    }
+    release_firmware(prFw);
 
-    return NULL;
+    DBGLOG(INIT, INFO, ("firmware %s loaded\n", aucFileName));
+
+    return prFwBuffer;
 }
 
 /*----------------------------------------------------------------------------*/
 /*!
-* \brief This routine is used to unload firmware image mapped memory
+* \brief Release the buffer returned by kalFirmwareImageMapping().
 *
 * \param pvGlueInfo     Pointer of GLUE Data Structure
-* \param pvFwHandle     Pointer to mapping handle
-* \param pvMapFileBuf   Pointer to memory-mapped firmware image
-*
-* \retval none
+* \param pvFwHandle     Mapping handle
+* \param pvMapFileBuf   Pointer to the image
 */
 /*----------------------------------------------------------------------------*/
-
 VOID
 kalFirmwareImageUnmapping (
     IN P_GLUE_INFO_T    prGlueInfo,
@@ -1064,93 +856,12 @@ kalFirmwareImageUnmapping (
 
     ASSERT(prGlueInfo);
 
-    /* pvMapFileBuf might be NULL when file doesn't exist */
+    /* pvMapFileBuf is NULL when the image could not be loaded */
     if(pvMapFileBuf) {
         vfree(pvMapFileBuf);
     }
-
-    kalFirmwareClose(prGlueInfo);
 }
 
-#endif
-
-#if 0
-
-/*----------------------------------------------------------------------------*/
-/*!
-* \brief This routine is used to load firmware image
-*
-* \param pvGlueInfo     Pointer of GLUE Data Structure
-* \param ppvMapFileBuf  Pointer of pointer to memory-mapped firmware image
-* \param pu4FileLength  File length and memory mapped length as well
-
-* \retval Map File Handle, used for unammping
-*/
-/*----------------------------------------------------------------------------*/
-
-PVOID
-kalFirmwareImageMapping (
-    IN P_GLUE_INFO_T    prGlueInfo,
-    OUT PPVOID          ppvMapFileBuf,
-    OUT PUINT_32        pu4FileLength
-    )
-{
-    INT_32 i4Ret = 0;
-
-    DEBUGFUNC("kalFirmwareImageMapping");
-
-    ASSERT(prGlueInfo);
-    ASSERT(ppvMapFileBuf);
-    ASSERT(pu4FileLength);
-
-    do {
-        GL_HIF_INFO_T *prHifInfo = &prGlueInfo->rHifInfo;
-        prGlueInfo->prFw = NULL;
-
-        /* <1> Open firmware */
-        i4Ret = request_firmware(&prGlueInfo->prFw, CFG_FW_FILENAME, prHifInfo->Dev);
-
-        if (i4Ret) {
-            printk (KERN_INFO DRV_NAME"fw %s:request failed %d\n", CFG_FW_FILENAME, i4Ret);
-            break;
-        } else {
-            *pu4FileLength = prGlueInfo->prFw->size;
-            *ppvMapFileBuf = prGlueInfo->prFw->data;
-            return prGlueInfo->prFw->data;
-        }
-
-    } while (FALSE);
-
-    return NULL;
-}
-
-/*----------------------------------------------------------------------------*/
-/*!
-* \brief This routine is used to unload firmware image mapped memory
-*
-* \param pvGlueInfo     Pointer of GLUE Data Structure
-* \param pvFwHandle     Pointer to mapping handle
-* \param pvMapFileBuf   Pointer to memory-mapped firmware image
-*
-* \retval none
-*/
-/*----------------------------------------------------------------------------*/
-
-VOID
-kalFirmwareImageUnmapping (
-    IN P_GLUE_INFO_T    prGlueInfo,
-    IN PVOID            prFwHandle,
-    IN PVOID            pvMapFileBuf
-    )
-{
-    DEBUGFUNC("kalFirmwareImageUnmapping");
-
-    ASSERT(prGlueInfo);
-    ASSERT(pvMapFileBuf);
-
-    release_firmware(prGlueInfo->prFw);
-
-}
 #endif
 
 /*----------------------------------------------------------------------------*/
@@ -4116,117 +3827,72 @@ kalGetMfpSetting(
 }
 #endif
 
-struct file*
-kalFileOpen(
-    const char* path,
-    int flags,
-    int rights)
-{
-    struct file* filp = NULL;
-    mm_segment_t oldfs;
-    int err = 0;
-
-    oldfs = get_fs();
-    set_fs(get_ds());
-    filp = filp_open(path, flags, rights);
-    set_fs(oldfs);
-    if(IS_ERR(filp)) {
-        err = PTR_ERR(filp);
-        return NULL;
-    }
-    return filp;
-}
-
-VOID
-kalFileClose(
-    struct file* file)
-{
-    filp_close(file, NULL);
-}
-
-UINT_32
-kalFileRead(
-    struct file* file,
-    UINT_64 offset,
-    UINT_8* data,
-    UINT_32 size)
-{
-    mm_segment_t oldfs;
-    INT_32 ret;
-
-    oldfs = get_fs();
-    set_fs(get_ds());
-
-    ret = vfs_read(file, data, size, &offset);
-
-    set_fs(oldfs);
-    return ret;
-}
-
-UINT_32
-kalFileWrite(
-    struct file* file,
-    UINT_64 offset,
-    UINT_8* data,
-    UINT_32 size)
-{
-    mm_segment_t oldfs;
-    INT_32 ret;
-
-    oldfs = get_fs();
-    set_fs(get_ds());
-
-    ret = vfs_write(file, data, size, &offset);
-
-    set_fs(oldfs);
-    return ret;
-}
-
 UINT_32
 kalWriteToFile(
     const PUINT_8 pucPath,
     BOOLEAN fgDoAppend,
     PUINT_8 pucData,
-    UINT_32 u4Size)
+    UINT_32 u4Size
+    )
 {
-    struct file* file = NULL;
-    UINT_32 ret;
+    struct file *file;
+    loff_t pos = 0;
+    ssize_t ret;
     UINT_32 u4Flags = 0;
 
     if(fgDoAppend) {
         u4Flags = O_APPEND;
     }
 
-    file = kalFileOpen(pucPath, O_WRONLY | O_CREAT | u4Flags, S_IRWXU);
-    ret = kalFileWrite(file, 0, pucData, u4Size);
-    kalFileClose(file);
+    file = filp_open(pucPath, O_WRONLY | O_CREAT | u4Flags, S_IRWXU);
+    if (IS_ERR(file)) {
+        return 0;
+    }
 
-    return ret;
+    ret = kernel_write(file, pucData, u4Size, &pos);
+    filp_close(file, NULL);
+
+    return (ret < 0) ? 0 : ret;
 }
 
+/*----------------------------------------------------------------------------*/
+/*!
+* \brief Read an optional configuration file through request_firmware().
+*
+* \param[in]  prGlueInfo   Pointer of GLUE Data Structure
+* \param[in]  pucName      File name without directory
+* \param[out] pucData      Destination buffer
+* \param[in]  u4Size       Size of the destination buffer
+* \param[out] pu4ReadSize  Number of bytes copied
+*
+* \retval 0        the file was read
+* \retval -ENOENT  the file does not exist; not an error for the caller
+*/
+/*----------------------------------------------------------------------------*/
 INT_32
 kalReadToFile(
-    const PUINT_8 pucPath,
+    IN P_GLUE_INFO_T prGlueInfo,
+    const PUINT_8 pucName,
     PUINT_8 pucData,
     UINT_32 u4Size,
     PUINT_32 pu4ReadSize
     )
 {
-    struct file* file = NULL;
-    INT_32 ret = -1;
-    UINT_32 u4ReadSize = 0;
+    const struct firmware *prFw = NULL;
+    UINT_32 u4Len;
 
-    DBGLOG(INIT, INFO, ("kalReadToFile() path %s\n", pucPath));
-
-    file = kalFileOpen(pucPath, O_RDONLY , 0);
-
-    if ((file != NULL) && !IS_ERR(file)) {
-        u4ReadSize = kalFileRead(file, 0, pucData, u4Size);
-        kalFileClose(file);
-        if(pu4ReadSize) *pu4ReadSize = u4ReadSize;
-        ret = 0;
+    if (firmware_request_nowarn(&prFw, pucName, (struct device *) prGlueInfo->rHifInfo.Dev)) {
+        return -ENOENT;
     }
-    return ret;
+
+    u4Len = min_t(UINT_32, u4Size, prFw->size);
+    kalMemCopy(pucData, prFw->data, u4Len);
+    if (pu4ReadSize) {
+        *pu4ReadSize = u4Len;
+    }
+    release_firmware(prFw);
+
+    return 0;
 }
 
 

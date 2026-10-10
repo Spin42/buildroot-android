@@ -2390,7 +2390,8 @@ UINT_64 kalGetBootTime(void);
 
 INT_32
 kalReadToFile(
-    const PUINT_8 pucPath,
+    IN P_GLUE_INFO_T prGlueInfo,
+    const PUINT_8 pucName,
     PUINT_8 pucData,
     UINT_32 u4Size,
     PUINT_32 pu4ReadSize

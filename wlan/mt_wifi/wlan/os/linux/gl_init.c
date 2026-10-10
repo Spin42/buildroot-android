@@ -2780,22 +2780,13 @@ wlanProbe(
 			pucConfigBuf = (PUINT_8) kalMemAlloc(WLAN_CFG_FILE_BUF_SIZE, VIR_MEM_TYPE);
 			kalMemZero(pucConfigBuf, WLAN_CFG_FILE_BUF_SIZE);
 			u4ConfigReadLen = 0;
-			printk("CFG_FILE: Read File...\n");
 			if(pucConfigBuf) {
-				if(kalReadToFile("/data/misc/wifi.cfg", 
+				/* optional; defaults apply when the file is absent */
+				if(kalReadToFile(prGlueInfo, "wifi.cfg",
 							pucConfigBuf, WLAN_CFG_FILE_BUF_SIZE, &u4ConfigReadLen) == 0){
-					printk(KERN_ERR "CFG_FILE: Read /data/misc/wifi.cfg \n");
+					DBGLOG(INIT, INFO, ("CFG_FILE: read wifi.cfg\n"));
+				}
 
-				}
-				else if(kalReadToFile("/data/misc/wifi/wifi.cfg", 
-							pucConfigBuf, WLAN_CFG_FILE_BUF_SIZE, &u4ConfigReadLen) == 0){
-					printk(KERN_ERR "CFG_FILE: Read /data/misc/wifi/wifi.cfg \n");
-				}
-				else if(kalReadToFile("/etc/firmware/wifi.cfg", 
-							pucConfigBuf, WLAN_CFG_FILE_BUF_SIZE, &u4ConfigReadLen) == 0){
-					printk(KERN_ERR "CFG_FILE: Read /etc/firmware/wifi.cfg \n");
-				}
-				
 				if(pucConfigBuf[0] != '\0' && u4ConfigReadLen>0) {
 					wlanCfgInit(prAdapter,pucConfigBuf,u4ConfigReadLen,0);
 				}
