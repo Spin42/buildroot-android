@@ -11,7 +11,8 @@
 #define BTIF_USER_ID "btif_driver"
 
 
-static spinlock_t g_clk_cg_spinlock;	/*BTIF clock's spinlock */
+static DEFINE_SPINLOCK(g_clk_cg_spinlock);	/*BTIF clock's spinlock */
+static atomic_t g_btif_clk_ref = ATOMIC_INIT(0);	/*users of the BTIF clock */
 
 /*-----------------------------BTIF Module Clock and Power Control Defination------------------*/
 
@@ -19,17 +20,15 @@ MTK_BTIF_IRQ_STR mtk_btif_irq = {
 	.name = "mtk btif irq",
 	.is_irq_sup = true,
 	.reg_flag = false,
-	.irq_id = MT_BTIF_IRQ_ID,
-	.sens_type = IRQ_SENS_LVL,
-	.lvl_type = IRQ_LVL_LOW,
+	.irq_id = 0,
+	.irq_flags = 0,
 	.p_irq_handler = NULL,
 };
 
-/*will call clock manager's API export by WCP to control BTIF's clock,
-but we may need to access these registers in case of btif clock control logic is wrong in clock manager*/
+/*base, irq and clock are filled in by hal_btif_hw_setup() at probe time*/
 
 MTK_BTIF_INFO_STR mtk_btif = {
-	.base = MTK_BTIF_REG_BASE,
+	.base = 0,
 	.p_irq = &mtk_btif_irq,
 	.tx_fifo_size = BTIF_TX_FIFO_SIZE,
 	.rx_fifo_size = BTIF_RX_FIFO_SIZE,
@@ -135,7 +134,7 @@ static int _btif_tx_fifo_init(P_MTK_BTIF_INFO_STR p_btif_info)
 		i_ret = 0;
 	} else {
 		BTIF_WARN_FUNC
-		    ("p_btif_info->p_tx_fifo is already init p_btif_info->p_tx_fifo(0x%x)\n",
+		    ("p_btif_info->p_tx_fifo is already init p_btif_info->p_tx_fifo(0x%p)\n",
 		     p_btif_info->p_tx_fifo);
 		i_ret = 0;
 	}
@@ -155,7 +154,7 @@ static int _get_btif_tx_fifo_room(P_MTK_BTIF_INFO_STR p_btif_info)
 		i_ret = kfifo_avail(p_btif_info->p_tx_fifo);
 	}
 	spin_unlock_irqrestore(&(p_btif_info->tx_fifo_spinlock), flag);
-	BTIF_DBG_FUNC("tx kfifo:0x%x, available room:%d\n", i_ret);
+	BTIF_DBG_FUNC("tx kfifo available room:%d\n", i_ret);
 	return i_ret;
 }
 
@@ -192,9 +191,44 @@ P_MTK_BTIF_INFO_STR hal_btif_info_get(void)
 		BTIF_ERR_FUNC("_btif_tx_fifo_init failed, i_ret:%d\n", i_ret);
 	}
 #endif
-	spin_lock_init(&g_clk_cg_spinlock);
 
 	return &mtk_btif;
+}
+
+void hal_btif_info_put(void)
+{
+	if (mtk_btif.p_tx_fifo) {
+		kfifo_free(mtk_btif.p_tx_fifo);
+		kfree(mtk_btif.p_tx_fifo);
+		mtk_btif.p_tx_fifo = NULL;
+	}
+}
+
+/*****************************************************************************
+* FUNCTION
+*  hal_btif_hw_setup
+* DESCRIPTION
+*  record the resources the device tree describes for the BTIF block
+* PARAMETERS
+* base     [IN]        mapped BTIF register block
+* clk      [IN]        PERICFG BTIF clock gate, NULL if the gate is not exposed
+* irq      [IN]        Linux IRQ number of the BTIF interrupt
+* RETURNS
+*  0 means success
+*****************************************************************************/
+int hal_btif_hw_setup(void __iomem *base, struct clk *clk, unsigned int irq)
+{
+	mtk_btif.base = (unsigned long)base;
+	mtk_btif.clk = clk;
+	mtk_btif_irq.irq_id = irq;
+	mtk_btif_irq.irq_flags = irq ? irq_get_trigger_type(irq) : 0;
+	return 0;
+}
+
+/*the clock is considered on while at least one user holds it*/
+static bool hal_btif_clk_is_on(void)
+{
+	return atomic_read(&g_btif_clk_ref) > 0;
 }
 
 /*****************************************************************************
@@ -210,90 +244,32 @@ P_MTK_BTIF_INFO_STR hal_btif_info_get(void)
 int hal_btif_clk_ctrl(P_MTK_BTIF_INFO_STR p_btif, ENUM_CLOCK_CTRL flag)
 {
 /*In MTK BTIF, there's only one global CG on AP_DMA, no sub channel's CG bit*/
-/*according to Artis's comment, clock of DMA and BTIF is default off, so we assume it to be off by default*/
+/*clock of DMA and BTIF is default off, so we assume it to be off by default*/
+/*the clock was prepared at probe time, enable/disable are safe in atomic context;
+a NULL clock (gate not exposed by the clock driver) makes them no-ops*/
 	int i_ret = 0;
 	unsigned long irq_flag = 0;
 
-#if MTK_BTIF_ENABLE_CLK_REF_COUNTER
-	static atomic_t s_clk_ref = ATOMIC_INIT(0);
-#else
-	static ENUM_CLOCK_CTRL status = CLK_OUT_DISABLE;
-#endif
 	spin_lock_irqsave(&(g_clk_cg_spinlock), irq_flag);
 
-#if MTK_BTIF_ENABLE_CLK_CTL
-
-#if MTK_BTIF_ENABLE_CLK_REF_COUNTER
-
 	if (CLK_OUT_ENABLE == flag) {
-		if (1 == atomic_inc_return(&s_clk_ref)) {
-			i_ret = enable_clock(MTK_BTIF_CG_BIT, BTIF_USER_ID);
+		if (1 == atomic_inc_return(&g_btif_clk_ref)) {
+			i_ret = clk_enable(p_btif->clk);
 			if (i_ret) {
-				BTIF_WARN_FUNC
-				    ("enable_clock for MTK_BTIF_CG_BIT failed, ret:%d",
-				     i_ret);
+				atomic_dec(&g_btif_clk_ref);
+				BTIF_WARN_FUNC("clk_enable for BTIF failed, ret:%d", i_ret);
 			}
 		}
 	} else if (CLK_OUT_DISABLE == flag) {
-		if (0 == atomic_dec_return(&s_clk_ref)) {
-			i_ret = disable_clock(MTK_BTIF_CG_BIT, BTIF_USER_ID);
-			if (i_ret) {
-				BTIF_WARN_FUNC
-				    ("disable_clock for MTK_BTIF_CG_BIT failed, ret:%d",
-				     i_ret);
-			}
-		}
+		if (0 == atomic_dec_return(&g_btif_clk_ref))
+			clk_disable(p_btif->clk);
 	} else {
 		i_ret = ERR_INVALID_PAR;
 		BTIF_ERR_FUNC("invalid	clock ctrl flag (%d)\n", flag);
 	}
 
-#else
-
-	if (status == flag) {
-		i_ret = 0;
-		BTIF_DBG_FUNC("btif clock already %s\n",
-			      CLK_OUT_ENABLE ==
-			      status ? "enabled" : "disabled");
-	} else {
-		if (CLK_OUT_ENABLE == flag) {
-			i_ret = enable_clock(MTK_BTIF_CG_BIT, BTIF_USER_ID);
-			status = (0 == i_ret) ? flag : status;
-			if (i_ret) {
-				BTIF_WARN_FUNC
-				    ("enable_clock for MTK_BTIF_CG_BIT failed, ret:%d",
-				     i_ret);
-			}
-		} else if (CLK_OUT_DISABLE == flag) {
-			i_ret = disable_clock(MTK_BTIF_CG_BIT, BTIF_USER_ID);
-			status = (0 == i_ret) ? flag : status;
-			if (i_ret) {
-				BTIF_WARN_FUNC
-				    ("disable_clock for MTK_BTIF_CG_BIT failed, ret:%d",
-				     i_ret);
-			}
-		} else {
-			i_ret = ERR_INVALID_PAR;
-			BTIF_ERR_FUNC("invalid	clock ctrl flag (%d)\n", flag);
-		}
-	}
-#endif
-
-#else
-
-#if MTK_BTIF_ENABLE_CLK_REF_COUNTER
-
-#else
-
-	status = flag;
-#endif
-
-	i_ret = 0;
-#endif
-
 	spin_unlock_irqrestore(&(g_clk_cg_spinlock), irq_flag);
 
-#if MTK_BTIF_ENABLE_CLK_REF_COUNTER
 	if (0 == i_ret) {
 		BTIF_DBG_FUNC("btif clock %s\n",
 			      CLK_OUT_ENABLE == flag ? "enabled" : "disabled");
@@ -302,27 +278,13 @@ int hal_btif_clk_ctrl(P_MTK_BTIF_INFO_STR p_btif, ENUM_CLOCK_CTRL flag)
 			      CLK_OUT_ENABLE == flag ? "enable" : "disable",
 			      i_ret);
 	}
-#else
-
-	if (0 == i_ret) {
-		BTIF_DBG_FUNC("btif clock %s\n",
-			      CLK_OUT_ENABLE == flag ? "enabled" : "disabled");
-	} else {
-		BTIF_ERR_FUNC("%s btif clock failed, ret(%d)\n",
-			      CLK_OUT_ENABLE == flag ? "enable" : "disable",
-			      i_ret);
-	}
-#endif
-#if MTK_BTIF_ENABLE_CLK_CTL
-	BTIF_DBG_FUNC("BTIF's clock is %s\n",
-		      (0 == clock_is_on(MTK_BTIF_CG_BIT)) ? "off" : "on");
-#endif
+	BTIF_DBG_FUNC("BTIF's clock is %s\n", hal_btif_clk_is_on() ? "on" : "off");
 	return i_ret;
 }
 
 static int btif_new_handshake_ctrl(P_MTK_BTIF_INFO_STR p_btif, bool enable)
 {
-	unsigned int base = p_btif->base;
+	unsigned long base = p_btif->base;
 
 	if (true == enable) {
 		BTIF_SET_BIT(BTIF_HANDSHAKE(base), BTIF_HANDSHAKE_EN_HANDSHAKE);
@@ -346,7 +308,7 @@ int hal_btif_hw_init(P_MTK_BTIF_INFO_STR p_btif)
 {
 /*Chaozhong: To be implement*/
 	int i_ret = -1;
-	unsigned int base = p_btif->base;
+	unsigned long base = p_btif->base;
 
 #if NEW_TX_HANDLING_SUPPORT
 	_btif_tx_fifo_reset(p_btif);
@@ -366,9 +328,9 @@ int hal_btif_hw_init(P_MTK_BTIF_INFO_STR p_btif)
 			     | BTIF_TRI_LOOP_DIS, BTIF_TRI_LVL(base));
 	hal_btif_loopback_ctrl(p_btif, false);
 /*disable BTIF Tx DMA mode*/
-	hal_btif_tx_mode_ctrl(p_btif, false);
+	hal_btif_tx_mode_ctrl(p_btif, BTIF_MODE_PIO);
 /*disable BTIF Rx DMA mode*/
-	hal_btif_rx_mode_ctrl(p_btif, false);
+	hal_btif_rx_mode_ctrl(p_btif, BTIF_MODE_PIO);
 /*auto reset*/
 	BTIF_SET_BIT(BTIF_DMA_EN(base), BTIF_DMA_EN_AUTORST_EN);
 /*disable Tx IER*/
@@ -394,7 +356,7 @@ int hal_btif_hw_init(P_MTK_BTIF_INFO_STR p_btif)
 int hal_btif_rx_ier_ctrl(P_MTK_BTIF_INFO_STR p_btif, bool en)
 {
 	int i_ret = -1;
-	unsigned int base = p_btif->base;
+	unsigned long base = p_btif->base;
 
 	if (false == en) {
 		BTIF_CLR_BIT(BTIF_IER(base), BTIF_IER_RXFEN);
@@ -421,7 +383,7 @@ int hal_btif_rx_ier_ctrl(P_MTK_BTIF_INFO_STR p_btif, bool en)
 int hal_btif_tx_ier_ctrl(P_MTK_BTIF_INFO_STR p_btif, bool en)
 {
 	int i_ret = -1;
-	unsigned int base = p_btif->base;
+	unsigned long base = p_btif->base;
 
 	if (false == en) {
 		BTIF_CLR_BIT(BTIF_IER(base), BTIF_IER_TXEEN);
@@ -468,7 +430,7 @@ int _btif_receive_data(P_MTK_BTIF_INFO_STR p_btif,
 int btif_sleep_ctrl(P_MTK_BTIF_INFO_STR p_btif, bool en)
 {
 	int i_ret = -1;
-	unsigned int base = p_btif->base;
+	unsigned long base = p_btif->base;
 
 	if (false == en) {
 		BTIF_CLR_BIT(BTIF_SLEEP_EN(base), BTIF_SLEEP_EN_BIT);
@@ -487,7 +449,7 @@ int btif_sleep_ctrl(P_MTK_BTIF_INFO_STR p_btif, bool en)
 static int btif_tx_thr_set(P_MTK_BTIF_INFO_STR p_btif, unsigned int thr_count)
 {
 	int i_ret = -1;
-	unsigned int base = p_btif->base;
+	unsigned long base = p_btif->base;
 	unsigned int value = 0;
 
 /*read BTIF_TRI_LVL*/
@@ -517,7 +479,7 @@ static int btif_rx_fifo_reset(P_MTK_BTIF_INFO_STR p_btif)
 {
 /*Chaozhong: To be implement*/
 	int i_ret = -1;
-	unsigned int base = p_btif->base;
+	unsigned long base = p_btif->base;
 
 /*set Rx FIFO clear bit to 1*/
 	BTIF_SET_BIT(BTIF_FIFOCTRL(base), BTIF_FIFOCTRL_CLR_RX);
@@ -544,7 +506,7 @@ static int btif_rx_fifo_reset(P_MTK_BTIF_INFO_STR p_btif)
 static int btif_tx_fifo_reset(P_MTK_BTIF_INFO_STR p_btif)
 {
 	int i_ret = -1;
-	unsigned int base = p_btif->base;
+	unsigned long base = p_btif->base;
 
 /*set Tx FIFO clear bit to 1*/
 	BTIF_SET_BIT(BTIF_FIFOCTRL(base), BTIF_FIFOCTRL_CLR_TX);
@@ -572,7 +534,7 @@ static int btif_tx_fifo_reset(P_MTK_BTIF_INFO_STR p_btif)
 int hal_btif_loopback_ctrl(P_MTK_BTIF_INFO_STR p_btif, bool en)
 {
 	int i_ret = -1;
-	unsigned int base = p_btif->base;
+	unsigned long base = p_btif->base;
 
 	if (false == en) {
 		BTIF_CLR_BIT(BTIF_TRI_LVL(base), BTIF_TRI_LOOP_EN);
@@ -606,7 +568,7 @@ int hal_btif_irq_handler(P_MTK_BTIF_INFO_STR p_btif,
 	int i_ret = -1;
 	unsigned int iir = 0;
 	unsigned int rx_len = 0;
-	unsigned int base = p_btif->base;
+	unsigned long base = p_btif->base;
 	unsigned long irq_flag = 0;
 
 #if 0
@@ -618,7 +580,7 @@ int hal_btif_irq_handler(P_MTK_BTIF_INFO_STR p_btif,
 #endif
 	spin_lock_irqsave(&(g_clk_cg_spinlock), irq_flag);
 #if MTK_BTIF_ENABLE_CLK_CTL
-	if (0 == clock_is_on(MTK_BTIF_CG_BIT)) {
+	if (!hal_btif_clk_is_on()) {
 		spin_unlock_irqrestore(&(g_clk_cg_spinlock), irq_flag);
 		BTIF_ERR_FUNC("%s: clock is off before irq handle done!!!\n",
 			      __FILE__);
@@ -660,7 +622,7 @@ int hal_btif_rx_cb_reg(P_MTK_BTIF_INFO_STR p_btif_info, btif_rx_buf_write rx_cb)
 {
 	if (NULL != p_btif_info->rx_cb) {
 		BTIF_INFO_FUNC
-		    ("rx_cb already registered, replace (0x%08x) with (0x%08x)\n",
+		    ("rx_cb already registered, replace (0x%p) with (0x%p)\n",
 		     p_btif_info->rx_cb, rx_cb);
 	}
 	p_btif_info->rx_cb = rx_cb;
@@ -685,7 +647,7 @@ static int btif_rx_irq_handler(P_MTK_BTIF_INFO_STR p_btif_info,
 	int i_ret = 0;
 	unsigned int iir = 0;
 	unsigned int rx_len = 0;
-	unsigned int base = p_btif_info->base;
+	unsigned long base = p_btif_info->base;
 	unsigned char rx_buf[256];
 	unsigned int local_buf_len = 256;
 	btif_rx_buf_write rx_cb = p_btif_info->rx_cb;
@@ -744,7 +706,7 @@ static int btif_tx_irq_handler(P_MTK_BTIF_INFO_STR p_btif)
 	int how_many = 0;
 	unsigned int lsr;
 	unsigned int ava_len = 0;
-	unsigned int base = p_btif->base;
+	unsigned long base = p_btif->base;
 	char local_buf[BTIF_TX_FIFO_SIZE];
 	char *p_data = local_buf;
 	unsigned long flag = 0;
@@ -803,7 +765,7 @@ ret:
 int hal_btif_tx_mode_ctrl(P_MTK_BTIF_INFO_STR p_btif, ENUM_BTIF_MODE mode)
 {
 	int i_ret = -1;
-	unsigned int base = p_btif->base;
+	unsigned long base = p_btif->base;
 
 	if (BTIF_MODE_DMA == mode) {
 /*set to DMA mode*/
@@ -831,7 +793,7 @@ int hal_btif_tx_mode_ctrl(P_MTK_BTIF_INFO_STR p_btif, ENUM_BTIF_MODE mode)
 int hal_btif_rx_mode_ctrl(P_MTK_BTIF_INFO_STR p_btif, ENUM_BTIF_MODE mode)
 {
 	int i_ret = -1;
-	unsigned int base = p_btif->base;
+	unsigned long base = p_btif->base;
 
 	if (BTIF_MODE_DMA == mode) {
 /*set to DMA mode*/
@@ -868,7 +830,7 @@ int hal_btif_send_data(P_MTK_BTIF_INFO_STR p_btif,
 	unsigned int sent_len = 0;
 
 #if !(NEW_TX_HANDLING_SUPPORT)
-	unsigned int base = p_btif->base;
+	unsigned long base = p_btif->base;
 	unsigned int lsr = 0;
 	unsigned int left_len = 0;
 	unsigned char *p_data = (unsigned char *)p_buf;
@@ -893,7 +855,7 @@ int hal_btif_send_data(P_MTK_BTIF_INFO_STR p_btif,
 				      sent_len, enqueue_len);
 		}
 		i_ret = enqueue_len;
-		dsb();
+		wmb();
 /*enable BTIF Tx IRQ*/
 		hal_btif_tx_ier_ctrl(p_btif, true);
 		spin_unlock_irqrestore(&(p_btif->tx_fifo_spinlock), flag);
@@ -955,9 +917,9 @@ CPU will make sure logically right
 int hal_btif_raise_wak_sig(P_MTK_BTIF_INFO_STR p_btif)
 {
 	int i_ret = -1;
-	unsigned int base = p_btif->base;
+	unsigned long base = p_btif->base;
 #if MTK_BTIF_ENABLE_CLK_CTL
-	if (0 == clock_is_on(MTK_BTIF_CG_BIT)) {
+	if (!hal_btif_clk_is_on()) {
 		BTIF_ERR_FUNC("%s: clock is off before send wakeup signal!!!\n",
 			      __FILE__);
 		return i_ret;
@@ -995,14 +957,14 @@ int hal_btif_dump_reg(P_MTK_BTIF_INFO_STR p_btif, ENUM_BTIF_REG_ID flag)
 	int i_ret = -1;
 	int idx = 0;
 	/*unsigned long irq_flag = 0;*/
-	unsigned int base = p_btif->base;
+	unsigned long base = p_btif->base;
 	unsigned char reg_map[0xE0 / 4] = { 0 };
 	unsigned int lsr = 0x0;
 	unsigned int dma_en = 0;
 
 	/*spin_lock_irqsave(&(g_clk_cg_spinlock), irq_flag);*/
 #if MTK_BTIF_ENABLE_CLK_CTL
-	if (0 == clock_is_on(MTK_BTIF_CG_BIT)) {
+	if (!hal_btif_clk_is_on()) {
 		/*spin_unlock_irqrestore(&(g_clk_cg_spinlock), irq_flag);*/
 		BTIF_ERR_FUNC("%s: clock is off, this should never happen!!!\n",
 			      __FILE__);
@@ -1017,7 +979,7 @@ int hal_btif_dump_reg(P_MTK_BTIF_INFO_STR p_btif, ENUM_BTIF_REG_ID flag)
 		reg_map[idx] = BTIF_READ8(p_btif->base + (4 * idx));
 	/*spin_unlock_irqrestore(&(g_clk_cg_spinlock), irq_flag);*/
 	BTIF_INFO_FUNC("BTIF's clock is on\n");
-	BTIF_INFO_FUNC("base address: 0x%x\n", base);
+	BTIF_INFO_FUNC("base address: 0x%lx\n", base);
 	switch (flag) {
 	case REG_BTIF_ALL:
 #if 0
@@ -1074,7 +1036,7 @@ bool hal_btif_is_tx_complete(P_MTK_BTIF_INFO_STR p_btif)
 	bool b_ret = false;
 	unsigned int lsr = 0;
 	unsigned long flags = 0;
-	unsigned int base = p_btif->base;
+	unsigned long base = p_btif->base;
 	unsigned int tx_empty = 0;
 	unsigned int rx_dr = 0;
 	unsigned int tx_irq_disable = 0;
@@ -1138,7 +1100,7 @@ bool hal_btif_is_tx_allow(P_MTK_BTIF_INFO_STR p_btif)
 	spin_unlock_irqrestore(&(p_btif->tx_fifo_spinlock), flags);
 #else
 	unsigned int lsr = 0;
-	unsigned int base = p_btif->base;
+	unsigned long base = p_btif->base;
 	unsigned int wait_us = (BTIF_TX_FIFO_SIZE - BTIF_TX_FIFO_THRE) / MIN_TX_MB; /*only ava length */
 
 /*read LSR and check THER or TEMT, either one is 1 means can accept tx data*/
@@ -1165,7 +1127,7 @@ static bool _btif_is_tx_allow(P_MTK_BTIF_INFO_STR p_btif)
 {
 /*Chaozhong: To be implement*/
 	bool b_ret = false;
-	unsigned int base = p_btif->base;
+	unsigned long base = p_btif->base;
 	unsigned int lsr = 0;
 
 /*read LSR and check THER or TEMT, either one is 1 means can accept tx data*/
@@ -1193,36 +1155,9 @@ int hal_btif_pm_ops(P_MTK_BTIF_INFO_STR p_btif_info, MTK_BTIF_PM_OPID opid)
 	case BTIF_PM_RESUME:
 		i_ret = 0;
 		break;
-	case BTIF_PM_RESTORE_NOIRQ:{
-			unsigned int flag = 0;
-			P_MTK_BTIF_IRQ_STR p_irq = p_btif_info->p_irq;
-			switch (p_irq->sens_type) {
-			case IRQ_SENS_EDGE:
-				if (IRQ_EDGE_FALL == p_irq->edge_type)
-					flag = IRQF_TRIGGER_FALLING;
-				else if (IRQ_EDGE_RAISE == p_irq->edge_type)
-					flag = IRQF_TRIGGER_RISING;
-				else if (IRQ_EDGE_BOTH == p_irq->edge_type)
-					flag = IRQF_TRIGGER_RISING |
-					    IRQF_TRIGGER_FALLING;
-				else
-					flag = IRQF_TRIGGER_FALLING;	/*make this as default type */
-				break;
-			case IRQ_SENS_LVL:
-				if (IRQ_LVL_LOW == p_irq->lvl_type)
-					flag = IRQF_TRIGGER_LOW;
-				else if (IRQ_LVL_HIGH == p_irq->lvl_type)
-					flag = IRQF_TRIGGER_HIGH;
-				else
-					flag = IRQF_TRIGGER_LOW;	/*make this as default type */
-				break;
-			default:
-				flag = IRQF_TRIGGER_LOW;	/*make this as default type */
-				break;
-			}
-/* irq_set_irq_type(p_irq->irq_id, flag); */
-			i_ret = 0;
-		}
+	case BTIF_PM_RESTORE_NOIRQ:
+/*the IRQ trigger type is owned by the interrupt controller, nothing to restore*/
+		i_ret = 0;
 		break;
 	default:
 		i_ret = ERR_INVALID_PAR;

@@ -3,8 +3,6 @@
 
 #include "hal_btif_dma_pub.h"
 
-#define MTK_BTIF_APDMA_CLK_CG MT_CG_PERI_AP_DMA
-
 #define TX_DMA_VFF_SIZE (1024 * 8)	/*Tx vFIFO Len must be 8 Byte allignment */
 #define RX_DMA_VFF_SIZE (1024 * 8)	/*Rx vFIFO Len must be 8 Byte allignment */
 
@@ -12,9 +10,11 @@
 #define DMA_RX_THRE(n) ((n) * 3 / 4)	/*Rx Trigger Level */
 
 /**********************************Hardware related defination**************************/
-/*DMA channel's offset refer to AP_DMA's base address*/
+/*DMA channel's offset refer to AP_DMA's base address (0x11000000 on MT8127);
+the device tree maps each channel's register block directly*/
 #define BTIF_TX_DMA_OFFSET 0x780
 #define BTIF_RX_DMA_OFFSET 0x800
+#define BTIF_DMA_CH_REG_SIZE 0x80
 
 /*Regster Address Mapping*/
 #define DMA_INT_FLAG_OFFSET  0x00

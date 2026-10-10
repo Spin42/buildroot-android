@@ -1,9 +1,6 @@
 #ifndef __HAL_BTIF_H_
 #define __HAL_BTIF_H_
 
-#define MTK_BTIF_REG_BASE BTIF_BASE
-#define MTK_BTIF_CG_BIT MT_CG_PERI_BTIF
-
 #define BTIF_RBR(base)         (base + 0x0)	/*RX Buffer Register: read only */
 #define BTIF_THR(base)         (base + 0x0) /*Rx Holding Register: write only */
 #define BTIF_IER(base)         (base + 0x4) /*Interrupt Enable Register: read/write */

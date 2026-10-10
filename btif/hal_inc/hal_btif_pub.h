@@ -21,6 +21,7 @@ typedef enum _ENUM_BTIF_MODE_ {
 *  BTIF's informations
 *****************************************************************************/
 P_MTK_BTIF_INFO_STR hal_btif_info_get(void);
+void hal_btif_info_put(void);
 
 #if 0				/*included in hal_btif_info_get */
 /*****************************************************************************
@@ -34,6 +35,20 @@ P_MTK_BTIF_INFO_STR hal_btif_info_get(void);
 *****************************************************************************/
 P_MTK_BTIF_IRQ_STR hal_btif_get_irq(void);
 #endif
+
+/*****************************************************************************
+* FUNCTION
+*  hal_btif_hw_setup
+* DESCRIPTION
+*  record the device tree resources (register base, clock gate, IRQ)
+* PARAMETERS
+* base     [IN]        mapped BTIF register block
+* clk      [IN]        BTIF clock gate, NULL if absent
+* irq      [IN]        Linux IRQ number
+* RETURNS
+*  0 means success, negative means fail
+*****************************************************************************/
+int hal_btif_hw_setup(void __iomem *base, struct clk *clk, unsigned int irq);
 
 /*****************************************************************************
 * FUNCTION
