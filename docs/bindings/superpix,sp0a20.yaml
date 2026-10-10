@@ -26,7 +26,8 @@ properties:
     const: 0x21
 
   clocks:
-    description: External clock (MCLK), 24 MHz.
+    description:
+      External clock (MCLK), 24 MHz, provided by the camera subsystem node.
     maxItems: 1
 
   clock-names:
@@ -35,8 +36,8 @@ properties:
 
   clock-frequency:
     description:
-      Frequency of the external clock in Hz. Used when the clock is not
-      described by a provider.
+      Frequency of the external clock in Hz. When absent the rate of the
+      clock provider is used.
     const: 24000000
 
   avdd-supply:
@@ -85,7 +86,8 @@ properties:
 required:
   - compatible
   - reg
-  - clock-frequency
+  - clocks
+  - clock-names
   - avdd-supply
   - dovdd-supply
   - powerdown-gpios
@@ -104,7 +106,8 @@ examples:
         camera@21 {
             compatible = "superpix,sp0a20";
             reg = <0x21>;
-            clock-frequency = <24000000>;
+            clocks = <&camsys>;
+            clock-names = "xclk";
             avdd-supply = <&mt6323_vcama_reg>;
             dovdd-supply = <&mt6323_vcamio_reg>;
             reset-gpios = <&pio 55 GPIO_ACTIVE_LOW>;
@@ -114,7 +117,7 @@ examples:
 
             port {
                 endpoint {
-                    remote-endpoint = <&seninf_csi1_ep>;
+                    remote-endpoint = <&camsys_csi1_ep>;
                     data-lanes = <1>;
                     link-frequencies = /bits/ 64 <104000000>;
                 };
