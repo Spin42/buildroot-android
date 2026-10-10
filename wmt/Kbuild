@@ -1,7 +1,8 @@
 # WMT core, STP and the BTIF link (the hardware glue is in ../consys, the BTIF driver in ../btif)
 ccflags-y += -I$(src)/linux/include -I$(src)/linux/pri/include -I$(src)/core/include -I$(src)/include \
-	     -I$(src)/../btif/inc -I$(src)/../consys/include -I$(src)/../compat \
-	     -DWMT_PLAT_ALPS -DMTK_WCN_WMT_STP_EXP_SYMBOL_ABSTRACT -DWMT_IDC_SUPPORT=0
+	     -I$(src)/../btif/inc -I$(src)/../consys/include -I$(src)/compat -I$(src)/../compat \
+	     -DWMT_PLAT_ALPS -DWMT_IDC_SUPPORT=0 \
+	     -Wno-missing-prototypes -Wno-missing-declarations -Wno-old-style-declaration -Wno-undef
 
 obj-m += mtk_stp_wmt_soc.o
 mtk_stp_wmt_soc-y := core/wmt_core.o core/wmt_ctrl.o core/wmt_func.o core/wmt_ic_soc.o core/wmt_lib.o \

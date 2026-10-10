@@ -39,13 +39,7 @@
 #include <linux/spinlock.h>
 #include <linux/delay.h> /* udelay() */
 
-#include <asm/uaccess.h>
-
-#ifdef CONFIG_MTK_WCN_ARM64
-#include <system.h>
-#else
-#include <asm/system.h>
-#endif
+#include <linux/uaccess.h>
 
 #include "osal_typedef.h"
 #include "stp_core.h"
