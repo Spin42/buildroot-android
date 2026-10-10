@@ -547,10 +547,6 @@
 extern int allocatedMemSize;
 #endif
 
-#if CFG_SUPPORT_MET_PROFILING
-#include "linux/kallsyms.h"
-#include <linux/ftrace_event.h>
-#endif
 /*******************************************************************************
 *                              C O N S T A N T S
 ********************************************************************************
@@ -628,24 +624,6 @@ typedef struct wake_lock    KAL_WAKE_LOCK_T, *P_KAL_WAKE_LOCK_T;
 typedef UINT_32             KAL_WAKE_LOCK_T, *P_KAL_WAKE_LOCK_T;
 #endif
 
-#if CFG_SUPPORT_AGPS_ASSIST
-typedef enum _ENUM_MTK_AGPS_ATTR {
-	MTK_ATTR_AGPS_INVALID,
-	MTK_ATTR_AGPS_CMD,
-	MTK_ATTR_AGPS_DATA,
-	MTK_ATTR_AGPS_IFINDEX,
-	MTK_ATTR_AGPS_IFNAME,
-	MTK_ATTR_AGPS_MAX
-} ENUM_MTK_CCX_ATTR;
-
-typedef enum _ENUM_AGPS_EVENT {
-	AGPS_EVENT_WLAN_ON,
-	AGPS_EVENT_WLAN_OFF,
-	AGPS_EVENT_WLAN_AP_LIST,
-} ENUM_CCX_EVENT;
-BOOLEAN kalIndicateAgpsNotify(P_ADAPTER_T prAdapter, UINT_8 cmd, PUINT_8 data
-, UINT_16 dataLen);
-#endif
 
 /*******************************************************************************
 *                            P U B L I C   D A T A
@@ -664,7 +642,7 @@ BOOLEAN kalIndicateAgpsNotify(P_ADAPTER_T prAdapter, UINT_8 cmd, PUINT_8 data
 /*----------------------------------------------------------------------------*/
 /* Macros of SPIN LOCK operations for using in Driver Layer                   */
 /*----------------------------------------------------------------------------*/
-#define KAL_SPIN_LOCK_DECLARATION()             UINT_32 __u4Flags
+#define KAL_SPIN_LOCK_DECLARATION()             unsigned long __u4Flags
 
 #define KAL_ACQUIRE_SPIN_LOCK(_prAdapter, _rLockCategory)   \
             kalAcquireSpinLock(((P_ADAPTER_T)_prAdapter)->prGlueInfo, _rLockCategory, &__u4Flags)
@@ -823,7 +801,7 @@ BOOLEAN kalIndicateAgpsNotify(P_ADAPTER_T prAdapter, UINT_8 cmd, PUINT_8 data
 #define kalStrnChr(s, n, c)                           strnchr(s, n, c)
 #define kalStrLen(s)                                strlen(s)
 #define kalStrnLen(s, b)                             strnlen(s, b)
-#define kalStrniCmp(s1,s2,n)                          strnicmp(s1,s2, n)
+#define kalStrniCmp(s1,s2,n)                          strncasecmp(s1,s2, n)
 #define kalStrtoul(cp, endp, base)                    simple_strtoul(cp, endp, base)
 #define kalStrtol(cp, endp, base)                    simple_strtol(cp, endp, base)
 #define kalSnprintf(buf, size, fmt, ...)              snprintf(buf, size, fmt, __VA_ARGS__)
@@ -1747,20 +1725,26 @@ VOID
 kalAcquireSpinLock(
     IN P_GLUE_INFO_T                prGlueInfo,
     IN ENUM_SPIN_LOCK_CATEGORY_E    rLockCategory,
-    OUT PUINT_32                    pu4Flags
+    OUT unsigned long               *pulFlags
     );
 
 VOID
 kalReleaseSpinLock(
     IN P_GLUE_INFO_T                prGlueInfo,
     IN ENUM_SPIN_LOCK_CATEGORY_E    rLockCategory,
-    IN UINT_32                      u4Flags
+    IN unsigned long                ulFlags
     );
 
 VOID
 kalUpdateMACAddress(
     IN P_GLUE_INFO_T    prGlueInfo,
     IN PUINT_8          pucMacAddr
+    );
+
+VOID
+kalQueryRegistryMacAddr (
+    IN  P_GLUE_INFO_T   prGlueInfo,
+    OUT PUINT_8         paucMacAddr
     );
 
 VOID
@@ -1779,7 +1763,7 @@ kalPacketAlloc(
 VOID
 kalOsTimerInitialize(
     IN P_GLUE_INFO_T     prGlueInfo,
-    IN PVOID             prTimerHandler
+    IN void              (*prTimerHandler)(struct timer_list *)
     );
 
 BOOLEAN
@@ -2217,7 +2201,7 @@ kalRandomNumber(
     );
 
 VOID
-kalTimeoutHandler (ULONG arg);
+kalTimeoutHandler (struct timer_list *prTimer);
 
 VOID
 kalSetEvent (P_GLUE_INFO_T pr);
@@ -2390,7 +2374,8 @@ UINT_64 kalGetBootTime(void);
 
 INT_32
 kalReadToFile(
-    const PUINT_8 pucPath,
+    IN P_GLUE_INFO_T prGlueInfo,
+    const PUINT_8 pucName,
     PUINT_8 pucData,
     UINT_32 u4Size,
     PUINT_32 pu4ReadSize

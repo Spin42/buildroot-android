@@ -72,7 +72,7 @@ static void mtk_wifi_reset(
 *                   F U N C T I O N   D E C L A R A T I O N S
 ********************************************************************************
 */
-static void *
+static void
 glResetCallback (
     ENUM_WMTDRV_TYPE_T  eSrcType,
     ENUM_WMTDRV_TYPE_T  eDstType,
@@ -103,7 +103,7 @@ glResetInit(
 {
 #if (MTK_WCN_SINGLE_MODULE == 0)
     /* 1. Register reset callback */
-    mtk_wcn_wmt_msgcb_reg(WMTDRV_TYPE_WIFI, (PF_WMT_CB)glResetCallback);
+    mtk_wcn_wmt_msgcb_reg(WMTDRV_TYPE_WIFI, glResetCallback);
 #endif /* MTK_WCN_SINGLE_MODULE */
 
     /* 2. Initialize reset work */
@@ -150,7 +150,7 @@ glResetUninit(
  * @retval 
  */
 /*----------------------------------------------------------------------------*/
-static void *
+static void
 glResetCallback (
     ENUM_WMTDRV_TYPE_T  eSrcType,
     ENUM_WMTDRV_TYPE_T  eDstType,
@@ -168,7 +168,6 @@ glResetCallback (
             case WMTRSTMSG_RESET_START:
                 DBGLOG(INIT, WARN, ("Whole chip reset start!\n"));
                 fgIsResetting = TRUE;
-                wifi_reset_start();
                 break;
 
             case WMTRSTMSG_RESET_END:
@@ -194,8 +193,6 @@ glResetCallback (
     default:
         break;
     }
-
-    return NULL;
 }
 
 
@@ -215,7 +212,15 @@ static void mtk_wifi_reset(
     )
 {
     RESET_STRUCT_T *rst = container_of(work, RESET_STRUCT_T, rst_work);
-    wifi_reset_end(rst->rst_data);
+
+    /* The WMT core powered every function off for the reset; bring the WiFi
+     * function back if it was running. */
+    if (rst->rst_data == RESET_SUCCESS && wlanIsRequested()) {
+        DBGLOG(INIT, WARN, ("WiFi state recovering...\n"));
+        if (mtk_wcn_wmt_func_on(WMTDRV_TYPE_WIFI) == 0) {
+            DBGLOG(INIT, ERROR, ("WMT could not power the WiFi function again\n"));
+        }
+    }
     return;
 }
 

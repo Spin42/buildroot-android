@@ -106,11 +106,13 @@ typedef void (*PF_WMT_CB)(
 ********************************************************************************
 */
 
+/* WMT core: returns MTK_WCN_BOOL, 0 on failure */
+extern int mtk_wcn_wmt_func_on(ENUM_WMTDRV_TYPE_T eType);
+extern int mtk_wcn_wmt_func_off(ENUM_WMTDRV_TYPE_T eType);
+
 #if CFG_CHIP_RESET_SUPPORT
 extern int mtk_wcn_wmt_msgcb_reg(ENUM_WMTDRV_TYPE_T eType, PF_WMT_CB pCb);
 extern int mtk_wcn_wmt_msgcb_unreg(ENUM_WMTDRV_TYPE_T eType);
-extern int wifi_reset_start(void);
-extern int wifi_reset_end(ENUM_RESET_STATUS_T);
 #endif
 
 /*******************************************************************************
@@ -155,6 +157,12 @@ glSendResetRequest(
 
 BOOLEAN
 kalIsResetting(
+    VOID
+    );
+
+/* gl_init.c */
+BOOLEAN
+wlanIsRequested(
     VOID
     );
 

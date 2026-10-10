@@ -106,9 +106,7 @@
 #include <linux/module.h>
 #include <linux/fs.h>
 
-#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 12)
     #include <linux/uaccess.h>
-#endif
 
 #include "gl_os.h"
 
@@ -125,8 +123,6 @@ extern BOOLEAN fgIsUnderSuspend;
 *                              C O N S T A N T S
 ********************************************************************************
 */
-#define WIFI_NVRAM_FILE_NAME   "/data/nvram/APCFG/APRDEB/WIFI"
-#define WIFI_NVRAM_CUSTOM_NAME "/data/nvram/APCFG/APRDEB/WIFI_CUSTOM"
 
 
 /*******************************************************************************
@@ -206,8 +202,7 @@ static int netdev_event(struct notifier_block *nb, unsigned long notification, v
 
     // <3> get the IPv4 address
     if(!prDev || !(prDev->ip_ptr)||\
-            !((struct in_device *)(prDev->ip_ptr))->ifa_list||\
-            !(&(((struct in_device *)(prDev->ip_ptr))->ifa_list->ifa_local))){
+            !((struct in_device *)(prDev->ip_ptr))->ifa_list){
         DBGLOG(REQ, INFO, ("ip is not avaliable.\n"));
         return NOTIFY_DONE;
     }
@@ -227,8 +222,7 @@ static int netdev_event(struct notifier_block *nb, unsigned long notification, v
 //#ifdef  CONFIG_IPV6
 #if 0
     if(!prDev || !(prDev->ip6_ptr)||\
-        !((struct in_device *)(prDev->ip6_ptr))->ifa_list||\
-        !(&(((struct in_device *)(prDev->ip6_ptr))->ifa_list->ifa_local))){
+        !((struct in_device *)(prDev->ip6_ptr))->ifa_list){
         printk(KERN_INFO "ipv6 is not avaliable.\n");
         return NOTIFY_DONE;
     }
@@ -373,9 +367,6 @@ void wlanRegisterNotifier(void)
 {
     register_inetaddr_notifier(&inetaddr_notifier);
 
-#if CFG_SUPPORT_HOTSPOT_2_0 
-    //register_inet6addr_notifier(&inet6addr_notifier);
-#endif
 }
 
 //EXPORT_SYMBOL(wlanRegisterNotifier);
@@ -384,172 +375,16 @@ void wlanUnregisterNotifier(void)
 {
     unregister_inetaddr_notifier(&inetaddr_notifier);
 
-#if CFG_SUPPORT_HOTSPOT_2_0 
-    //unregister_inetaddr_notifier(&inet6addr_notifier);
-#endif
 }
 
 //EXPORT_SYMBOL(wlanUnregisterNotifier);
 
 /*----------------------------------------------------------------------------*/
 /*!
-* \brief Utility function for reading data from files on NVRAM-FS
+* \brief API for reading data on NVRAM. There is no NVRAM on this platform; the
+*        caller keeps its defaults.
 *
-* \param[in]
-*           filename
-*           len
-*           offset
-* \param[out]
-*           buf
-* \return
-*           actual length of data being read
-*/
-/*----------------------------------------------------------------------------*/
-static int
-nvram_read(
-    char *filename,
-    char *buf,
-    ssize_t len,
-    int offset)
-{
-#if CFG_SUPPORT_NVRAM
-    struct file *fd;
-    int retLen = -1;
-
-    mm_segment_t old_fs = get_fs();
-    set_fs(KERNEL_DS);
-
-    fd = filp_open(filename, O_RDONLY, 0644);
-
-    if(IS_ERR(fd)) {
-        DBGLOG(INIT, INFO, ("[MT6620][nvram_read] : failed to open!!\n"));
-        return -1;
-    }
-
-    do {
-        if ((fd->f_op == NULL) || (fd->f_op->read == NULL)) {
-            DBGLOG(INIT, INFO, ("[MT6620][nvram_read] : file can not be read!!\n"));
-            break;
-        }
-
-        if (fd->f_pos != offset) {
-            if (fd->f_op->llseek) {
-                if(fd->f_op->llseek(fd, offset, 0) != offset) {
-                    DBGLOG(INIT, INFO, ("[MT6620][nvram_read] : failed to seek!!\n"));
-                    break;
-                }
-            }
-            else {
-                fd->f_pos = offset;
-            }
-        }
-
-        retLen = fd->f_op->read(fd,
-                buf,
-                len,
-                &fd->f_pos);
-
-    } while(FALSE);
-
-    filp_close(fd, NULL);
-
-    set_fs(old_fs);
-
-    return retLen;
-
-#else // !CFG_SUPPORT_NVRAM
-
-    return -EIO;
-
-#endif
-}
-
-
-/*----------------------------------------------------------------------------*/
-/*!
-* \brief Utility function for writing data to files on NVRAM-FS
-*
-* \param[in]
-*           filename
-*           buf
-*           len
-*           offset
-* \return
-*           actual length of data being written
-*/
-/*----------------------------------------------------------------------------*/
-static int
-nvram_write (
-    char *filename,
-    char *buf,
-    ssize_t len,
-    int offset)
-{
-#if CFG_SUPPORT_NVRAM
-    struct file *fd;
-    int retLen = -1;
-
-    mm_segment_t old_fs = get_fs();
-    set_fs(KERNEL_DS);
-
-    fd = filp_open(filename, O_WRONLY|O_CREAT, 0644);
-
-    if(IS_ERR(fd)) {
-        DBGLOG(INIT, INFO, ("[MT6620][nvram_write] : failed to open!!\n"));
-        return -1;
-    }
-
-    do{
-        if ((fd->f_op == NULL) || (fd->f_op->write == NULL)) {
-            DBGLOG(INIT, INFO, ("[MT6620][nvram_write] : file can not be write!!\n"));
-            break;
-        } /* End of if */
-
-        if (fd->f_pos != offset) {
-            if (fd->f_op->llseek) {
-                if(fd->f_op->llseek(fd, offset, 0) != offset) {
-                    DBGLOG(INIT, INFO, ("[MT6620][nvram_write] : failed to seek!!\n"));
-                    break;
-                }
-            }
-            else {
-                fd->f_pos = offset;
-            }
-        }
-
-        retLen = fd->f_op->write(fd,
-                buf,
-                len,
-                &fd->f_pos);
-
-    } while(FALSE);
-
-    filp_close(fd, NULL);
-
-    set_fs(old_fs);
-
-    return retLen;
-
-#else // !CFG_SUPPORT_NVRAMS
-
-    return -EIO;
-
-#endif
-}
-
-
-/*----------------------------------------------------------------------------*/
-/*!
-* \brief API for reading data on NVRAM
-*
-* \param[in]
-*           prGlueInfo
-*           u4Offset
-* \param[out]
-*           pu2Data
-* \return
-*           TRUE
-*           FALSE
+* \retval FALSE always
 */
 /*----------------------------------------------------------------------------*/
 BOOLEAN
@@ -559,33 +394,15 @@ kalCfgDataRead16(
     OUT PUINT_16        pu2Data
     )
 {
-    if(pu2Data == NULL) {
-        return FALSE;
-    }
-
-    if(nvram_read(WIFI_NVRAM_FILE_NAME,
-                (char *)pu2Data,
-                sizeof(unsigned short),
-                u4Offset) != sizeof(unsigned short)) {
-        return FALSE;
-    }
-    else {
-        return TRUE;
-    }
+    return FALSE;
 }
 
 
 /*----------------------------------------------------------------------------*/
 /*!
-* \brief API for writing data on NVRAM
+* \brief API for writing data on NVRAM. There is no NVRAM on this platform.
 *
-* \param[in]
-*           prGlueInfo
-*           u4Offset
-*           u2Data
-* \return
-*           TRUE
-*           FALSE
+* \retval FALSE always
 */
 /*----------------------------------------------------------------------------*/
 BOOLEAN
@@ -595,15 +412,5 @@ kalCfgDataWrite16(
     UINT_16             u2Data
     )
 {
-    if(nvram_write(WIFI_NVRAM_FILE_NAME,
-                (char *)&u2Data,
-                sizeof(unsigned short),
-                u4Offset) != sizeof(unsigned short)) {
-        return FALSE;
-    }
-    else {
-        return TRUE;
-    }
+    return FALSE;
 }
-
-

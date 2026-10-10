@@ -500,12 +500,11 @@
 
 #define DRV_NAME "["CHIP_NAME"]: "
 
-/* Define if target platform is Android.
- * It should already be defined in Android kernel source
+/* Android wake locks do not exist on a mainline kernel; the KAL_WAKE_LOCK
+ * macros compile to nothing.
  */
-#ifndef CONFIG_ANDROID
+#undef CONFIG_ANDROID
 #define CONFIG_ANDROID      0
-#endif
 
 /* for CFG80211 IE buffering mechanism */
 #define CFG_CFG80211_IE_BUF_LEN     (512)
@@ -526,13 +525,11 @@
 #include <linux/wakelock.h>
 #endif
 
-#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 12)
 #include <linux/irq.h>          /* IRQT_FALLING */
-#endif
 
 #include <linux/netdevice.h>    /* struct net_device, struct net_device_stats */
 #include <linux/etherdevice.h>  /* for eth_type_trans() function */
-#include <linux/wireless.h>     /* struct iw_statistics */
+#include <linux/wireless.h>     /* IW_AUTH_* constants used by the connect path */
 #include <linux/if_arp.h>
 #include <linux/inetdevice.h>   /* struct in_device */
 
@@ -545,7 +542,7 @@
 
 #include <linux/rtnetlink.h>    /* for rtnl_lock() and rtnl_unlock() */
 #include <linux/kthread.h>      /* kthread_should_stop(), kthread_run() */
-#include <asm/uaccess.h>        /* for copy_from_user() */
+#include <linux/uaccess.h>      /* for copy_from_user() */
 #include <linux/fs.h>           /* for firmware download */
 #include <linux/vmalloc.h>
 
@@ -566,32 +563,21 @@
 
 #include <asm/io.h>             /* readw and writew */
 
-#if WIRELESS_EXT > 12
-#include <net/iw_handler.h>
-#endif
 
 #include "version.h"
 #include "config.h"
 
-#if CFG_ENABLE_WIFI_DIRECT_CFG_80211
-#include <linux/wireless.h>
 #include <net/cfg80211.h>
-#endif
 
 #include <linux/module.h>
 
-#if CFG_SUPPORT_HOTSPOT_2_0
-#include <net/addrconf.h>
-#endif
 
 #include "gl_typedef.h"
 #include "typedef.h"
 #include "queue.h"
 #include "gl_kal.h"
 #include "hif.h"
-#if CFG_CHIP_RESET_SUPPORT
-    #include "gl_rst.h"
-#endif
+#include "gl_rst.h"
 
 
 #if (CFG_SUPPORT_TDLS == 1)
@@ -607,6 +593,7 @@
 #endif
 
 extern BOOLEAN fgIsBusAccessFailed;
+extern BOOLEAN fgIsResetting;
 
 /*******************************************************************************
 *                              C O N S T A N T S
@@ -783,9 +770,6 @@ struct _GLUE_INFO_T {
     /* Device statistics */
     struct net_device_stats rNetDevStats;
 
-    /* Wireless statistics struct net_device */
-    struct iw_statistics rIwStats;
-
     /* spinlock to sync power save mechanism */
     spinlock_t rSpinLock[SPIN_LOCK_NUM];
 
@@ -825,7 +809,7 @@ struct _GLUE_INFO_T {
     /* defined in related hif header file */
     GL_HIF_INFO_T       rHifInfo;
 
-    /*! \brief wext wpa related information */
+    /*! \brief WPA related information of the pending connect request */
     GL_WPA_INFO_T       rWpaInfo;
 
 
@@ -884,10 +868,6 @@ struct _GLUE_INFO_T {
 
 #if CFG_ENABLE_WIFI_DIRECT
     P_GL_P2P_INFO_T         prP2PInfo;
-#if CFG_SUPPORT_P2P_RSSI_QUERY
-    /* Wireless statistics struct net_device */
-    struct iw_statistics    rP2pIwStats;
-#endif
 #endif
     BOOLEAN                 fgWpsActive;
 	UINT_8                  aucWSCIE[500]; /*for probe req*/
@@ -895,12 +875,6 @@ struct _GLUE_INFO_T {
 	UINT_8                  aucWSCAssocInfoIE[200]; /*for Assoc req*/
     UINT_16                 u2WSCAssocInfoIELen;
 
-#if CFG_SUPPORT_HOTSPOT_2_0
-	UINT_8					aucHS20AssocInfoIE[200]; /*for Assoc req*/
-	UINT_16 				u2HS20AssocInfoIELen;
-	UINT_8					ucHotspotConfig;
-	BOOLEAN 				fgConnectHS20AP;
-#endif
 
     /* NVRAM availability */
     BOOLEAN                 fgNvramAvailable;
@@ -928,16 +902,6 @@ struct _GLUE_INFO_T {
 
     KAL_WAKE_LOCK_T         rAhbIsrWakeLock;
 
-#if CFG_SUPPORT_HOTSPOT_2_0
-    BOOLEAN                 fgIsDad;
-    UINT_8                  aucDADipv4[4];
-    BOOLEAN                 fgIs6Dad;
-    UINT_8                  aucDADipv6[16];
-#endif
-#if (CFG_SUPPORT_MET_PROFILING == 1)
-    UINT_8             u8MetProfEnable;
-    INT_16             u16MetUdpPort;
-#endif
     BOOLEAN 		    fgPoorlinkValid;
     UINT_64                 u8Statistic[2];
     UINT_64		    u8TotalFailCnt;
@@ -963,14 +927,8 @@ struct _GLUE_INFO_T {
 
 };
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 0)
-    /* linux 2.4 */
-    typedef void (*PFN_WLANISR)(int irq, void *dev_id, struct pt_regs *regs);
-#else
     typedef irqreturn_t (*PFN_WLANISR)(int irq, void *dev_id, struct pt_regs *regs);
-#endif
 
-typedef void (*PFN_LINUX_TIMER_FUNC)(unsigned long);
 
 
 /* generic sub module init/exit handler
@@ -985,85 +943,6 @@ typedef struct _SUB_MODULE_HANDLER {
     SUB_MODULE_EXIT subModExit;
     BOOLEAN fgIsInited;
 } SUB_MODULE_HANDLER, *P_SUB_MODULE_HANDLER;
-
-#endif
-
-#if CONFIG_NL80211_TESTMODE
-enum TestModeCmdType {
-	/* old test mode command id, compatible with exist testmode command */
-	TESTMODE_CMD_ID_SW_CMD = 1,
-	TESTMODE_CMD_ID_WAPI = 2,
-	TESTMODE_CMD_ID_HS20 = 3,
-	TESTMODE_CMD_ID_POORLINK = 4,
-	TESTMODE_CMD_ID_STATISTICS = 0x10,
-	TESTMODE_CMD_ID_LINK_DETECT = 0x20,
-	/* old test mode command id, compatible with exist testmode command */
-	
-	/* all new added test mode command should great than TESTMODE_CMD_ID_NEW_BEGIN */
-	TESTMODE_CMD_ID_NEW_BEGIN = 100,
-	TESTMODE_CMD_ID_SUSPEND = 101,
-};
-
-#if CFG_SUPPORT_HOTSPOT_2_0
-enum Hs20CmdType {
-	HS20_CMD_ID_SET_BSSID_POOL = 0,
-	NUM_OF_HS20_CMD_ID
-};
-#endif
-
-typedef struct _NL80211_DRIVER_TEST_MODE_PARAMS {
-	UINT_32  index;
-	UINT_32  buflen;
-} NL80211_DRIVER_TEST_MODE_PARAMS, *P_NL80211_DRIVER_TEST_MODE_PARAMS;
-
-/*SW CMD */
-typedef struct _NL80211_DRIVER_SW_CMD_PARAMS {
-    NL80211_DRIVER_TEST_MODE_PARAMS hdr;
-    UINT_8           set;
-    unsigned long    adr;
-    unsigned long    data;
-}NL80211_DRIVER_SW_CMD_PARAMS, *P_NL80211_DRIVER_SW_CMD_PARAMS;
-
-typedef struct _NL80211_DRIVER_SUSPEND_PARAMS {
-	NL80211_DRIVER_TEST_MODE_PARAMS hdr;
-    UINT_8           suspend;
-}NL80211_DRIVER_SUSPEND_PARAMS, *P_NL80211_DRIVER_SUSPEND_PARAMS;
-struct iw_encode_exts {
-    __u32   ext_flags;                      /*!< IW_ENCODE_EXT_* */
-    __u8    tx_seq[IW_ENCODE_SEQ_MAX_SIZE]; /*!< LSB first */
-    __u8    rx_seq[IW_ENCODE_SEQ_MAX_SIZE]; /*!< LSB first */
-    __u8    addr[MAC_ADDR_LEN];   /*!< ff:ff:ff:ff:ff:ff for broadcast/multicast
-                                                          *   (group) keys or unicast address for
-                                                          *   individual keys */
-    __u16   alg;            /*!< IW_ENCODE_ALG_* */
-    __u16   key_len;
-    __u8    key[32];
-};
-
-/*SET KEY EXT */
-typedef struct _NL80211_DRIVER_SET_KEY_EXTS {
-    NL80211_DRIVER_TEST_MODE_PARAMS hdr;
-    UINT_8     key_index;
-    UINT_8     key_len;
-    struct iw_encode_exts ext;
-}NL80211_DRIVER_SET_KEY_EXTS, *P_NL80211_DRIVER_SET_KEY_EXTS;
-
-
-#if CFG_SUPPORT_HOTSPOT_2_0
-
-struct param_hs20_set_bssid_pool {
-	u8 fgBssidPoolIsEnable;
-	u8 ucNumBssidPool;
-	u8 arBssidPool[8][ETH_ALEN];
-};
-
-struct wpa_driver_hs20_data_s {
-    NL80211_DRIVER_TEST_MODE_PARAMS hdr;
-	enum Hs20CmdType CmdType;
-	struct param_hs20_set_bssid_pool hs20_set_bssid_pool;
-};
-
-#endif /* CFG_SUPPORT_HOTSPOT_2_0 */
 
 #endif
 
@@ -1102,7 +981,7 @@ struct wpa_driver_hs20_data_s {
             spin_unlock_bh(prLock);
 
 #else /* !CFG_USE_SPIN_LOCK_BOTTOM_HALF */
-    #define GLUE_SPIN_LOCK_DECLARATION()                        UINT_32 __u4Flags = 0
+    #define GLUE_SPIN_LOCK_DECLARATION()                        unsigned long __u4Flags = 0
     #define GLUE_ACQUIRE_SPIN_LOCK(prGlueInfo, rLockCategory)   \
             { \
                 if (rLockCategory < SPIN_LOCK_NUM) \
@@ -1216,6 +1095,12 @@ struct wpa_driver_hs20_data_s {
 *                  F U N C T I O N   D E C L A R A T I O N S
 ********************************************************************************
 */
+void wlanHandleSystemSuspend(void);
+void wlanHandleSystemResume(void);
+void wlanRegisterNotifier(void);
+void wlanUnregisterNotifier(void);
+netdev_tx_t wlanHardStartXmit(struct sk_buff *prSkb, struct net_device *prDev);
+
 #ifdef WLAN_INCLUDE_PROC
 INT_32
 procRemoveProcfs (

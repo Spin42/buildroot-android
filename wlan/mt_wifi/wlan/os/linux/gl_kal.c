@@ -683,14 +683,7 @@
 ********************************************************************************
 */
 #include "gl_os.h"
-#include "gl_wext.h"
 #include "precomp.h"
-#if defined(CONFIG_MTK_TC1_FEATURE)
-#include <tc1_partition.h>
-#endif
-#if CFG_SUPPORT_AGPS_ASSIST
-#include <net/netlink.h>
-#endif
 
 /*******************************************************************************
 *                              C O N S T A N T S
@@ -781,256 +774,21 @@ VOID kalHifAhbKalWakeLockTimeout(
 
 #if CFG_ENABLE_FW_DOWNLOAD
 
-static struct file *filp = NULL;
-static uid_t orgfsuid;
-static gid_t orgfsgid;
-static mm_segment_t orgfs;
-
 /*----------------------------------------------------------------------------*/
 /*!
-* \brief This function is provided by GLUE Layer for internal driver stack to
-*        open firmware image in kernel space
+* \brief Load the firmware image WIFI_RAM_CODE_<chip> through request_firmware().
 *
-* \param[in] prGlueInfo     Pointer of GLUE Data Structure
-*
-* \retval WLAN_STATUS_SUCCESS.
-* \retval WLAN_STATUS_FAILURE.
-*
-*/
-/*----------------------------------------------------------------------------*/
-WLAN_STATUS
-kalFirmwareOpen (
-    IN P_GLUE_INFO_T                prGlueInfo
-    )
-{
-	UINT_8 aucFilePath[50];
-
-    /* FIX ME: since we don't have hotplug script in the filesystem
-     * , so the request_firmware() KAPI can not work properly
-     */
-
-    /* save uid and gid used for filesystem access.
-     * set user and group to 0(root) */
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,29))
-    orgfsuid = current->fsuid;
-    orgfsgid = current->fsgid;
-    current->fsuid = current->fsgid = 0;
-#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 35))
-    struct cred *cred = (struct cred *) get_current_cred();
-    orgfsuid = cred->fsuid;
-    orgfsgid = cred->fsgid;
-    cred->fsuid = cred->fsgid = 0;
-#else
-    struct cred *cred = get_task_cred(current);
-    orgfsuid = cred->fsuid;
-    orgfsgid = cred->fsgid;
-    cred->fsuid = cred->fsgid = 0;
-#endif
-
-    ASSERT(prGlueInfo);
-
-
-    orgfs = get_fs();
-    set_fs(get_ds());
-
-
-    /* open the fw file */
-#if defined(MT6620) & CFG_MULTI_ECOVER_SUPPORT
-    switch(mtk_wcn_wmt_hwver_get()) {
-    case WMTHWVER_MT6620_E1:
-    case WMTHWVER_MT6620_E2:
-    case WMTHWVER_MT6620_E3:
-    case WMTHWVER_MT6620_E4:
-    case WMTHWVER_MT6620_E5:
-        filp = filp_open("/etc/firmware/"CFG_FW_FILENAME, O_RDONLY, 0);
-        break;
-
-    case WMTHWVER_MT6620_E6:
-    default:
-        filp = filp_open("/etc/firmware/"CFG_FW_FILENAME"_E6", O_RDONLY, 0);
-        break;
-    }
-#elif defined(MT5931) && CFG_MULTI_ECOVER_SUPPORT
-    switch (wlanGetEcoVersion(prGlueInfo->prAdapter)) {
-    case HWVER_MT5931_E1:
-    case HWVER_MT5931_E2:
-        filp = filp_open("/etc/firmware/"CFG_FW_FILENAME"_E2", O_RDONLY, 0);
-        break;
-    case HWVER_MT5931_E3:
-    default:
-        filp = filp_open("/etc/firmware/"CFG_FW_FILENAME, O_RDONLY, 0);
-        break;
-    }
-#elif defined(MT6628)
-//    filp = filp_open("/etc/firmware/"CFG_FW_FILENAME"_MT6628", O_RDONLY, 0);
-//    filp = filp_open("/etc/firmware/"CFG_FW_FILENAME"_MT6582", O_RDONLY, 0);
-	kalMemZero(aucFilePath, sizeof(aucFilePath));
-	kalMemCopy(aucFilePath, "/etc/firmware/"CFG_FW_FILENAME"_",
-		strlen("/etc/firmware/"CFG_FW_FILENAME"_"));
-	glGetChipInfo(prGlueInfo, &aucFilePath[strlen("/etc/firmware/"CFG_FW_FILENAME"_")]);
-
-	DBGLOG(INIT, TRACE, ("open file: %s\n", aucFilePath));
-
-    filp = filp_open(aucFilePath, O_RDONLY, 0);
-#else
-    filp = filp_open("/etc/firmware/"CFG_FW_FILENAME, O_RDONLY, 0);
-#endif
-    if (IS_ERR(filp)) {
-        DBGLOG(INIT, INFO, ("Open FW image: %s failed\n", CFG_FW_FILENAME));
-        goto error_open;
-    }
-    DBGLOG(INIT, INFO, ("Open FW image: %s done\n", CFG_FW_FILENAME));
-    return WLAN_STATUS_SUCCESS;
-
-error_open:
-    /* restore */
-    set_fs(orgfs);
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,29))
-    current->fsuid = orgfsuid;
-    current->fsgid = orgfsgid;
-#else
-    cred->fsuid = orgfsuid;
-    cred->fsgid = orgfsgid;
-    #if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 35))
-    put_cred(cred);
-    #endif
-#endif
-    return WLAN_STATUS_FAILURE;
-}
-
-
-/*----------------------------------------------------------------------------*/
-/*!
-* \brief This function is provided by GLUE Layer for internal driver stack to
-*        release firmware image in kernel space
-*
-* \param[in] prGlueInfo     Pointer of GLUE Data Structure
-*
-* \retval WLAN_STATUS_SUCCESS.
-* \retval WLAN_STATUS_FAILURE.
-*
-*/
-/*----------------------------------------------------------------------------*/
-WLAN_STATUS
-kalFirmwareClose (
-    IN P_GLUE_INFO_T                prGlueInfo
-    )
-{
-    ASSERT(prGlueInfo);
-
-    if ((filp != NULL) && !IS_ERR(filp)) {
-        /* close firmware file */
-        filp_close(filp, NULL);
-
-        /* restore */
-        set_fs(orgfs);
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,29))
-        current->fsuid = orgfsuid;
-        current->fsgid = orgfsgid;
-#else
-        {
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 35))
-            struct cred *cred = (struct cred *) get_current_cred();
-#else
-            struct cred *cred = get_task_cred(current);
-#endif
-            cred->fsuid = orgfsuid;
-            cred->fsgid = orgfsgid;
-    #if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 35))
-            put_cred(cred);
-    #endif
-        }
-#endif
-        filp = NULL;
-    }
-
-    return WLAN_STATUS_SUCCESS;
-}
-
-/*----------------------------------------------------------------------------*/
-/*!
-* \brief This function is provided by GLUE Layer for internal driver stack to
-*        load firmware image in kernel space
-*
-* \param[in] prGlueInfo     Pointer of GLUE Data Structure
-*
-* \retval WLAN_STATUS_SUCCESS.
-* \retval WLAN_STATUS_FAILURE.
-*
-*/
-/*----------------------------------------------------------------------------*/
-WLAN_STATUS
-kalFirmwareLoad (
-    IN P_GLUE_INFO_T                prGlueInfo,
-    OUT PVOID                       prBuf,
-    IN UINT_32                      u4Offset,
-    OUT PUINT_32                    pu4Size
-    )
-{
-    ASSERT(prGlueInfo);
-    ASSERT(pu4Size);
-    ASSERT(prBuf);
-
-    //l = filp->f_path.dentry->d_inode->i_size;
-
-    /* the object must have a read method */
-    if ((filp == NULL) || IS_ERR(filp) || (filp->f_op == NULL) || (filp->f_op->read == NULL)) {
-        goto error_read;
-    } else {
-        filp->f_pos = u4Offset;
-        *pu4Size = filp->f_op->read(filp, prBuf, *pu4Size, &filp->f_pos);
-    }
-
-    return WLAN_STATUS_SUCCESS;
-
-error_read:
-    return WLAN_STATUS_FAILURE;
-}
-
-/*----------------------------------------------------------------------------*/
-/*!
-* \brief This function is provided by GLUE Layer for internal driver stack to
-*        query firmware image size in kernel space
-*
-* \param[in] prGlueInfo     Pointer of GLUE Data Structure
-*
-* \retval WLAN_STATUS_SUCCESS.
-* \retval WLAN_STATUS_FAILURE.
-*
-*/
-/*----------------------------------------------------------------------------*/
-
-WLAN_STATUS
-kalFirmwareSize (
-    IN P_GLUE_INFO_T                prGlueInfo,
-    OUT PUINT_32                     pu4Size
-    )
-{
-    ASSERT(prGlueInfo);
-    ASSERT(pu4Size);
-
-#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 12)
-    *pu4Size = filp->f_path.dentry->d_inode->i_size;
-#else
-    *pu4Size = filp->f_dentry->d_inode->i_size;
-#endif
-
-    return WLAN_STATUS_SUCCESS;
-}
-
-
-/*----------------------------------------------------------------------------*/
-/*!
-* \brief This routine is used to load firmware image
+* The image is copied into a zero padded vmalloc buffer so that the download
+* code may round the last section up to 4 bytes. The returned pointer serves as
+* the mapping handle as well as the buffer.
 *
 * \param pvGlueInfo     Pointer of GLUE Data Structure
-* \param ppvMapFileBuf  Pointer of pointer to memory-mapped firmware image
-* \param pu4FileLength  File length and memory mapped length as well
-
-* \retval Map File Handle, used for unammping
+* \param ppvMapFileBuf  Pointer of pointer to the image
+* \param pu4FileLength  Image length
+*
+* \retval Mapping handle, NULL when the image is not available
 */
 /*----------------------------------------------------------------------------*/
-
 PVOID
 kalFirmwareImageMapping (
     IN P_GLUE_INFO_T    prGlueInfo,
@@ -1038,55 +796,49 @@ kalFirmwareImageMapping (
     OUT PUINT_32        pu4FileLength
     )
 {
+    const struct firmware *prFw = NULL;
+    PVOID prFwBuffer;
+    UINT_8 aucFileName[40];
+    INT_32 i4Ret;
+
     DEBUGFUNC("kalFirmwareImageMapping");
 
     ASSERT(prGlueInfo);
     ASSERT(ppvMapFileBuf);
     ASSERT(pu4FileLength);
 
-    do {
-        /* <1> Open firmware */
-        if (kalFirmwareOpen(prGlueInfo) != WLAN_STATUS_SUCCESS) {
-			DBGLOG(INIT, TRACE, ("kalFirmwareOpen fail!\n"));
-            break;
-        } else {
-            UINT_32 u4FwSize = 0;
-            PVOID prFwBuffer = NULL;
-            /* <2> Query firmare size */
-            kalFirmwareSize(prGlueInfo, &u4FwSize);
-            /* <3> Use vmalloc for allocating large memory trunk */
-            prFwBuffer = vmalloc(ALIGN_4(u4FwSize));
-            /* <4> Load image binary into buffer */
-            if (kalFirmwareLoad(prGlueInfo, prFwBuffer, 0, &u4FwSize) != WLAN_STATUS_SUCCESS) {
-                vfree(prFwBuffer);
-                kalFirmwareClose(prGlueInfo);
-				DBGLOG(INIT, TRACE, ("kalFirmwareLoad fail!\n"));
-                break;
-            }
-            /* <5> write back info */
-            *pu4FileLength = u4FwSize;
-            *ppvMapFileBuf = prFwBuffer;
+    kalMemZero(aucFileName, sizeof(aucFileName));
+    kalMemCopy(aucFileName, CFG_FW_FILENAME"_", strlen(CFG_FW_FILENAME"_"));
+    glGetChipInfo(prGlueInfo, &aucFileName[strlen(CFG_FW_FILENAME"_")]);
 
-            return prFwBuffer;
-        }
+    i4Ret = request_firmware(&prFw, aucFileName, (struct device *) prGlueInfo->rHifInfo.Dev);
+    if (i4Ret) {
+        DBGLOG(INIT, ERROR, ("request_firmware(%s) failed: %d\n", aucFileName, i4Ret));
+        return NULL;
+    }
 
-    } while (FALSE);
+    prFwBuffer = vzalloc(ALIGN_4(prFw->size));
+    if (prFwBuffer) {
+        kalMemCopy(prFwBuffer, prFw->data, prFw->size);
+        *pu4FileLength = prFw->size;
+        *ppvMapFileBuf = prFwBuffer;
+    }
+    release_firmware(prFw);
 
-    return NULL;
+    DBGLOG(INIT, INFO, ("firmware %s loaded\n", aucFileName));
+
+    return prFwBuffer;
 }
 
 /*----------------------------------------------------------------------------*/
 /*!
-* \brief This routine is used to unload firmware image mapped memory
+* \brief Release the buffer returned by kalFirmwareImageMapping().
 *
 * \param pvGlueInfo     Pointer of GLUE Data Structure
-* \param pvFwHandle     Pointer to mapping handle
-* \param pvMapFileBuf   Pointer to memory-mapped firmware image
-*
-* \retval none
+* \param pvFwHandle     Mapping handle
+* \param pvMapFileBuf   Pointer to the image
 */
 /*----------------------------------------------------------------------------*/
-
 VOID
 kalFirmwareImageUnmapping (
     IN P_GLUE_INFO_T    prGlueInfo,
@@ -1098,93 +850,12 @@ kalFirmwareImageUnmapping (
 
     ASSERT(prGlueInfo);
 
-    /* pvMapFileBuf might be NULL when file doesn't exist */
+    /* pvMapFileBuf is NULL when the image could not be loaded */
     if(pvMapFileBuf) {
         vfree(pvMapFileBuf);
     }
-
-    kalFirmwareClose(prGlueInfo);
 }
 
-#endif
-
-#if 0
-
-/*----------------------------------------------------------------------------*/
-/*!
-* \brief This routine is used to load firmware image
-*
-* \param pvGlueInfo     Pointer of GLUE Data Structure
-* \param ppvMapFileBuf  Pointer of pointer to memory-mapped firmware image
-* \param pu4FileLength  File length and memory mapped length as well
-
-* \retval Map File Handle, used for unammping
-*/
-/*----------------------------------------------------------------------------*/
-
-PVOID
-kalFirmwareImageMapping (
-    IN P_GLUE_INFO_T    prGlueInfo,
-    OUT PPVOID          ppvMapFileBuf,
-    OUT PUINT_32        pu4FileLength
-    )
-{
-    INT_32 i4Ret = 0;
-
-    DEBUGFUNC("kalFirmwareImageMapping");
-
-    ASSERT(prGlueInfo);
-    ASSERT(ppvMapFileBuf);
-    ASSERT(pu4FileLength);
-
-    do {
-        GL_HIF_INFO_T *prHifInfo = &prGlueInfo->rHifInfo;
-        prGlueInfo->prFw = NULL;
-
-        /* <1> Open firmware */
-        i4Ret = request_firmware(&prGlueInfo->prFw, CFG_FW_FILENAME, prHifInfo->Dev);
-
-        if (i4Ret) {
-            printk (KERN_INFO DRV_NAME"fw %s:request failed %d\n", CFG_FW_FILENAME, i4Ret);
-            break;
-        } else {
-            *pu4FileLength = prGlueInfo->prFw->size;
-            *ppvMapFileBuf = prGlueInfo->prFw->data;
-            return prGlueInfo->prFw->data;
-        }
-
-    } while (FALSE);
-
-    return NULL;
-}
-
-/*----------------------------------------------------------------------------*/
-/*!
-* \brief This routine is used to unload firmware image mapped memory
-*
-* \param pvGlueInfo     Pointer of GLUE Data Structure
-* \param pvFwHandle     Pointer to mapping handle
-* \param pvMapFileBuf   Pointer to memory-mapped firmware image
-*
-* \retval none
-*/
-/*----------------------------------------------------------------------------*/
-
-VOID
-kalFirmwareImageUnmapping (
-    IN P_GLUE_INFO_T    prGlueInfo,
-    IN PVOID            prFwHandle,
-    IN PVOID            pvMapFileBuf
-    )
-{
-    DEBUGFUNC("kalFirmwareImageUnmapping");
-
-    ASSERT(prGlueInfo);
-    ASSERT(pvMapFileBuf);
-
-    release_firmware(prGlueInfo->prFw);
-
-}
 #endif
 
 /*----------------------------------------------------------------------------*/
@@ -1194,7 +865,7 @@ kalFirmwareImageUnmapping (
 *
 * \param[in] prGlueInfo     Pointer of GLUE Data Structure
 * \param[in] rLockCategory  Specify which SPIN_LOCK
-* \param[out] pu4Flags      Pointer of a variable for saving IRQ flags
+* \param[out] pulFlags      Pointer of a variable for saving IRQ flags
 *
 * \return (none)
 */
@@ -1205,23 +876,23 @@ VOID
 kalAcquireSpinLock (
     IN P_GLUE_INFO_T                prGlueInfo,
     IN ENUM_SPIN_LOCK_CATEGORY_E    rLockCategory,
-    OUT PUINT_32                    pu4Flags
+    OUT unsigned long               *pulFlags
     )
 {
-    UINT_32 u4Flags = 0;
+    unsigned long ulFlags = 0;
 
     ASSERT(prGlueInfo);
-    ASSERT(pu4Flags);
+    ASSERT(pulFlags);
 
     if (rLockCategory < SPIN_LOCK_NUM) {
 
 #if CFG_USE_SPIN_LOCK_BOTTOM_HALF
         spin_lock_bh(&prGlueInfo->rSpinLock[rLockCategory]);
 #else /* !CFG_USE_SPIN_LOCK_BOTTOM_HALF */
-        spin_lock_irqsave(&prGlueInfo->rSpinLock[rLockCategory], u4Flags);
+        spin_lock_irqsave(&prGlueInfo->rSpinLock[rLockCategory], ulFlags);
 #endif /* !CFG_USE_SPIN_LOCK_BOTTOM_HALF */
 
-        *pu4Flags = u4Flags;
+        *pulFlags = ulFlags;
 //		DBGLOG(INIT, TRACE, ("A+%d\n", rLockCategory));
     }
 
@@ -1236,7 +907,7 @@ kalAcquireSpinLock (
 *
 * \param[in] prGlueInfo     Pointer of GLUE Data Structure
 * \param[in] rLockCategory  Specify which SPIN_LOCK
-* \param[in] u4Flags        Saved IRQ flags
+* \param[in] ulFlags        Saved IRQ flags
 *
 * \return (none)
 */
@@ -1245,7 +916,7 @@ VOID
 kalReleaseSpinLock (
     IN P_GLUE_INFO_T                prGlueInfo,
     IN ENUM_SPIN_LOCK_CATEGORY_E    rLockCategory,
-    IN UINT_32                      u4Flags
+    IN unsigned long                ulFlags
     )
 {
     ASSERT(prGlueInfo);
@@ -1257,7 +928,7 @@ kalReleaseSpinLock (
 #if CFG_USE_SPIN_LOCK_BOTTOM_HALF
         spin_unlock_bh(&prGlueInfo->rSpinLock[rLockCategory]);
 #else /* !CFG_USE_SPIN_LOCK_BOTTOM_HALF */
-        spin_unlock_irqrestore(&prGlueInfo->rSpinLock[rLockCategory], u4Flags);
+        spin_unlock_irqrestore(&prGlueInfo->rSpinLock[rLockCategory], ulFlags);
 #endif /* !CFG_USE_SPIN_LOCK_BOTTOM_HALF */
 
     }
@@ -1287,7 +958,7 @@ kalUpdateMACAddress (
     ASSERT(pucMacAddr);
 
     if(UNEQUAL_MAC_ADDR(prGlueInfo->prDevHandler->dev_addr, pucMacAddr)) {
-        memcpy(prGlueInfo->prDevHandler->dev_addr, pucMacAddr, PARAM_MAC_ADDR_LEN);
+        eth_hw_addr_set(prGlueInfo->prDevHandler, pucMacAddr);
     }
 
     return;
@@ -1318,11 +989,7 @@ kalQueryTxChksumOffloadParam (
     ASSERT(pvPacket);
     ASSERT(pucFlag);
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 19)
-    if (skb->ip_summed == CHECKSUM_HW)
-#else
     if (skb->ip_summed == CHECKSUM_PARTIAL)
-#endif
     {
 
 #if DBG
@@ -1790,7 +1457,6 @@ kalRxIndicatePkts (
 		TdlsexRxFrameHandle(prGlueInfo, prSkb->data, prSkb->len);
 #endif /* CFG_SUPPORT_TDLS */
 
-        prNetDev->last_rx = jiffies;
         prSkb->protocol = eth_type_trans(prSkb, prNetDev);
         prSkb->dev = prNetDev;
         //DBGLOG_MEM32(RX, TRACE, (PUINT_32)prSkb->data, prSkb->len);
@@ -1814,16 +1480,7 @@ kalRxIndicatePkts (
     DBGLOG(BOW, TRACE, ("\n"));
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 0)
-        if(!in_interrupt()){
-            netif_rx_ni(prSkb); /* only in non-interrupt context */
-        }
-        else {
-            netif_rx(prSkb);
-        }
-#else
         netif_rx(prSkb);
-#endif
 
         wlanReturnPacket(prGlueInfo->prAdapter, NULL);
     }
@@ -1857,8 +1514,6 @@ kalIndicateStatusAndComplete (
     UINT_32 bufLen;
     P_PARAM_STATUS_INDICATION_T pStatus = (P_PARAM_STATUS_INDICATION_T) pvBuf;
     P_PARAM_AUTH_EVENT_T pAuth = (P_PARAM_AUTH_EVENT_T) pStatus;
-    P_PARAM_PMKID_CANDIDATE_LIST_T pPmkid =
-        (P_PARAM_PMKID_CANDIDATE_LIST_T) (pStatus + 1);
     PARAM_MAC_ADDRESS arBssid;
     struct cfg80211_scan_request *prScanRequest = NULL;
     PARAM_SSID_T ssid;
@@ -1885,7 +1540,6 @@ kalIndicateStatusAndComplete (
             &arBssid[0],
             sizeof(arBssid),
             &bufLen);
-        wext_indicate_wext_event(prGlueInfo, SIOCGIWAP, arBssid, bufLen);
 
         /* switch netif on */
         netif_carrier_on(prGlueInfo->prDevHandler);
@@ -1910,16 +1564,16 @@ kalIndicateStatusAndComplete (
             /* retrieve channel */
             ucChannelNum = wlanGetChannelNumberByNetwork(prGlueInfo->prAdapter, NETWORK_TYPE_AIS_INDEX);
             if(ucChannelNum <= 14) {
-                prChannel = ieee80211_get_channel(priv_to_wiphy(prGlueInfo), ieee80211_channel_to_frequency(ucChannelNum, IEEE80211_BAND_2GHZ));
+                prChannel = ieee80211_get_channel(priv_to_wiphy(prGlueInfo), ieee80211_channel_to_frequency(ucChannelNum, NL80211_BAND_2GHZ));
             }
             else {
-                prChannel = ieee80211_get_channel(priv_to_wiphy(prGlueInfo), ieee80211_channel_to_frequency(ucChannelNum, IEEE80211_BAND_5GHZ));
+                prChannel = ieee80211_get_channel(priv_to_wiphy(prGlueInfo), ieee80211_channel_to_frequency(ucChannelNum, NL80211_BAND_5GHZ));
             }
 
-            /* ensure BSS exists */
+            /* ensure BSS exists; cfg80211 takes over the reference below */
             bss = cfg80211_get_bss(priv_to_wiphy(prGlueInfo), prChannel, arBssid,
-                    ssid.aucSsid, ssid.u4SsidLen, 
-                    WLAN_CAPABILITY_ESS, WLAN_CAPABILITY_ESS);
+                    ssid.aucSsid, ssid.u4SsidLen,
+                    IEEE80211_BSS_TYPE_ESS, IEEE80211_PRIVACY_ANY);
 
             if(bss == NULL) {
                 /* create BSS on-the-fly */
@@ -1928,6 +1582,7 @@ kalIndicateStatusAndComplete (
                 if(prBssDesc != NULL) {
                     bss = cfg80211_inform_bss(priv_to_wiphy(prGlueInfo),
                         prChannel,
+                        CFG80211_BSS_FTYPE_UNKNOWN,
                         arBssid,
                         0,                                      /* TSF */
                         WLAN_CAPABILITY_ESS,
@@ -1940,26 +1595,34 @@ kalIndicateStatusAndComplete (
             }
 
             /* CFG80211 Indication */
-            if(eStatus == WLAN_STATUS_MEDIA_CONNECT 
-                    && prGlueInfo->prDevHandler->ieee80211_ptr->sme_state == CFG80211_SME_CONNECTING) {
-                cfg80211_connect_result(prGlueInfo->prDevHandler,
+            if(eStatus == WLAN_STATUS_MEDIA_CONNECT
+                    && !prGlueInfo->prDevHandler->ieee80211_ptr->connected) {
+                cfg80211_connect_bss(prGlueInfo->prDevHandler,
                         arBssid,
-                        prGlueInfo->aucReqIe,
-                        prGlueInfo->u4ReqIeLength,
-                        prGlueInfo->aucRspIe,
-                        prGlueInfo->u4RspIeLength,
-                        WLAN_STATUS_SUCCESS,
-                        GFP_KERNEL);
-            }
-            else if(eStatus == WLAN_STATUS_ROAM_OUT_FIND_BEST
-                    && prGlueInfo->prDevHandler->ieee80211_ptr->sme_state == CFG80211_SME_CONNECTED) {
-                cfg80211_roamed_bss(prGlueInfo->prDevHandler, 
                         bss,
                         prGlueInfo->aucReqIe,
                         prGlueInfo->u4ReqIeLength,
                         prGlueInfo->aucRspIe,
                         prGlueInfo->u4RspIeLength,
-                        GFP_KERNEL);
+                        WLAN_STATUS_SUCCESS,
+                        GFP_KERNEL,
+                        NL80211_TIMEOUT_UNSPECIFIED);
+            }
+            else if(eStatus == WLAN_STATUS_ROAM_OUT_FIND_BEST
+                    && prGlueInfo->prDevHandler->ieee80211_ptr->connected
+                    && bss != NULL) {
+                struct cfg80211_roam_info rRoamInfo = {
+                    .req_ie = prGlueInfo->aucReqIe,
+                    .req_ie_len = prGlueInfo->u4ReqIeLength,
+                    .resp_ie = prGlueInfo->aucRspIe,
+                    .resp_ie_len = prGlueInfo->u4RspIeLength,
+                };
+
+                rRoamInfo.links[0].bss = bss;
+                cfg80211_roamed(prGlueInfo->prDevHandler, &rRoamInfo, GFP_KERNEL);
+            }
+            else if(bss != NULL) {
+                cfg80211_put_bss(priv_to_wiphy(prGlueInfo), bss);
             }
         }
 
@@ -1967,7 +1630,6 @@ kalIndicateStatusAndComplete (
 
     case WLAN_STATUS_MEDIA_DISCONNECT:
         /* indicate disassoc event */
-        wext_indicate_wext_event(prGlueInfo, SIOCGIWAP, NULL, 0);
         /* For CR 90 and CR99, While supplicant do reassociate, driver will do netif_carrier_off first,
            after associated success, at joinComplete(), do netif_carier_on,
            but for unknown reason, the supplicant 1x pkt will not called the driver
@@ -1978,18 +1640,18 @@ kalIndicateStatusAndComplete (
 #if 1   /* CONSOLE_MESSAGE */
          DBGLOG(INIT, INFO, ("[wifi] %s netif_carrier_off %d\n",
 				prGlueInfo->prDevHandler->name,
-				prGlueInfo->prDevHandler->ieee80211_ptr->sme_state));
+				prGlueInfo->prDevHandler->ieee80211_ptr->connected));
 #endif
 
         netif_carrier_off(prGlueInfo->prDevHandler);
 
         if(prGlueInfo->fgIsRegistered == TRUE
-                && prGlueInfo->prDevHandler->ieee80211_ptr->sme_state == CFG80211_SME_CONNECTED) {
+                && prGlueInfo->prDevHandler->ieee80211_ptr->connected) {
             P_WIFI_VAR_T prWifiVar = &prGlueInfo->prAdapter->rWifiVar;
 			UINT_16 u2DeauthReason = prWifiVar->arBssInfo[NETWORK_TYPE_AIS_INDEX].u2DeauthReason;
             /* CFG80211 Indication */
 			DBGLOG(INIT, INFO, ("[wifi] %s cfg80211_disconnected\n", prGlueInfo->prDevHandler->name));
-            cfg80211_disconnected(prGlueInfo->prDevHandler, u2DeauthReason, NULL, 0, GFP_KERNEL);
+            cfg80211_disconnected(prGlueInfo->prDevHandler, u2DeauthReason, NULL, 0, FALSE, GFP_KERNEL);
         }
 
         prGlueInfo->eParamMediaStateIndicated = PARAM_MEDIA_STATE_DISCONNECTED;
@@ -1998,7 +1660,6 @@ kalIndicateStatusAndComplete (
 
     case WLAN_STATUS_SCAN_COMPLETE:
         /* indicate scan complete event */
-        wext_indicate_wext_event(prGlueInfo, SIOCGIWSCAN, NULL, 0);
 
         /* 1. reset first for newly incoming request */
         GLUE_ACQUIRE_SPIN_LOCK(prGlueInfo, SPIN_LOCK_NET_DEV);
@@ -2013,12 +1674,14 @@ kalIndicateStatusAndComplete (
 				prScanRequest, ScanCnt, ScanDoneFailCnt));
 
         if(prScanRequest != NULL) {
-            cfg80211_scan_done(prScanRequest, FALSE);
+            struct cfg80211_scan_info rScanInfo = { .aborted = false };
+
+            cfg80211_scan_done(prScanRequest, &rScanInfo);
         }
         break;
         case WLAN_STATUS_CONNECT_INDICATION:
             /* indicate AIS Jion fail  event */
-            if(prGlueInfo->prDevHandler->ieee80211_ptr->sme_state == CFG80211_SME_CONNECTING) {
+            if(!prGlueInfo->prDevHandler->ieee80211_ptr->connected) {
             cfg80211_connect_result(prGlueInfo->prDevHandler,
                     prGlueInfo->prAdapter->rWifiVar.rAisFsmInfo.prTargetBssDesc->aucBSSID,
                     prGlueInfo->aucReqIe,
@@ -2056,36 +1719,6 @@ kalIndicateStatusAndComplete (
                     cfg80211_michael_mic_failure(prGlueInfo->prDevHandler, NULL, 
                                        (pAuth->arRequest[0].u4Flags == PARAM_AUTH_REQUEST_PAIRWISE_ERROR) ? NL80211_KEYTYPE_PAIRWISE : NL80211_KEYTYPE_GROUP,
                                        0, NULL, GFP_KERNEL);
-                    wext_indicate_wext_event(prGlueInfo,
-                        IWEVMICHAELMICFAILURE,
-                        (unsigned char *)&pAuth->arRequest[0],
-                        pAuth->arRequest[0].u4Length);
-                }
-                break;
-
-            case ENUM_STATUS_TYPE_CANDIDATE_LIST:
-                /*
-                printk(KERN_NOTICE "Param_StatusType_PMKID_CandidateList: Ver(%ld) Num(%ld)\n",
-                    pPmkid->u2Version,
-                    pPmkid->u4NumCandidates);
-                if (pPmkid->u4NumCandidates > 0) {
-                    printk(KERN_NOTICE "candidate[" MACSTR "] preAuth Flag:%lx\n",
-                        MAC2STR(pPmkid->arCandidateList[0].rBSSID),
-                        pPmkid->arCandidateList[0].fgFlags);
-                }
-                */
-                {
-                 UINT_32  i = 0;
-
-                 P_PARAM_PMKID_CANDIDATE_T prPmkidCand = (P_PARAM_PMKID_CANDIDATE_T)&pPmkid->arCandidateList[0];
-
-                 for (i=0; i<pPmkid->u4NumCandidates; i++) {
-                    wext_indicate_wext_event(prGlueInfo,
-                        IWEVPMKIDCAND,
-                        (unsigned char *)&pPmkid->arCandidateList[i],
-                        pPmkid->u4NumCandidates);
-                    prPmkidCand += sizeof(PARAM_PMKID_CANDIDATE_T);
-                }
                 }
                 break;
 
@@ -2104,16 +1737,6 @@ kalIndicateStatusAndComplete (
             */
         }
         break;
-
-#if CFG_SUPPORT_BCM && CFG_SUPPORT_BCM_BWCS
-    case WLAN_STATUS_BWCS_UPDATE:
-    {
-        wext_indicate_wext_event(prGlueInfo, IWEVCUSTOM, pvBuf, sizeof(PTA_IPC_T));
-    }
-
-        break;
-
-#endif
 
     default:
         /*
@@ -2189,7 +1812,6 @@ kalUpdateReAssocReqInfo (
         u4FrameBodyLen -= 4;
     }
 
-    wext_indicate_wext_event(prGlueInfo, IWEVASSOCREQIE, cp, u4FrameBodyLen);
 
     if(u4FrameBodyLen <= CFG_CFG80211_IE_BUF_LEN) {
         prGlueInfo->u4ReqIeLength = u4FrameBodyLen;
@@ -2268,9 +1890,7 @@ kalSendCompleteAndAwakeQueue (
     ASSERT(prGlueInfo->i4TxPendingFrameNum);
 
     prSkb = (struct sk_buff *) pvPacket;
-#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 26)
     u2QueueIdx = skb_get_queue_mapping(prSkb);
-#endif
     ASSERT(u2QueueIdx < CFG_MAX_TXQ_NUM);
 
     if (GLUE_GET_PKT_IS_PAL(prSkb)) {
@@ -2295,7 +1915,6 @@ kalSendCompleteAndAwakeQueue (
     ASSERT(prDev);
 
     if(fgIsValidDevice == TRUE) {
-#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 26)
         if (netif_subqueue_stopped(prDev, prSkb) &&
                 prGlueInfo->ai4TxPendingFrameNumPerQueue[ucNetworkType][u2QueueIdx] <= CFG_TX_START_NETIF_PER_QUEUE_THRESHOLD) {
             netif_wake_subqueue(prDev, u2QueueIdx);
@@ -2304,15 +1923,6 @@ kalSendCompleteAndAwakeQueue (
             prGlueInfo->rHifInfo.HifLoopbkFlg &= ~0x01;
 #endif /* CONF_HIF_LOOPBACK_AUTO */
         }
-#else
-        if (prGlueInfo->i4TxPendingFrameNum < CFG_TX_STOP_NETIF_QUEUE_THRESHOLD) {
-            netif_wake_queue(prGlueInfo->prDevHandler);
-
-#if (CONF_HIF_LOOPBACK_AUTO == 1)
-            prGlueInfo->rHifInfo.HifLoopbkFlg &= ~0x01;
-#endif /* CONF_HIF_LOOPBACK_AUTO */
-        }
-#endif
     }
 
 
@@ -2467,11 +2077,6 @@ kalQoSFrameClassifierAndPacketInfo (
         //DBGLOG(REQ, TRACE, ("Tx Pre-1x\n"));
         *pfgIs1X = TRUE;
     }
-#if CFG_SUPPORT_WAPI
-    else if (u2EtherTypeLen == ETH_WPI_1X) {
-        *pfgIs1X = TRUE;
-    }
-#endif
 #if (CFG_SUPPORT_TDLS == 1)
 	else if (u2EtherTypeLen == TDLS_FRM_PROT_TYPE) {
 		TDLSEX_UP_ASSIGN(ucUserPriority);
@@ -3273,42 +2878,15 @@ kalRetrieveNetworkAddress(
 {
     ASSERT(prGlueInfo);
 
+    /* The address comes from the device tree or is generated at probe time
+     * (see glGetMacAddress()); there is no NVRAM to consult. */
     if(prGlueInfo->fgIsMacAddrOverride == FALSE) {
-    #if !defined(CONFIG_X86)
-	#if !defined(CONFIG_MTK_TC1_FEATURE)
-			UINT_32 i;
-	#endif
-        BOOLEAN fgIsReadError = FALSE;
-
-	#if !defined(CONFIG_MTK_TC1_FEATURE)
-        for(i = 0 ; i < MAC_ADDR_LEN ; i+=2) {
-            if(kalCfgDataRead16(prGlueInfo,
-                        OFFSET_OF(WIFI_CFG_PARAM_STRUCT, aucMacAddress) + i,
-                        (PUINT_16) (((PUINT_8)prMacAddr) + i)) == FALSE) {
-                fgIsReadError = TRUE;
-                break;
-            }
-        }
-	#else
-		TC1_FAC_NAME(FacReadWifiMacAddr)((unsigned char *)prMacAddr);
-	#endif
-
-        if(fgIsReadError == TRUE) {
-            return FALSE;
-        }
-        else {
-            return TRUE;
-        }
-    #else
-        /* x86 Linux doesn't need to override network address so far */
         return FALSE;
-    #endif
     }
-    else {
-        COPY_MAC_ADDR(prMacAddr, prGlueInfo->rMacAddrOverride);
 
-        return TRUE;
-    }
+    COPY_MAC_ADDR(prMacAddr, prGlueInfo->rMacAddrOverride);
+
+    return TRUE;
 }
 
 
@@ -3638,16 +3216,14 @@ kalGetTxPendingCmdCount(
 
 VOID
 kalOsTimerInitialize (
-    IN P_GLUE_INFO_T    prGlueInfo,
-    IN PVOID            prTimerHandler
+    IN P_GLUE_INFO_T            prGlueInfo,
+    IN void                     (*prTimerHandler)(struct timer_list *)
     )
 {
 
     ASSERT(prGlueInfo);
 
-    init_timer(&(prGlueInfo->tickfn));
-    prGlueInfo->tickfn.function = prTimerHandler;
-    prGlueInfo->tickfn.data = (ULONG) prGlueInfo;
+    timer_setup(&(prGlueInfo->tickfn), prTimerHandler, 0);
 }
 
 // Todo
@@ -3668,10 +3244,7 @@ kalSetTimer(
     )
 {
     ASSERT(prGlueInfo);
-    del_timer_sync(&(prGlueInfo->tickfn));
-
-    prGlueInfo->tickfn.expires = jiffies + u4Interval * HZ / MSEC_PER_SEC;
-    add_timer(&(prGlueInfo->tickfn));
+    mod_timer(&(prGlueInfo->tickfn), jiffies + u4Interval * HZ / MSEC_PER_SEC);
 
     return TRUE; /* success */
 }
@@ -3694,11 +3267,9 @@ kalCancelTimer(
 
     clear_bit(GLUE_FLAG_TIMEOUT_BIT, &prGlueInfo->ulFlag);
 
-    if (del_timer_sync(&(prGlueInfo->tickfn)) >=0) {
-        return TRUE;
-    } else {
-        return FALSE;
-    }
+    timer_delete_sync(&(prGlueInfo->tickfn));
+
+    return TRUE;
 }
 /*----------------------------------------------------------------------------*/
 /*!
@@ -3725,9 +3296,6 @@ kalScanDone(
 	/* report all queued beacon/probe response frames  to upper layer */
 	scanReportBss2Cfg80211(prGlueInfo->prAdapter,BSS_TYPE_INFRASTRUCTURE,NULL);	
     cnmTimerStopTimer(prGlueInfo->prAdapter, &prAisFsmInfo->rScanDoneTimer);
-
-    /* check for system configuration for generating error message on scan list */
-    wlanCheckSystemConfiguration(prGlueInfo->prAdapter);
 
     kalIndicateStatusAndComplete(prGlueInfo, WLAN_STATUS_SCAN_COMPLETE, NULL, 0);
 }
@@ -3763,10 +3331,10 @@ kalRandomNumber(
  */
 /*----------------------------------------------------------------------------*/
 VOID
-kalTimeoutHandler (ULONG arg)
+kalTimeoutHandler (struct timer_list *prTimer)
 {
 
-    P_GLUE_INFO_T prGlueInfo = (P_GLUE_INFO_T) arg;
+    P_GLUE_INFO_T prGlueInfo = timer_container_of(prGlueInfo, prTimer, tickfn);
 
     ASSERT(prGlueInfo);
 
@@ -3868,6 +3436,11 @@ kalGetConfigurationVersion(
     ASSERT(pu2Part2CfgOwnVersion);
     ASSERT(pu2Part2CfgPeerVersion);
 
+    *pu2Part1CfgOwnVersion = 0;
+    *pu2Part1CfgPeerVersion = 0;
+    *pu2Part2CfgOwnVersion = 0;
+    *pu2Part2CfgPeerVersion = 0;
+
     kalCfgDataRead16(prGlueInfo,
             OFFSET_OF(WIFI_CFG_PARAM_STRUCT, u2Part1OwnVersion),
             pu2Part1CfgOwnVersion);
@@ -3932,34 +3505,8 @@ kalUpdateRSSI(
     IN INT_8                            cLinkQuality
     )
 {
-    struct iw_statistics *pStats = (struct iw_statistics *)NULL;
-
+    /* Signal strength is reported on demand through cfg80211 get_station. */
     ASSERT(prGlueInfo);
-
-    switch(eNetTypeIdx) {
-    case KAL_NETWORK_TYPE_AIS_INDEX:
-        pStats =  (struct iw_statistics *) (&(prGlueInfo->rIwStats));
-        break;
-#if CFG_ENABLE_WIFI_DIRECT
-#if CFG_SUPPORT_P2P_RSSI_QUERY
-    case KAL_NETWORK_TYPE_P2P_INDEX:
-        pStats =  (struct iw_statistics *) (&(prGlueInfo->rP2pIwStats));
-        break;
-#endif
-#endif
-    default:
-        break;
-
-    }
-
-    if (pStats) {
-        pStats->qual.qual = cLinkQuality;
-        pStats->qual.noise = 0;
-        pStats->qual.updated = IW_QUAL_QUAL_UPDATED | IW_QUAL_NOISE_UPDATED;
-        pStats->qual.level = 0x100 + cRssi;
-        pStats->qual.updated |= IW_QUAL_LEVEL_UPDATED;
-    }
-
 
     return;
 }
@@ -4158,7 +3705,7 @@ kalIsAPmode(
 *
 * \param[in] prGlueInfo     Pointer of GLUE Data Structure
 * \param[in] rLockCategory  Specify which SPIN_LOCK
-* \param[out] pu4Flags      Pointer of a variable for saving IRQ flags
+* \param[out] pulFlags      Pointer of a variable for saving IRQ flags
 *
 * \return physical addr
 */
@@ -4190,7 +3737,7 @@ kalIOPhyAddrGet (
 *
 * \param[in] prGlueInfo     Pointer of GLUE Data Structure
 * \param[in] rLockCategory  Specify which SPIN_LOCK
-* \param[out] pu4Flags      Pointer of a variable for saving IRQ flags
+* \param[out] pulFlags      Pointer of a variable for saving IRQ flags
 *
 * \return physical addr
 */
@@ -4231,117 +3778,72 @@ kalGetMfpSetting(
 }
 #endif
 
-struct file*
-kalFileOpen(
-    const char* path,
-    int flags,
-    int rights)
-{
-    struct file* filp = NULL;
-    mm_segment_t oldfs;
-    int err = 0;
-
-    oldfs = get_fs();
-    set_fs(get_ds());
-    filp = filp_open(path, flags, rights);
-    set_fs(oldfs);
-    if(IS_ERR(filp)) {
-        err = PTR_ERR(filp);
-        return NULL;
-    }
-    return filp;
-}
-
-VOID
-kalFileClose(
-    struct file* file)
-{
-    filp_close(file, NULL);
-}
-
-UINT_32
-kalFileRead(
-    struct file* file,
-    UINT_64 offset,
-    UINT_8* data,
-    UINT_32 size)
-{
-    mm_segment_t oldfs;
-    INT_32 ret;
-
-    oldfs = get_fs();
-    set_fs(get_ds());
-
-    ret = vfs_read(file, data, size, &offset);
-
-    set_fs(oldfs);
-    return ret;
-}
-
-UINT_32
-kalFileWrite(
-    struct file* file,
-    UINT_64 offset,
-    UINT_8* data,
-    UINT_32 size)
-{
-    mm_segment_t oldfs;
-    INT_32 ret;
-
-    oldfs = get_fs();
-    set_fs(get_ds());
-
-    ret = vfs_write(file, data, size, &offset);
-
-    set_fs(oldfs);
-    return ret;
-}
-
 UINT_32
 kalWriteToFile(
     const PUINT_8 pucPath,
     BOOLEAN fgDoAppend,
     PUINT_8 pucData,
-    UINT_32 u4Size)
+    UINT_32 u4Size
+    )
 {
-    struct file* file = NULL;
-    UINT_32 ret;
+    struct file *file;
+    loff_t pos = 0;
+    ssize_t ret;
     UINT_32 u4Flags = 0;
 
     if(fgDoAppend) {
         u4Flags = O_APPEND;
     }
 
-    file = kalFileOpen(pucPath, O_WRONLY | O_CREAT | u4Flags, S_IRWXU);
-    ret = kalFileWrite(file, 0, pucData, u4Size);
-    kalFileClose(file);
+    file = filp_open(pucPath, O_WRONLY | O_CREAT | u4Flags, S_IRWXU);
+    if (IS_ERR(file)) {
+        return 0;
+    }
 
-    return ret;
+    ret = kernel_write(file, pucData, u4Size, &pos);
+    filp_close(file, NULL);
+
+    return (ret < 0) ? 0 : ret;
 }
 
+/*----------------------------------------------------------------------------*/
+/*!
+* \brief Read an optional configuration file through request_firmware().
+*
+* \param[in]  prGlueInfo   Pointer of GLUE Data Structure
+* \param[in]  pucName      File name without directory
+* \param[out] pucData      Destination buffer
+* \param[in]  u4Size       Size of the destination buffer
+* \param[out] pu4ReadSize  Number of bytes copied
+*
+* \retval 0        the file was read
+* \retval -ENOENT  the file does not exist; not an error for the caller
+*/
+/*----------------------------------------------------------------------------*/
 INT_32
 kalReadToFile(
-    const PUINT_8 pucPath,
+    IN P_GLUE_INFO_T prGlueInfo,
+    const PUINT_8 pucName,
     PUINT_8 pucData,
     UINT_32 u4Size,
     PUINT_32 pu4ReadSize
     )
 {
-    struct file* file = NULL;
-    INT_32 ret = -1;
-    UINT_32 u4ReadSize = 0;
+    const struct firmware *prFw = NULL;
+    UINT_32 u4Len;
 
-    DBGLOG(INIT, INFO, ("kalReadToFile() path %s\n", pucPath));
-
-    file = kalFileOpen(pucPath, O_RDONLY , 0);
-
-    if ((file != NULL) && !IS_ERR(file)) {
-        u4ReadSize = kalFileRead(file, 0, pucData, u4Size);
-        kalFileClose(file);
-        if(pu4ReadSize) *pu4ReadSize = u4ReadSize;
-        ret = 0;
+    if (firmware_request_nowarn(&prFw, pucName, (struct device *) prGlueInfo->rHifInfo.Dev)) {
+        return -ENOENT;
     }
-    return ret;
+
+    u4Len = min_t(UINT_32, u4Size, prFw->size);
+    kalMemCopy(pucData, prFw->data, u4Len);
+    if (pu4ReadSize) {
+        *pu4ReadSize = u4Len;
+    }
+    release_firmware(prFw);
+
+    return 0;
 }
 
 
@@ -4377,10 +3879,10 @@ kalIndicateBssInfo (
 
     /* search through channel entries */
     if(ucChannelNum <= 14) {
-        prChannel = ieee80211_get_channel(wiphy, ieee80211_channel_to_frequency(ucChannelNum, IEEE80211_BAND_2GHZ));
+        prChannel = ieee80211_get_channel(wiphy, ieee80211_channel_to_frequency(ucChannelNum, NL80211_BAND_2GHZ));
     }
     else {
-        prChannel = ieee80211_get_channel(wiphy, ieee80211_channel_to_frequency(ucChannelNum, IEEE80211_BAND_5GHZ));
+        prChannel = ieee80211_get_channel(wiphy, ieee80211_channel_to_frequency(ucChannelNum, NL80211_BAND_5GHZ));
     }
 
     if(prChannel != NULL && prGlueInfo->prScanRequest != NULL) {
@@ -4404,11 +3906,7 @@ kalIndicateBssInfo (
             DBGLOG(SCN, TRACE, ("cfg80211_inform_bss_frame() returned with NULL\n"));
         }
         else {
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 10, 0))
             cfg80211_put_bss(wiphy, bss);
-#else
-            cfg80211_put_bss(bss);
-#endif
 			DBGLOG(SCN, TRACE, ("iok\n"));
         }
     }
@@ -4439,42 +3937,17 @@ kalReadyOnChannel (
     )
 {
     struct ieee80211_channel *prChannel = NULL;
-    enum nl80211_channel_type rChannelType;
-    
     //ucChannelNum = wlanGetChannelNumberByNetwork(prGlueInfo->prAdapter, NETWORK_TYPE_AIS_INDEX);
 
     if(prGlueInfo->fgIsRegistered == TRUE) {
         if(ucChannelNum <= 14) {
-            prChannel = ieee80211_get_channel(priv_to_wiphy(prGlueInfo), ieee80211_channel_to_frequency(ucChannelNum, IEEE80211_BAND_2GHZ));
+            prChannel = ieee80211_get_channel(priv_to_wiphy(prGlueInfo), ieee80211_channel_to_frequency(ucChannelNum, NL80211_BAND_2GHZ));
         }
         else {
-            prChannel = ieee80211_get_channel(priv_to_wiphy(prGlueInfo), ieee80211_channel_to_frequency(ucChannelNum, IEEE80211_BAND_5GHZ));
+            prChannel = ieee80211_get_channel(priv_to_wiphy(prGlueInfo), ieee80211_channel_to_frequency(ucChannelNum, NL80211_BAND_5GHZ));
         }
 
-        switch(eSco) {
-        case CHNL_EXT_SCN:
-            rChannelType = NL80211_CHAN_NO_HT;
-            break;
-
-        case CHNL_EXT_SCA:
-            rChannelType = NL80211_CHAN_HT40MINUS;
-            break;
-
-        case CHNL_EXT_SCB:
-            rChannelType = NL80211_CHAN_HT40PLUS;
-            break;
-
-        case CHNL_EXT_RES:
-        default:
-            rChannelType = NL80211_CHAN_HT20;
-            break;
-        }
-
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 10, 0))
         cfg80211_ready_on_channel(prGlueInfo->prDevHandler->ieee80211_ptr, u8Cookie, prChannel, u4DurationMs, GFP_KERNEL);
-#else
-        cfg80211_ready_on_channel(prGlueInfo->prDevHandler, u8Cookie, prChannel, rChannelType, u4DurationMs, GFP_KERNEL);
-#endif
     }
 
     return;
@@ -4502,42 +3975,17 @@ kalRemainOnChannelExpired (
     )
 {
     struct ieee80211_channel *prChannel = NULL;
-    enum nl80211_channel_type rChannelType;
-    
     ucChannelNum = wlanGetChannelNumberByNetwork(prGlueInfo->prAdapter, NETWORK_TYPE_AIS_INDEX);
 
     if(prGlueInfo->fgIsRegistered == TRUE) {
         if(ucChannelNum <= 14) {
-            prChannel = ieee80211_get_channel(priv_to_wiphy(prGlueInfo), ieee80211_channel_to_frequency(ucChannelNum, IEEE80211_BAND_2GHZ));
+            prChannel = ieee80211_get_channel(priv_to_wiphy(prGlueInfo), ieee80211_channel_to_frequency(ucChannelNum, NL80211_BAND_2GHZ));
         }
         else {
-            prChannel = ieee80211_get_channel(priv_to_wiphy(prGlueInfo), ieee80211_channel_to_frequency(ucChannelNum, IEEE80211_BAND_5GHZ));
+            prChannel = ieee80211_get_channel(priv_to_wiphy(prGlueInfo), ieee80211_channel_to_frequency(ucChannelNum, NL80211_BAND_5GHZ));
         }
 
-        switch(eSco) {
-        case CHNL_EXT_SCN:
-            rChannelType = NL80211_CHAN_NO_HT;
-            break;
-
-        case CHNL_EXT_SCA:
-            rChannelType = NL80211_CHAN_HT40MINUS;
-            break;
-
-        case CHNL_EXT_SCB:
-            rChannelType = NL80211_CHAN_HT40PLUS;
-            break;
-
-        case CHNL_EXT_RES:
-        default:
-            rChannelType = NL80211_CHAN_HT20;
-            break;
-        }
-
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 10, 0))
         cfg80211_remain_on_channel_expired(prGlueInfo->prDevHandler->ieee80211_ptr, u8Cookie, prChannel, GFP_KERNEL);
-#else
-        cfg80211_remain_on_channel_expired(prGlueInfo->prDevHandler, u8Cookie, prChannel, rChannelType, GFP_KERNEL);
-#endif
     }
 
     return;
@@ -4575,21 +4023,12 @@ kalIndicateMgmtTxStatus (
             break;
         }
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 10, 0))
         cfg80211_mgmt_tx_status(prGlueInfo->prDevHandler->ieee80211_ptr,
                         u8Cookie,
                         pucFrameBuf,
                         u4FrameLen,
                         fgIsAck,
                         GFP_KERNEL);
-#else
-        cfg80211_mgmt_tx_status(prGlueInfo->prDevHandler,
-                        u8Cookie,
-                        pucFrameBuf,
-                        u4FrameLen,
-                        fgIsAck,
-                        GFP_KERNEL);
-#endif
 
     } while (FALSE);
 
@@ -4638,304 +4077,19 @@ kalIndicateRxMgmtFrame (
 #endif
         i4Freq = nicChannelNum2Freq(ucChnlNum) / 1000;
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 10, 0)
         cfg80211_rx_mgmt(prGlueInfo->prDevHandler->ieee80211_ptr, //struct net_device * dev,
                             i4Freq,
                             RCPI_TO_dBm(prSwRfb->prHifRxHdr->ucRcpi),
                             prSwRfb->pvHeader,
                             prSwRfb->u2PacketLen,
-                            GFP_KERNEL);
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 2, 0)
-        cfg80211_rx_mgmt(prGlueInfo->prDevHandler, //struct net_device * dev,
-                            i4Freq,
-                            RCPI_TO_dBm(prSwRfb->prHifRxHdr->ucRcpi),
-                            prSwRfb->pvHeader,
-                            prSwRfb->u2PacketLen,
-                            GFP_KERNEL);
-#else
-        cfg80211_rx_mgmt(prGlueInfo->prDevHandler, //struct net_device * dev,
-                            i4Freq,
-                            prSwRfb->pvHeader,
-                            prSwRfb->u2PacketLen,
-                            GFP_KERNEL);
-#endif
+                            0);
 
     } while (FALSE);
 
 } /* kalIndicateRxMgmtFrame */
 
-#if CFG_SUPPORT_AGPS_ASSIST
-BOOLEAN kalIndicateAgpsNotify(P_ADAPTER_T prAdapter, UINT_8 cmd, PUINT_8 data, UINT_16 dataLen){
-	P_GLUE_INFO_T prGlueInfo = prAdapter->prGlueInfo;
-	
-	struct sk_buff *skb = cfg80211_testmode_alloc_event_skb(priv_to_wiphy(prGlueInfo),
-																dataLen, GFP_KERNEL);
-	//DBGLOG(CCX, INFO, ("WLAN_STATUS_AGPS_NOTIFY, cmd=%d\n", cmd));
-	if (unlikely(nla_put(skb, MTK_ATTR_AGPS_CMD, sizeof(cmd), &cmd) < 0))
-		goto nla_put_failure;
-	if (dataLen > 0 && data && unlikely(nla_put(skb, MTK_ATTR_AGPS_DATA, dataLen, data) < 0))
-    	goto nla_put_failure;
-	if (unlikely(nla_put(skb, MTK_ATTR_AGPS_IFINDEX, sizeof(UINT_32), &prGlueInfo->prDevHandler->ifindex) < 0))
-    	goto nla_put_failure;
-	/* currently, the ifname maybe wlan0, p2p0, so the maximum name length will be 5 bytes */
-	if (unlikely(nla_put(skb, MTK_ATTR_AGPS_IFNAME, 5, prGlueInfo->prDevHandler->name) < 0))
-    	goto nla_put_failure;
-	cfg80211_testmode_event(skb, GFP_KERNEL);
-	return TRUE;
-	
-nla_put_failure:
-	kfree_skb(skb);
-	return FALSE;
-}
-#endif
 
-#if (CFG_SUPPORT_MET_PROFILING == 1)
-#define PROC_MET_PROF_CTRL                 "met_ctrl"
-#define PROC_MET_PROF_PORT                 "met_port"
-
-struct proc_dir_entry *pMetProcDir; 
-void *pMetGlobalData = NULL;
-static unsigned long __read_mostly tracing_mark_write_addr = 0;
-
-static void inline __mt_update_tracing_mark_write_addr(void)
-{
-      if(unlikely(0 == tracing_mark_write_addr))
-            tracing_mark_write_addr = kallsyms_lookup_name("tracing_mark_write");
-}
-
-VOID
-kalMetProfilingStart (
-    IN P_GLUE_INFO_T prGlueInfo,
-    IN struct sk_buff *prSkb
-    )
-{
-    UINT_8 ucIpVersion;	
-    UINT_16 u2UdpSrcPort;
-    UINT_16 u2RtpSn;
-    PUINT_8 pucEthHdr = prSkb->data;
-    PUINT_8 pucIpHdr, pucUdpHdr, pucRtpHdr;
-	
-    //| Ethernet(14) | IP(20) | UDP(8)| RTP(12) |
-    //UDP==> |SRC_PORT(2)|DST_PORT(2)|LEN(2)|CHKSUM(2)|
-    //RTP==> |CTRL(2)|SEQ(2)|TimeStamp(4)|...
-    //printk("MET_PROF: MET enable=%d(HardXmit)\n", prGlueInfo->u8MetProfEnable);
-    if (prGlueInfo->u8MetProfEnable == 1) {
-        u2UdpSrcPort = prGlueInfo->u16MetUdpPort;
-        if ((*(pucEthHdr + 12) == 0x08) && (*(pucEthHdr + 13) == 0x00)) {
-            /* IP */
-            pucIpHdr = pucEthHdr + ETH_HLEN;
-            ucIpVersion = (*pucIpHdr & IPVH_VERSION_MASK) >> IPVH_VERSION_OFFSET;
-            if (ucIpVersion == IPVERSION) {
-                if(pucIpHdr[IPV4_HDR_IP_PROTOCOL_OFFSET] == IP_PROTOCOL_UDP) {
-                    /* UDP */
-                    pucUdpHdr = pucIpHdr + IP_HEADER_LEN;
-                    //check UDP port number
-                    if (((UINT_16)pucUdpHdr[0] << 8 |(UINT_16)pucUdpHdr[1]) == u2UdpSrcPort) {
-                        /* RTP */
-                        pucRtpHdr = pucUdpHdr + 8;
-                        u2RtpSn = (UINT_16)pucRtpHdr[2] << 8 | pucRtpHdr[3];
-                        //trace_printk("S|%d|%s|%d\n", current->tgid, "WIFI-CHIP", u2RtpSn);//frm_sequence);
-                        #ifdef CONFIG_TRACING
-                        __mt_update_tracing_mark_write_addr();
-                        if (tracing_mark_write_addr != 0) {
-                            event_trace_printk(tracing_mark_write_addr, "S|%d|%s|%d\n", current->tgid, "WIFI-CHIP", u2RtpSn);
-                        }
-                        #endif
-                    }
-                }
-            }
-        }
-    }
-}
-
-VOID
-kalMetProfilingFinish (
-    IN P_ADAPTER_T  prAdapter,
-    IN P_MSDU_INFO_T prMsduInfo
-    )
-{
-    UINT_8 ucIpVersion;	
-    UINT_16 u2UdpSrcPort;
-    UINT_16 u2RtpSn;
-    struct sk_buff *prSkb = (struct sk_buff *)prMsduInfo->prPacket;	
-    PUINT_8 pucEthHdr = prSkb->data;
-    PUINT_8 pucIpHdr, pucUdpHdr, pucRtpHdr;
-    P_GLUE_INFO_T       prGlueInfo = prAdapter->prGlueInfo;
-	
-    //| Ethernet(14) | IP(20) | UDP(8)| RTP(12) |
-    //UDP==> |SRC_PORT(2)|DST_PORT(2)|LEN(2)|CHKSUM(2)|
-    //RTP==> |CTRL(2)|SEQ(2)|TimeStamp(4)|...
-    //printk("MET_PROF: MET enable=%d(TxMsdu)\n", prGlueInfo->u8MetProfEnable);
-    if (prGlueInfo->u8MetProfEnable == 1) {
-        u2UdpSrcPort = prGlueInfo->u16MetUdpPort;
-        if ((*(pucEthHdr + 12) == 0x08) && (*(pucEthHdr + 13) == 0x00)) {
-            /* IP */
-            pucIpHdr = pucEthHdr + ETH_HLEN;
-            ucIpVersion = (*pucIpHdr & IPVH_VERSION_MASK) >> IPVH_VERSION_OFFSET;
-            if (ucIpVersion == IPVERSION) {
-                if(pucIpHdr[IPV4_HDR_IP_PROTOCOL_OFFSET] == IP_PROTOCOL_UDP) {
-                    /* UDP */
-                    pucUdpHdr = pucIpHdr + IP_HEADER_LEN;
-                    //check UDP port number
-                    if (((UINT_16)pucUdpHdr[0] << 8 |(UINT_16)pucUdpHdr[1]) == u2UdpSrcPort) {
-                        /* RTP */
-                        pucRtpHdr = pucUdpHdr + 8;
-                        u2RtpSn = (UINT_16)pucRtpHdr[2] << 8 | pucRtpHdr[3];
-                        //trace_printk("F|%d|%s|%d\n", current->tgid, "WIFI-CHIP", u2RtpSn);//frm_sequence);
-                        #ifdef CONFIG_TRACING
-                        __mt_update_tracing_mark_write_addr();
-                        if (tracing_mark_write_addr != 0) {
-                            event_trace_printk(tracing_mark_write_addr, "F|%d|%s|%d\n", current->tgid, "WIFI-CHIP", u2RtpSn);
-                        }
-                        #endif                        
-                    }
-                }
-            }
-        }
-    }
-}
-
-/*----------------------------------------------------------------------------*/
-/*!
-* \brief The PROC function for adjusting Debug Level to turn on/off debugging message.
-*
-* \param[in] file   pointer to file.
-* \param[in] buffer Buffer from user space.
-* \param[in] count  Number of characters to write
-* \param[in] data   Pointer to the private data structure.
-*
-* \return number of characters write from User Space.
-*/
-/*----------------------------------------------------------------------------*/
-static int
-kalMetCtrlWriteProcfs (
-    struct file *file,
-    const char __user *buffer,
-    size_t count,
-    loff_t *off
-    )  
-{
-    char acBuf[128 + 1]; // + 1 for "\0"
-    UINT_32 u4CopySize;
-    int u8MetProfEnable;
-    IN P_GLUE_INFO_T prGlueInfo;
-    
-
-    u4CopySize = (count < (sizeof(acBuf) - 1)) ? count : (sizeof(acBuf) - 1);
-    copy_from_user(acBuf, buffer, u4CopySize);
-    acBuf[u4CopySize] = '\0';
-
-    if (sscanf(acBuf, " %d", &u8MetProfEnable) == 1) {
-        printk("MET_PROF: Write MET PROC Enable=%d \n", u8MetProfEnable);
-    }
-    if (pMetGlobalData != NULL) {
-        prGlueInfo = (P_GLUE_INFO_T) pMetGlobalData;
-        prGlueInfo->u8MetProfEnable = (UINT_8)u8MetProfEnable;
-		}	
-    return count;
-}
-/*----------------------------------------------------------------------------*/
-/*!
-* \brief The PROC function for adjusting Debug Level to turn on/off debugging message.
-*
-* \param[in] file   pointer to file.
-* \param[in] buffer Buffer from user space.
-* \param[in] count  Number of characters to write
-* \param[in] data   Pointer to the private data structure.
-*
-* \return number of characters write from User Space.
-*/
-/*----------------------------------------------------------------------------*/
-static int
-kalMetPortWriteProcfs (
-    struct file *file,
-    const char __user *buffer,
-    size_t count,
-    loff_t *off
-    )  
-{
-    char acBuf[128 + 1]; // + 1 for "\0"
-    UINT_32 u4CopySize;
-    int u16MetUdpPort;
-    IN P_GLUE_INFO_T prGlueInfo;
-    
-
-    u4CopySize = (count < (sizeof(acBuf) - 1)) ? count : (sizeof(acBuf) - 1);
-    copy_from_user(acBuf, buffer, u4CopySize);
-    acBuf[u4CopySize] = '\0';
-
-    if (sscanf(acBuf, " %d", &u16MetUdpPort) == 1) {
-        printk("MET_PROF: Write MET PROC UDP_PORT=%d\n", u16MetUdpPort);
-    }
-    if (pMetGlobalData != NULL) {
-        prGlueInfo = (P_GLUE_INFO_T) pMetGlobalData;
-		    prGlueInfo->u16MetUdpPort = (UINT_16)u16MetUdpPort;
-		}	
-    return count;
-}
-
-struct file_operations rMetProcCtrlFops = {
-    write:   kalMetCtrlWriteProcfs
-    	
-};
-struct file_operations rMetProcPortFops = {
-    write:   kalMetPortWriteProcfs
-    	
-};
- 
-int kalMetInitProcfs(
-    IN P_GLUE_INFO_T prGlueInfo
-    )
-{
-    //struct proc_dir_entry *pMetProcDir;  	
-    if (init_net.proc_net == (struct proc_dir_entry *)NULL) {
-        DBGLOG(INIT, INFO, ("init proc fs fail: proc_net == NULL\n"));
-        return -ENOENT;
-    }
-    /*
-    * Directory: Root (/proc/net/wlan0)
-    */    
-    pMetProcDir = proc_mkdir("wlan0", init_net.proc_net);
-    if (pMetProcDir == NULL) {
-        return -ENOENT;
-    }      
-    /*
-    /proc/net/wlan0
-               |-- met_ctrl         (PROC_MET_PROF_CTRL)
-               |-- met_port         (PROC_MET_PROF_PORT)
-     */         
-    //proc_create(PROC_MET_PROF_CTRL, 0x0644, pMetProcDir, &rMetProcFops);
-    proc_create(PROC_MET_PROF_CTRL, 0, pMetProcDir, &rMetProcCtrlFops);
-    proc_create(PROC_MET_PROF_PORT, 0, pMetProcDir, &rMetProcPortFops);
-    
-    pMetGlobalData = (void *) prGlueInfo;
-    
-    return 0;  
-}
-int kalMetRemoveProcfs(void)
-{ 
-
-    if (init_net.proc_net == (struct proc_dir_entry *)NULL) {
-        DBGLOG(INIT, WARN, ("remove proc fs fail: proc_net == NULL\n"));
-        return -ENOENT;
-    }	   	
-    remove_proc_entry(PROC_MET_PROF_CTRL,      pMetProcDir);
-    remove_proc_entry(PROC_MET_PROF_PORT,      pMetProcDir);
-    /* remove root directory (proc/net/wlan0) */
-    remove_proc_entry("wlan0", init_net.proc_net);
-    /* clear MetGlobalData */
-    pMetGlobalData = NULL;
-    
-    return 0;
-}
-#endif
 UINT_64 kalGetBootTime(void) 
 {
-	struct timespec ts;
-	UINT_64 bootTime = 0;
-	get_monotonic_boottime(&ts);
-	bootTime = ts.tv_sec;
-	bootTime *= USEC_PER_SEC;
-	bootTime += ts.tv_nsec/NSEC_PER_USEC;
-	return bootTime;
+	return div_u64(ktime_get_boottime_ns(), NSEC_PER_USEC);
 }
