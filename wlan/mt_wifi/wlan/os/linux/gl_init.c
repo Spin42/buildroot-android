@@ -731,7 +731,7 @@ static SUB_MODULE_HANDLER rSubModHandler[SUB_MODULE_NUM] = {{NULL}};
 
 #define CHAN2G(_channel, _freq, _flags)         \
     {                                           \
-    .band               = IEEE80211_BAND_2GHZ,  \
+    .band               = NL80211_BAND_2GHZ,  \
     .center_freq        = (_freq),              \
     .hw_value           = (_channel),           \
     .flags              = (_flags),             \
@@ -757,7 +757,7 @@ static struct ieee80211_channel mtk_2ghz_channels[] = {
 
 #define CHAN5G(_channel, _flags)                    \
     {                                               \
-    .band               = IEEE80211_BAND_5GHZ,      \
+    .band               = NL80211_BAND_5GHZ,      \
     .center_freq        = 5000 + (5 * (_channel)),  \
     .hw_value           = (_channel),               \
     .flags              = (_flags),                 \
@@ -786,6 +786,13 @@ static struct ieee80211_channel mtk_5ghz_channels[] = {
     CHAN5G(208, 0),     CHAN5G(212, 0),
     CHAN5G(216, 0),
 };
+
+#define RATETAB_ENT(_rate, _rateid, _flags)     \
+    {                                           \
+    .bitrate    = (_rate),                      \
+    .hw_value   = (_rateid),                    \
+    .flags      = (_flags),                     \
+    }
 
 /* for cfg80211 - rate table */
 static struct ieee80211_rate mtk_rates[] = {
@@ -830,7 +837,7 @@ static struct ieee80211_rate mtk_rates[] = {
 
 /* public for both Legacy Wi-Fi / P2P access */
 struct ieee80211_supported_band mtk_band_2ghz = {
-    .band       = IEEE80211_BAND_2GHZ,
+    .band       = NL80211_BAND_2GHZ,
     .channels   = mtk_2ghz_channels,
     .n_channels = ARRAY_SIZE(mtk_2ghz_channels),
     .bitrates   = mtk_g_rates,
@@ -840,7 +847,7 @@ struct ieee80211_supported_band mtk_band_2ghz = {
 
 /* public for both Legacy Wi-Fi / P2P access */
 struct ieee80211_supported_band mtk_band_5ghz = {
-    .band       = IEEE80211_BAND_5GHZ,
+    .band       = NL80211_BAND_5GHZ,
     .channels   = mtk_5ghz_channels,
     .n_channels = ARRAY_SIZE(mtk_5ghz_channels),
     .bitrates   = mtk_a_rates,
@@ -859,7 +866,7 @@ static const UINT_32 mtk_cipher_suites[] = {
     WLAN_CIPHER_SUITE_AES_CMAC
 };
 
-static struct cfg80211_ops mtk_wlan_ops = {
+static const struct cfg80211_ops mtk_wlan_ops = {
     .change_virtual_intf    = mtk_cfg80211_change_iface,
     .add_key                = mtk_cfg80211_add_key,
     .get_key                = mtk_cfg80211_get_key,
@@ -867,9 +874,6 @@ static struct cfg80211_ops mtk_wlan_ops = {
     .set_default_key        = mtk_cfg80211_set_default_key,
     .set_default_mgmt_key   = mtk_cfg80211_set_default_mgmt_key,
     .get_station            = mtk_cfg80211_get_station,
-    .change_station			= mtk_cfg80211_change_station,
-	.add_station			= mtk_cfg80211_add_station,
-	.del_station			= mtk_cfg80211_del_station,
     .scan                   = mtk_cfg80211_scan,
     .connect                = mtk_cfg80211_connect,
     .disconnect             = mtk_cfg80211_disconnect,
@@ -879,62 +883,6 @@ static struct cfg80211_ops mtk_wlan_ops = {
     .set_pmksa              = mtk_cfg80211_set_pmksa,
     .del_pmksa              = mtk_cfg80211_del_pmksa,
     .flush_pmksa            = mtk_cfg80211_flush_pmksa,
-    .assoc                  = mtk_cfg80211_assoc,
-
-    /* Action Frame TX/RX */
-    .remain_on_channel          = mtk_cfg80211_remain_on_channel,
-    .cancel_remain_on_channel   = mtk_cfg80211_cancel_remain_on_channel,
-    .mgmt_tx                    = mtk_cfg80211_mgmt_tx,
-//    .mgmt_tx_cancel_wait        = mtk_cfg80211_mgmt_tx_cancel_wait,
-    .mgmt_frame_register    = mtk_cfg80211_mgmt_frame_register,
-    #ifdef CONFIG_NL80211_TESTMODE
-    .testmode_cmd               = mtk_cfg80211_testmode_cmd,
-    #endif
-#if (CFG_SUPPORT_TDLS == 1)
-	.tdls_mgmt					= TdlsexCfg80211TdlsMgmt,
-	.tdls_oper					= TdlsexCfg80211TdlsOper
-#endif /* CFG_SUPPORT_TDLS */
-};
-
-
-/* There isn't a lot of sense in it, but you can transmit anything you like */
-static const struct ieee80211_txrx_stypes
-mtk_cfg80211_ais_default_mgmt_stypes[NUM_NL80211_IFTYPES] = {
-    [NL80211_IFTYPE_ADHOC] = {
-        .tx = 0xffff,
-        .rx = BIT(IEEE80211_STYPE_ACTION >> 4)
-    },
-    [NL80211_IFTYPE_STATION] = {
-        .tx = 0xffff,
-        .rx = BIT(IEEE80211_STYPE_ACTION >> 4) |
-        BIT(IEEE80211_STYPE_PROBE_REQ >> 4)
-    },
-    [NL80211_IFTYPE_AP] = {
-        .tx = 0xffff,
-        .rx = BIT(IEEE80211_STYPE_PROBE_REQ >> 4) |
-        BIT(IEEE80211_STYPE_ACTION >> 4)
-    },
-    [NL80211_IFTYPE_AP_VLAN] = {
-        /* copy AP */
-        .tx = 0xffff,
-        .rx = BIT(IEEE80211_STYPE_ASSOC_REQ >> 4) |
-        BIT(IEEE80211_STYPE_REASSOC_REQ >> 4) |
-        BIT(IEEE80211_STYPE_PROBE_REQ >> 4) |
-        BIT(IEEE80211_STYPE_DISASSOC >> 4) |
-        BIT(IEEE80211_STYPE_AUTH >> 4) |
-        BIT(IEEE80211_STYPE_DEAUTH >> 4) |
-        BIT(IEEE80211_STYPE_ACTION >> 4)
-    },
-    [NL80211_IFTYPE_P2P_CLIENT] = {
-        .tx = 0xffff,
-        .rx = BIT(IEEE80211_STYPE_ACTION >> 4) |
-        BIT(IEEE80211_STYPE_PROBE_REQ >> 4)
-    },
-    [NL80211_IFTYPE_P2P_GO] = {
-        .tx = 0xffff,
-        .rx = BIT(IEEE80211_STYPE_PROBE_REQ >> 4) |
-        BIT(IEEE80211_STYPE_ACTION >> 4)
-    }
 };
 
 
@@ -2149,11 +2097,6 @@ static const struct net_device_ops wlan_netdev_ops = {
 };
 #endif
 
-#ifdef CONFIG_PM
-static const struct wiphy_wowlan_support wlan_wowlan_support = {
-    .flags = WIPHY_WOWLAN_DISCONNECT | WIPHY_WOWLAN_ANY,
-};
-#endif
 /*----------------------------------------------------------------------------*/
 /*!
 * \brief A method for creating Linux NET4 struct net_device object and the
@@ -2212,23 +2155,16 @@ wlanNetCreate(
     prWdev->wiphy->max_scan_ssids   = 1;    /* FIXME: for combo scan */
     prWdev->wiphy->max_scan_ie_len = 512;
     prWdev->wiphy->interface_modes  = BIT(NL80211_IFTYPE_STATION) | BIT(NL80211_IFTYPE_ADHOC);
-    prWdev->wiphy->bands[IEEE80211_BAND_2GHZ] = &mtk_band_2ghz;
+    prWdev->wiphy->bands[NL80211_BAND_2GHZ] = &mtk_band_2ghz;
     //for the WPS probe request suband issue
-    //prWdev->wiphy->bands[IEEE80211_BAND_5GHZ] = &mtk_band_5ghz;
-    prWdev->wiphy->bands[IEEE80211_BAND_5GHZ] = NULL;
+    //prWdev->wiphy->bands[NL80211_BAND_5GHZ] = &mtk_band_5ghz;
+    prWdev->wiphy->bands[NL80211_BAND_5GHZ] = NULL;
     prWdev->wiphy->signal_type      = CFG80211_SIGNAL_TYPE_MBM;
     prWdev->wiphy->cipher_suites    = (const u32 *)mtk_cipher_suites;
     prWdev->wiphy->n_cipher_suites  = ARRAY_SIZE(mtk_cipher_suites);
-    prWdev->wiphy->flags            = WIPHY_FLAG_CUSTOM_REGULATORY | WIPHY_FLAG_SUPPORTS_FW_ROAM | WIPHY_FLAG_HAS_REMAIN_ON_CHANNEL;
-#if (CFG_SUPPORT_TDLS == 1)
-	TDLSEX_WIPHY_FLAGS_INIT(prWdev->wiphy->flags);
-#endif /* CFG_SUPPORT_TDLS */
-    prWdev->wiphy->max_remain_on_channel_duration = 5000;
-    prWdev->wiphy->mgmt_stypes = mtk_cfg80211_ais_default_mgmt_stypes;
-#ifdef CONFIG_PM
-    kalMemCopy(&prWdev->wiphy->wowlan, &wlan_wowlan_support,
-        sizeof(struct wiphy_wowlan_support));
-#endif
+    prWdev->wiphy->flags            = WIPHY_FLAG_SUPPORTS_FW_ROAM;
+    /* the channel table is maintained by wlanUpdateChannelTable() */
+    prWdev->wiphy->regulatory_flags = REGULATORY_CUSTOM_REG;
     //4 <2> Create Glue structure
     prGlueInfo = (P_GLUE_INFO_T) wiphy_priv(prWdev->wiphy);
     if (!prGlueInfo) {
@@ -2986,7 +2922,7 @@ bailout:
         }
 #endif
         if (TRUE == prAdapter->fgEnable5GBand)
-            prWdev->wiphy->bands[IEEE80211_BAND_5GHZ] = &mtk_band_5ghz;
+            prWdev->wiphy->bands[NL80211_BAND_5GHZ] = &mtk_band_5ghz;
 
         prGlueInfo->main_thread = kthread_run(tx_thread, prGlueInfo->prDevHandler, "tx_thread");
 
