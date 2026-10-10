@@ -683,7 +683,6 @@
 ********************************************************************************
 */
 #include "gl_os.h"
-#include "gl_wext.h"
 #include "precomp.h"
 #if defined(CONFIG_MTK_TC1_FEATURE)
 #include <tc1_partition.h>
@@ -1857,8 +1856,6 @@ kalIndicateStatusAndComplete (
     UINT_32 bufLen;
     P_PARAM_STATUS_INDICATION_T pStatus = (P_PARAM_STATUS_INDICATION_T) pvBuf;
     P_PARAM_AUTH_EVENT_T pAuth = (P_PARAM_AUTH_EVENT_T) pStatus;
-    P_PARAM_PMKID_CANDIDATE_LIST_T pPmkid =
-        (P_PARAM_PMKID_CANDIDATE_LIST_T) (pStatus + 1);
     PARAM_MAC_ADDRESS arBssid;
     struct cfg80211_scan_request *prScanRequest = NULL;
     PARAM_SSID_T ssid;
@@ -1885,7 +1882,6 @@ kalIndicateStatusAndComplete (
             &arBssid[0],
             sizeof(arBssid),
             &bufLen);
-        wext_indicate_wext_event(prGlueInfo, SIOCGIWAP, arBssid, bufLen);
 
         /* switch netif on */
         netif_carrier_on(prGlueInfo->prDevHandler);
@@ -1967,7 +1963,6 @@ kalIndicateStatusAndComplete (
 
     case WLAN_STATUS_MEDIA_DISCONNECT:
         /* indicate disassoc event */
-        wext_indicate_wext_event(prGlueInfo, SIOCGIWAP, NULL, 0);
         /* For CR 90 and CR99, While supplicant do reassociate, driver will do netif_carrier_off first,
            after associated success, at joinComplete(), do netif_carier_on,
            but for unknown reason, the supplicant 1x pkt will not called the driver
@@ -1998,7 +1993,6 @@ kalIndicateStatusAndComplete (
 
     case WLAN_STATUS_SCAN_COMPLETE:
         /* indicate scan complete event */
-        wext_indicate_wext_event(prGlueInfo, SIOCGIWSCAN, NULL, 0);
 
         /* 1. reset first for newly incoming request */
         GLUE_ACQUIRE_SPIN_LOCK(prGlueInfo, SPIN_LOCK_NET_DEV);
@@ -2056,36 +2050,6 @@ kalIndicateStatusAndComplete (
                     cfg80211_michael_mic_failure(prGlueInfo->prDevHandler, NULL, 
                                        (pAuth->arRequest[0].u4Flags == PARAM_AUTH_REQUEST_PAIRWISE_ERROR) ? NL80211_KEYTYPE_PAIRWISE : NL80211_KEYTYPE_GROUP,
                                        0, NULL, GFP_KERNEL);
-                    wext_indicate_wext_event(prGlueInfo,
-                        IWEVMICHAELMICFAILURE,
-                        (unsigned char *)&pAuth->arRequest[0],
-                        pAuth->arRequest[0].u4Length);
-                }
-                break;
-
-            case ENUM_STATUS_TYPE_CANDIDATE_LIST:
-                /*
-                printk(KERN_NOTICE "Param_StatusType_PMKID_CandidateList: Ver(%ld) Num(%ld)\n",
-                    pPmkid->u2Version,
-                    pPmkid->u4NumCandidates);
-                if (pPmkid->u4NumCandidates > 0) {
-                    printk(KERN_NOTICE "candidate[" MACSTR "] preAuth Flag:%lx\n",
-                        MAC2STR(pPmkid->arCandidateList[0].rBSSID),
-                        pPmkid->arCandidateList[0].fgFlags);
-                }
-                */
-                {
-                 UINT_32  i = 0;
-
-                 P_PARAM_PMKID_CANDIDATE_T prPmkidCand = (P_PARAM_PMKID_CANDIDATE_T)&pPmkid->arCandidateList[0];
-
-                 for (i=0; i<pPmkid->u4NumCandidates; i++) {
-                    wext_indicate_wext_event(prGlueInfo,
-                        IWEVPMKIDCAND,
-                        (unsigned char *)&pPmkid->arCandidateList[i],
-                        pPmkid->u4NumCandidates);
-                    prPmkidCand += sizeof(PARAM_PMKID_CANDIDATE_T);
-                }
                 }
                 break;
 
@@ -2104,16 +2068,6 @@ kalIndicateStatusAndComplete (
             */
         }
         break;
-
-#if CFG_SUPPORT_BCM && CFG_SUPPORT_BCM_BWCS
-    case WLAN_STATUS_BWCS_UPDATE:
-    {
-        wext_indicate_wext_event(prGlueInfo, IWEVCUSTOM, pvBuf, sizeof(PTA_IPC_T));
-    }
-
-        break;
-
-#endif
 
     default:
         /*
@@ -2189,7 +2143,6 @@ kalUpdateReAssocReqInfo (
         u4FrameBodyLen -= 4;
     }
 
-    wext_indicate_wext_event(prGlueInfo, IWEVASSOCREQIE, cp, u4FrameBodyLen);
 
     if(u4FrameBodyLen <= CFG_CFG80211_IE_BUF_LEN) {
         prGlueInfo->u4ReqIeLength = u4FrameBodyLen;
@@ -3932,34 +3885,8 @@ kalUpdateRSSI(
     IN INT_8                            cLinkQuality
     )
 {
-    struct iw_statistics *pStats = (struct iw_statistics *)NULL;
-
+    /* Signal strength is reported on demand through cfg80211 get_station. */
     ASSERT(prGlueInfo);
-
-    switch(eNetTypeIdx) {
-    case KAL_NETWORK_TYPE_AIS_INDEX:
-        pStats =  (struct iw_statistics *) (&(prGlueInfo->rIwStats));
-        break;
-#if CFG_ENABLE_WIFI_DIRECT
-#if CFG_SUPPORT_P2P_RSSI_QUERY
-    case KAL_NETWORK_TYPE_P2P_INDEX:
-        pStats =  (struct iw_statistics *) (&(prGlueInfo->rP2pIwStats));
-        break;
-#endif
-#endif
-    default:
-        break;
-
-    }
-
-    if (pStats) {
-        pStats->qual.qual = cLinkQuality;
-        pStats->qual.noise = 0;
-        pStats->qual.updated = IW_QUAL_QUAL_UPDATED | IW_QUAL_NOISE_UPDATED;
-        pStats->qual.level = 0x100 + cRssi;
-        pStats->qual.updated |= IW_QUAL_LEVEL_UPDATED;
-    }
-
 
     return;
 }

@@ -532,7 +532,7 @@
 
 #include <linux/netdevice.h>    /* struct net_device, struct net_device_stats */
 #include <linux/etherdevice.h>  /* for eth_type_trans() function */
-#include <linux/wireless.h>     /* struct iw_statistics */
+#include <linux/wireless.h>     /* IW_AUTH_* constants used by the connect path */
 #include <linux/if_arp.h>
 #include <linux/inetdevice.h>   /* struct in_device */
 
@@ -545,7 +545,7 @@
 
 #include <linux/rtnetlink.h>    /* for rtnl_lock() and rtnl_unlock() */
 #include <linux/kthread.h>      /* kthread_should_stop(), kthread_run() */
-#include <asm/uaccess.h>        /* for copy_from_user() */
+#include <linux/uaccess.h>      /* for copy_from_user() */
 #include <linux/fs.h>           /* for firmware download */
 #include <linux/vmalloc.h>
 
@@ -566,17 +566,11 @@
 
 #include <asm/io.h>             /* readw and writew */
 
-#if WIRELESS_EXT > 12
-#include <net/iw_handler.h>
-#endif
 
 #include "version.h"
 #include "config.h"
 
-#if CFG_ENABLE_WIFI_DIRECT_CFG_80211
-#include <linux/wireless.h>
 #include <net/cfg80211.h>
-#endif
 
 #include <linux/module.h>
 
@@ -783,9 +777,6 @@ struct _GLUE_INFO_T {
     /* Device statistics */
     struct net_device_stats rNetDevStats;
 
-    /* Wireless statistics struct net_device */
-    struct iw_statistics rIwStats;
-
     /* spinlock to sync power save mechanism */
     spinlock_t rSpinLock[SPIN_LOCK_NUM];
 
@@ -825,7 +816,7 @@ struct _GLUE_INFO_T {
     /* defined in related hif header file */
     GL_HIF_INFO_T       rHifInfo;
 
-    /*! \brief wext wpa related information */
+    /*! \brief WPA related information of the pending connect request */
     GL_WPA_INFO_T       rWpaInfo;
 
 
@@ -884,10 +875,6 @@ struct _GLUE_INFO_T {
 
 #if CFG_ENABLE_WIFI_DIRECT
     P_GL_P2P_INFO_T         prP2PInfo;
-#if CFG_SUPPORT_P2P_RSSI_QUERY
-    /* Wireless statistics struct net_device */
-    struct iw_statistics    rP2pIwStats;
-#endif
 #endif
     BOOLEAN                 fgWpsActive;
 	UINT_8                  aucWSCIE[500]; /*for probe req*/

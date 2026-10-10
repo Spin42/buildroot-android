@@ -657,7 +657,6 @@
 #include "gl_os.h"
 #include "debug.h"
 #include "wlan_lib.h"
-#include "gl_wext.h"
 #include "gl_cfg80211.h"
 #include "precomp.h"
 #if CFG_SUPPORT_AGPS_ASSIST
@@ -1421,74 +1420,6 @@ wlanGetDevIdx (
 
 /*----------------------------------------------------------------------------*/
 /*!
-* \brief A method of struct net_device, a primary SOCKET interface to configure
-*        the interface lively. Handle an ioctl call on one of our devices.
-*        Everything Linux ioctl specific is done here. Then we pass the contents
-*        of the ifr->data to the request message handler.
-*
-* \param[in] prDev      Linux kernel netdevice
-*
-* \param[in] prIFReq    Our private ioctl request structure, typed for the generic
-*                       struct ifreq so we can use ptr to function
-*
-* \param[in] cmd        Command ID
-*
-* \retval WLAN_STATUS_SUCCESS The IOCTL command is executed successfully.
-* \retval OTHER The execution of IOCTL command is failed.
-*/
-/*----------------------------------------------------------------------------*/
-int
-wlanDoIOCTL(
-    struct net_device *prDev,
-    struct ifreq *prIFReq,
-    int i4Cmd
-    )
-{
-    P_GLUE_INFO_T prGlueInfo = NULL;
-    int ret = 0;
-
-    /* Verify input parameters for the following functions */
-    ASSERT(prDev && prIFReq);
-    if (!prDev || !prIFReq) {
-        DBGLOG(INIT, WARN, ("%s Invalid input data\n", __FUNCTION__));
-        return -EINVAL;
-    }
-
-    prGlueInfo = *((P_GLUE_INFO_T *) netdev_priv(prDev));
-    ASSERT(prGlueInfo);
-    if (!prGlueInfo) {
-        DBGLOG(INIT, WARN, ("%s No glue info\n", __FUNCTION__));
-        return -EFAULT;
-    }
-
-    if (prGlueInfo->u4ReadyFlag == 0) {
-        return -EINVAL;
-    }
-
-    //printk ("ioctl %x\n", i4Cmd);
-
-    if (i4Cmd == SIOCGIWPRIV) {
-        /* 0x8B0D, get private ioctl table */
-        ret = wext_get_priv(prDev, prIFReq);
-    }
-    else if ((i4Cmd >= SIOCIWFIRST) && (i4Cmd < SIOCIWFIRSTPRIV)) {
-        /* 0x8B00 ~ 0x8BDF, wireless extension region */
-        ret = wext_support_ioctl(prDev, prIFReq, i4Cmd);
-    }
-    else if ((i4Cmd >= SIOCIWFIRSTPRIV) && (i4Cmd < SIOCIWLASTPRIV)) {
-        /* 0x8BE0 ~ 0x8BFF, private ioctl region */
-        ret = priv_support_ioctl(prDev, prIFReq, i4Cmd);
-    }
-    else {
-        DBGLOG(INIT, WARN, ("Unexpected ioctl command: 0x%04x\n", i4Cmd));
-        /* return 0 for safe? */
-    }
-
-    return ret;
-} /* end of wlanDoIOCTL() */
-
-/*----------------------------------------------------------------------------*/
-/*!
 * \brief This function is to set multicast list and set rx mode.
 *
 * \param[in] prDev  Pointer to struct net_device
@@ -2211,7 +2142,6 @@ static const struct net_device_ops wlan_netdev_ops = {
     .ndo_set_multicast_list = wlanSetMulticastList,
 #endif
     .ndo_get_stats          = wlanGetStats,
-    .ndo_do_ioctl           = wlanDoIOCTL,
     .ndo_start_xmit         = wlanHardStartXmit,
     .ndo_init               = wlanInit,
     .ndo_uninit             = wlanUninit,
@@ -2328,9 +2258,6 @@ wlanNetCreate(
     *((P_GLUE_INFO_T *) netdev_priv(prGlueInfo->prDevHandler)) = prGlueInfo;
 
     prGlueInfo->prDevHandler->netdev_ops = &wlan_netdev_ops;
-#ifdef CONFIG_WIRELESS_EXT
-    prGlueInfo->prDevHandler->wireless_handlers = &wext_handler_def;
-#endif
     netif_carrier_off(prGlueInfo->prDevHandler);
     netif_tx_stop_all_queues(prGlueInfo->prDevHandler);
 
@@ -2390,11 +2317,6 @@ wlanNetCreate(
     }
 
     prGlueInfo->prAdapter = prAdapter;
-
-#ifdef CONFIG_CFG80211_WEXT
-    //4 <5> Use wireless extension to replace IOCTL
-    prWdev->wiphy->wext = &wext_handler_def;
-#endif
 
     goto netcreate_done;
 
