@@ -1795,10 +1795,10 @@ INT32 wmt_dev_patch_put(osal_firmware **ppPatch)
 
 
 /*
- * ROM patches are the files ROMv2_patch_1_<n>_hdr.bin. Every file whose firmware version (u16 at
- * offset 22 of the header) matches the ROM version of the chip is one part of the patch; the four
+ * ROM patches are the files ROMv2_patch_1_<n>_hdr.bin. Every file whose firmware version (big-endian
+ * u16 at offset 22 of the header) matches the ROM version of the chip is one part of the patch; the four
  * bytes at offset 24 of the header give the part's download sequence (low nibble of the first
- * byte) and the total number of parts (high nibble), and are also the address the part is
+ * byte) and the total number of parts (high nibble); the last three are the address the part is
  * downloaded to. This is what the stock userspace launcher passed to the driver.
  */
 #define WMT_PATCH_NAME_FMT "ROMv2_patch_1_%u_hdr.bin"
@@ -1833,7 +1833,7 @@ INT32 wmt_dev_patch_search(UINT32 hwVer)
 
         hdr = fw->data;
         if (fw->size < WMT_PATCH_HDR_SIZE ||
-            (hdr[WMT_PATCH_HDR_FWVER_OFFSET] | (hdr[WMT_PATCH_HDR_FWVER_OFFSET + 1] << 8)) != romVer) {
+            ((hdr[WMT_PATCH_HDR_FWVER_OFFSET] << 8) | hdr[WMT_PATCH_HDR_FWVER_OFFSET + 1]) != romVer) {
             release_firmware(fw);
             continue;
         }
@@ -1848,10 +1848,12 @@ INT32 wmt_dev_patch_search(UINT32 hwVer)
 
         part[seq - 1].dowloadSeq = seq;
         osal_memcpy(part[seq - 1].addRess, hdr + WMT_PATCH_HDR_INFO_OFFSET, sizeof(part[0].addRess));
+        /* the first byte carries the part count and sequence, not address bits */
+        part[seq - 1].addRess[0] = 0;
         osal_memcpy(part[seq - 1].patchName, name, sizeof(name));
         WMT_INFO_FUNC("patch part %u of %u: %s, address 0x%02x,0x%02x,0x%02x,0x%02x\n", seq, total, name,
-                      hdr[WMT_PATCH_HDR_INFO_OFFSET], hdr[WMT_PATCH_HDR_INFO_OFFSET + 1],
-                      hdr[WMT_PATCH_HDR_INFO_OFFSET + 2], hdr[WMT_PATCH_HDR_INFO_OFFSET + 3]);
+                      part[seq - 1].addRess[0], part[seq - 1].addRess[1],
+                      part[seq - 1].addRess[2], part[seq - 1].addRess[3]);
         found++;
         release_firmware(fw);
     }
