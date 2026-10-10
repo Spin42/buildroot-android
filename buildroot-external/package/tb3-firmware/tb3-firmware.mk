@@ -10,7 +10,7 @@ TB3_FIRMWARE_LICENSE = proprietary
 
 define TB3_FIRMWARE_INSTALL_TARGET_CMDS
 	mkdir -p $(TARGET_DIR)/lib/firmware
-	cp -a $(@D)/. $(TARGET_DIR)/lib/firmware/
+	rsync -a --exclude=".stamp_*" --exclude=".files-list*" $(@D)/ $(TARGET_DIR)/lib/firmware/
 endef
 
 $(eval $(generic-package))
