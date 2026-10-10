@@ -526,9 +526,7 @@
 #include <linux/wakelock.h>
 #endif
 
-#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 12)
 #include <linux/irq.h>          /* IRQT_FALLING */
-#endif
 
 #include <linux/netdevice.h>    /* struct net_device, struct net_device_stats */
 #include <linux/etherdevice.h>  /* for eth_type_trans() function */
@@ -950,12 +948,7 @@ struct _GLUE_INFO_T {
 
 };
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 0)
-    /* linux 2.4 */
-    typedef void (*PFN_WLANISR)(int irq, void *dev_id, struct pt_regs *regs);
-#else
     typedef irqreturn_t (*PFN_WLANISR)(int irq, void *dev_id, struct pt_regs *regs);
-#endif
 
 typedef void (*PFN_LINUX_TIMER_FUNC)(unsigned long);
 
@@ -1120,6 +1113,12 @@ typedef struct _SUB_MODULE_HANDLER {
 
 
 #define DbgPrint(...)
+
+/* The glue info is the private area of its wiphy. */
+static inline struct wiphy *priv_to_wiphy(void *priv)
+{
+    return container_of(priv, struct wiphy, priv);
+}
 /*******************************************************************************
 *                  F U N C T I O N   D E C L A R A T I O N S
 ********************************************************************************

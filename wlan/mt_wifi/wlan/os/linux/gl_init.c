@@ -901,7 +901,6 @@ static const struct cfg80211_ops mtk_wlan_ops = {
 ********************************************************************************
 */
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 31)
 /*----------------------------------------------------------------------------*/
 /*!
 * \brief Override the implementation of select queue
@@ -945,7 +944,6 @@ wlanSelectQueue(
 
     return au16Wlan1dToQueueIdx[skb->priority];
 }
-#endif
 
 /*----------------------------------------------------------------------------*/
 /*!
@@ -1432,11 +1430,7 @@ wlanSetMulticastListWorkQueue (struct work_struct *work) {
 
     if (prDev->flags & IFF_MULTICAST) {
         if ((prDev->flags & IFF_ALLMULTI) ||
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 35)
             (netdev_mc_count(prDev) > MAX_NUM_GROUP_ADDR)) {
-#else
-            (prDev->mc_count > MAX_NUM_GROUP_ADDR)) {
-#endif
 
             u4PacketFilter |= PARAM_PACKET_FILTER_ALL_MULTICAST;
         }
@@ -1463,11 +1457,7 @@ wlanSetMulticastListWorkQueue (struct work_struct *work) {
 
     if (u4PacketFilter & PARAM_PACKET_FILTER_MULTICAST) {
         /* Prepare multicast address list */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 35)
         struct netdev_hw_addr *ha;
-#else
-        struct dev_mc_list *prMcList;
-#endif
         PUINT_8 prMCAddrList = NULL;
         UINT_32 i = 0;
 
@@ -1480,20 +1470,12 @@ wlanSetMulticastListWorkQueue (struct work_struct *work) {
 
         prMCAddrList = kalMemAlloc(MAX_NUM_GROUP_ADDR * ETH_ALEN, VIR_MEM_TYPE);
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 35)
         netdev_for_each_mc_addr(ha, prDev) {
             if(i < MAX_NUM_GROUP_ADDR) {
                 memcpy((prMCAddrList + i * ETH_ALEN), ha->addr, ETH_ALEN);
                 i++;
             }
         }
-#else
-        for (i = 0, prMcList = prDev->mc_list;
-             (prMcList) && (i < prDev->mc_count) && (i < MAX_NUM_GROUP_ADDR);
-             i++, prMcList = prMcList->next) {
-            memcpy((prMCAddrList + i * ETH_ALEN), prMcList->dmi_addr, ETH_ALEN);
-        }
-#endif
 
         up(&g_halt_sem);
 
@@ -1645,10 +1627,8 @@ wlanHardStartXmit(
         }
     #endif
 
-#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 26)
         u2QueueIdx = skb_get_queue_mapping(prSkb);
         ASSERT(u2QueueIdx < CFG_MAX_TXQ_NUM);
-#endif
 
 #if CFG_ENABLE_PKT_LIFETIME_PROFILE    
         GLUE_SET_PKT_ARRIVAL_TIME(prSkb, kalGetTimeTick());    
@@ -1663,7 +1643,6 @@ wlanHardStartXmit(
 //        GLUE_INC_REF_CNT(prGlueInfo->i4TxPendingFrameNum);
 //        GLUE_INC_REF_CNT(prGlueInfo->ai4TxPendingFrameNumPerQueue[NETWORK_TYPE_AIS_INDEX][u2QueueIdx]);
 
-#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 26)
         if (prGlueInfo->ai4TxPendingFrameNumPerQueue[NETWORK_TYPE_AIS_INDEX][u2QueueIdx] >= CFG_TX_STOP_NETIF_PER_QUEUE_THRESHOLD) {
             netif_stop_subqueue(prDev, u2QueueIdx);
 
@@ -1671,15 +1650,6 @@ wlanHardStartXmit(
             prGlueInfo->rHifInfo.HifLoopbkFlg |= 0x01;
 #endif /* CONF_HIF_LOOPBACK_AUTO */
         }
-#else
-        if (prGlueInfo->i4TxPendingFrameNum >= CFG_TX_STOP_NETIF_QUEUE_THRESHOLD) {
-            netif_stop_queue(prDev);
-
-#if (CONF_HIF_LOOPBACK_AUTO == 1)
-            prGlueInfo->rHifInfo.HifLoopbkFlg |= 0x01;
-#endif /* CONF_HIF_LOOPBACK_AUTO */
-        }
-#endif
     } else {
         //printk("is security frame\n");
 
@@ -1814,11 +1784,7 @@ wlanInit(
 		}
 
 		prGlueInfo = *((P_GLUE_INFO_T *) netdev_priv(prDev));
-#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 12)
 		INIT_DELAYED_WORK(&workq, wlanSetMulticastListWorkQueue);
-#else
-		INIT_DELAYED_WORK(&workq, wlanSetMulticastListWorkQueue, NULL);
-#endif
 
 		fgIsWorkMcEverInit = TRUE;
 	}
@@ -1862,11 +1828,7 @@ wlanOpen(
 {
     ASSERT(prDev);
 
-#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 26)
     netif_tx_start_all_queues(prDev);
-#else
-    netif_start_queue(prDev);
-#endif
 
     return 0; /* success */
 } /* end of wlanOpen() */
@@ -1907,11 +1869,7 @@ wlanStop(
         cfg80211_scan_done(prScanRequest, TRUE);
     }
 
-#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 26)
     netif_tx_stop_all_queues(prDev);
-#else
-    netif_stop_queue(prDev);
-#endif
 
     return 0; /* success */
 } /* end of wlanStop() */
@@ -2080,22 +2038,16 @@ wlanNetUnregister(
 } /* end of wlanNetUnregister() */
 
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 31)
 static const struct net_device_ops wlan_netdev_ops = {
     .ndo_open		    = wlanOpen,
     .ndo_stop		    = wlanStop,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 2, 0)
     .ndo_set_rx_mode        = wlanSetMulticastList,
-#else
-    .ndo_set_multicast_list = wlanSetMulticastList,
-#endif
     .ndo_get_stats          = wlanGetStats,
     .ndo_start_xmit         = wlanHardStartXmit,
     .ndo_init               = wlanInit,
     .ndo_uninit             = wlanUninit,
     .ndo_select_queue       = wlanSelectQueue,
 };
-#endif
 
 /*----------------------------------------------------------------------------*/
 /*!

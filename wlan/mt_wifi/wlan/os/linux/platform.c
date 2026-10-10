@@ -106,9 +106,7 @@
 #include <linux/module.h>
 #include <linux/fs.h>
 
-#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 12)
     #include <linux/uaccess.h>
-#endif
 
 #include "gl_os.h"
 
