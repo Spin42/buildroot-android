@@ -140,29 +140,15 @@
 ********************************************************************************
 */
 #include <linux/interrupt.h>
-//#include <linux/kernel.h>
 #include <linux/device.h>
-//#include <linux/errno.h>
 #include <linux/platform_device.h>
-//#include <linux/fs.h>
-//#include <linux/cdev.h>
-//#include <linux/poll.h>
-
-#include <linux/mm.h>
-#ifndef CONFIG_X86
-#include <asm/memory.h>
-#endif
-
-#ifdef CONFIG_OF
-#include <linux/of_irq.h>
-#include <linux/of_address.h>
+#include <linux/clk.h>
+#include <linux/dma-mapping.h>
+#include <linux/io.h>
+#include <linux/mutex.h>
 #include <linux/of.h>
-#else
-
-#endif
-
-#include <mach/mt_pm_ldo.h>
-#include <mach/mt_gpt.h>
+#include <linux/of_device.h>
+#include <linux/ioport.h>
 
 #include "gl_os.h"
 
@@ -294,23 +280,10 @@ HifAhbPltmProbe(
     IN struct platform_device       *PDev
     );
 
-static int __exit
+static void
 HifAhbPltmRemove(
     IN struct platform_device       *PDev
     );
-
-#ifdef CONFIG_PM
-static int
-HifAhbPltmSuspend(
-    IN struct platform_device       *PDev,
-    pm_message_t                    Message
-    );
-
-static int
-HifAhbPltmResume(
-    IN struct platform_device       *PDev
-    );
-#endif /* CONFIG_PM */
 
 #endif /* CONF_HIF_DEV_MISC */
 
@@ -372,33 +345,41 @@ static struct miscdevice MtkAhbDriver = {
 };
 #else
 
-#ifdef CONFIG_OF
 static const struct of_device_id apwifi_of_ids[] = {
-	{ .compatible = "mediatek,WIFI", },
+	{ .compatible = "mediatek,mt8127-wlan", },
 	{}
 };
-#endif
+MODULE_DEVICE_TABLE(of, apwifi_of_ids);
 
-struct platform_driver MtkPltmAhbDriver = {
+static struct platform_driver MtkPltmAhbDriver = {
 	.driver = {
 		.name = "mt-wifi",
-		.owner = THIS_MODULE,
-#ifdef CONFIG_OF
-        .of_match_table = apwifi_of_ids,
-#endif
+		.of_match_table = apwifi_of_ids,
 	},
 	.probe = HifAhbPltmProbe,
-#ifdef CONFIG_PM
-	.suspend = HifAhbPltmSuspend,
-	.resume = HifAhbPltmResume,
-#else
-    .suspend = NULL,
-    .resume = NULL,
-#endif /* CONFIG_PM */
-	.remove = __exit_p ( HifAhbPltmRemove ),
+	.remove = HifAhbPltmRemove,
 };
 
-static struct platform_device *HifAhbPDev;
+/*
+   Resources of the bound platform device. They are filled by the platform
+   probe and used while the WMT core has the WiFi function on. All fields are
+   device-managed and valid while pdev != NULL; HifAhbLock protects pdev and
+   the probed state against the WMT callbacks.
+*/
+typedef struct _HIF_AHB_RES_T {
+    struct platform_device  *pdev;
+    UINT_8                  *HifRegBase;    /* "hif": CONN_HIF_CR */
+    UINT_8                  *McuRegBase;    /* "mcu-config": CONN_MCU_CONFIG, optional */
+    UINT_8                  *DmaRegBase;    /* "apdma-hif": AP DMA HIF channel, optional */
+    int                     Irq;            /* WF_HIF interrupt */
+    struct clk              *DmaClk;        /* "apdma", optional */
+    BOOLEAN                 fgPaOn;
+    BOOLEAN                 fgClkOn;
+    BOOLEAN                 fgProbed;       /* pfWlanProbe() succeeded */
+} HIF_AHB_RES_T;
+
+static HIF_AHB_RES_T HifAhbRes;
+static DEFINE_MUTEX(HifAhbLock);
 
 #endif /* CONF_HIF_DEV_MISC */
 
@@ -622,9 +603,8 @@ glUnregisterBus(
 {
     ASSERT(pfRemove);
 
-    pfRemove();
-
 #if (CONF_HIF_DEV_MISC == 1)
+    pfRemove();
     HifAhbRemove();
 
 	if ((misc_deregister(&MtkAhbDriver)) != 0) {
@@ -632,6 +612,7 @@ glUnregisterBus(
 	}
 #else
 
+    /* the platform remove callback removes the WiFi device if it is still probed */
     platform_driver_unregister(&MtkPltmAhbDriver);
 #endif /* CONF_HIF_DEV_MISC */
 
@@ -686,21 +667,18 @@ glSetHifInfo (
     /* Init HIF */
     ASSERT(GlueInfo);
     HifInfo = &GlueInfo->rHifInfo;
-#if (CONF_HIF_DEV_MISC == 1)
-    HifInfo->Dev = MtkAhbDriver.this_device;
-#else
-    HifInfo->Dev = &HifAhbPDev->dev;
-#endif /* CONF_HIF_DEV_MISC */
+    HifInfo->Dev = &HifAhbRes.pdev->dev;
     SET_NETDEV_DEV(GlueInfo->prDevHandler, HifInfo->Dev);
 
-    HifInfo->HifRegBaseAddr = ioremap(HIF_DRV_BASE, HIF_DRV_LENGTH);
-    HifInfo->McuRegBaseAddr = ioremap(CONN_MCU_DRV_BASE, CONN_MCU_REG_LENGTH);
+    /* the register windows are mapped by the platform probe */
+    HifInfo->HifRegBaseAddr = HifAhbRes.HifRegBase;
+    HifInfo->McuRegBaseAddr = HifAhbRes.McuRegBase;
     printk("HifInfo->HifRegBaseAddr=0x%p, HifInfo->McuRegBaseAddr=0x%p \n",
         HifInfo->HifRegBaseAddr, HifInfo->McuRegBaseAddr);
 
     /* default disable DMA */
     HifInfo->fgDmaEnable = FALSE;
-    HifInfo->DmaRegBaseAddr = 0;
+    HifInfo->DmaRegBaseAddr = HifAhbRes.DmaRegBase;
     HifInfo->DmaOps = NULL;
 
     /* read chip ID */
@@ -714,10 +692,7 @@ glSetHifInfo (
 #if (CONF_MTK_AHB_DMA == 1)
     spin_lock_init(&HifInfo->DdmaLock);
 
-//    if (HifInfo->ChipID == MTK_CHIP_ID_6572)
-//        HifPdmaInit(HifInfo);
-//    else if (HifInfo->ChipID == MTK_CHIP_ID_6582)
-        HifPdmaInit(HifInfo);
+    HifPdmaInit(HifInfo);
 
     pfWlanDmaOps = HifInfo->DmaOps;
 #endif /* CONF_MTK_AHB_DMA */
@@ -770,9 +745,15 @@ glClearHifInfo (
     GLUE_INFO_T *GlueInfo
     )
 {
-	iounmap(GlueInfo->rHifInfo.HifRegBaseAddr);
-	iounmap(GlueInfo->rHifInfo.DmaRegBaseAddr);
-	iounmap(GlueInfo->rHifInfo.McuRegBaseAddr);
+    /* the register windows belong to the platform device and stay mapped */
+    GL_HIF_INFO_T *HifInfo = &GlueInfo->rHifInfo;
+
+    pfWlanDmaOps = NULL;
+    HifInfo->DmaOps = NULL;
+    HifInfo->fgDmaEnable = FALSE;
+    HifInfo->HifRegBaseAddr = NULL;
+    HifInfo->McuRegBaseAddr = NULL;
+    HifInfo->DmaRegBaseAddr = NULL;
     return;
 
 } /* end of glClearHifInfo() */
@@ -887,12 +868,6 @@ glBusRelease (
 *         NEGATIVE_VALUE   if fail
 */
 /*----------------------------------------------------------------------------*/
-//#ifdef CONFIG_OF  /*for MT6752*/
-//#ifndef MT_WF_HIF_IRQ_ID
-//#define MT_WF_HIF_IRQ_ID   270
-//#endif
-//#endif
-#ifdef CONFIG_OF
 INT_32
 glBusSetIrq (
     PVOID pvData,
@@ -900,12 +875,6 @@ glBusSetIrq (
     PVOID pvCookie
     )
 {
-    struct device_node *node = NULL;
-    unsigned int irq_info[3] = {0, 0, 0};
-    //unsigned int phy_base;
-    unsigned int irq_id = 0;
-    unsigned int irq_flags = 0;
-
     struct net_device *prNetDevice;
 
     ASSERT(pvData);
@@ -914,143 +883,18 @@ glBusSetIrq (
     }
     prNetDevice = (struct net_device *) pvData;
 
-    node = of_find_compatible_node(NULL, NULL, "mediatek,WIFI");
-    if(node){
-        irq_id = irq_of_parse_and_map(node,0);
-        /*fixme, be compitable arch 64bits*/
-        //mtk_btif.base = (unsigned long)of_iomap(node, 0);
-        //BTIF_INFO_FUNC("get btif irq(%d),register base(0x%lx)\n",
-        //            mtk_btif.p_irq->irq_id,mtk_btif.base);
-        printk("WIFI-OF: get wifi irq(%d)\n", irq_id);
-    }else{
-        printk("WIFI-OF: get wifi device node fail\n");
+    if (HifAhbRes.pdev == NULL || HifAhbRes.Irq <= 0) {
+        printk("WIFI-OF: no interrupt\n");
+        return -1;
     }
 
-    /* get the interrupt line behaviour */
-    if (of_property_read_u32_array(node, "interrupts",
-                    irq_info, ARRAY_SIZE(irq_info))){
-        printk("WIFI-OF: get interrupt flag from DTS fail\n");
-    }else{
-        irq_flags = irq_info[2];
-        printk("WIFI-OF: get interrupt flag(0x%x)\n", irq_flags);
-    }
-
-    /* Register AHB IRQ */
-    if (request_irq(irq_id,
-                    HifAhbISR,
-                    irq_flags, HIF_MOD_NAME, prNetDevice)) {
-        printk("WIFI-OF: request irq %d fail!\n", irq_id);
+    /* Register AHB IRQ; the trigger type is the one of the "interrupts" property */
+    if (request_irq(HifAhbRes.Irq, HifAhbISR, 0, HIF_MOD_NAME, prNetDevice)) {
+        printk("WIFI-OF: request irq %d fail!\n", HifAhbRes.Irq);
         return -1;
     }
 
     return 0;
-}
-
-VOID
-glBusFreeIrq (
-    PVOID pvData,
-    PVOID pvCookie
-    )
-{
-    struct device_node *node = NULL;
-    unsigned int irq_info[3] = {0, 0, 0};
-    //unsigned int phy_base;
-    unsigned int irq_id = 0;
-    unsigned int irq_flags = 0;
-
-    struct net_device *prNetDevice;
-
-    /* Init */
-    ASSERT(pvData);
-    if (!pvData) {
-        //printk(KERN_INFO DRV_NAME"%s null pvData\n", __FUNCTION__);
-        return;
-    }
-    prNetDevice = (struct net_device *) pvData;
-
-    node = of_find_compatible_node(NULL, NULL, "mediatek,WIFI");
-    if(node){
-        irq_id = irq_of_parse_and_map(node,0);
-        /*fixme, be compitable arch 64bits*/
-        //mtk_btif.base = (unsigned long)of_iomap(node, 0);
-        //BTIF_INFO_FUNC("get btif irq(%d),register base(0x%lx)\n",
-        //            mtk_btif.p_irq->irq_id,mtk_btif.base);
-        printk("WIFI-OF: get wifi irq(%d)\n", irq_id);
-    }else{
-        printk("WIFI-OF: get wifi device node fail\n");
-    }
-
-    /* get the interrupt line behaviour */
-    if (of_property_read_u32_array(node, "interrupts",
-                    irq_info, ARRAY_SIZE(irq_info))){
-        printk("WIFI-OF: get interrupt flag from DTS fail\n");
-    }else{
-        irq_flags = irq_info[2];
-        printk("WIFI-OF: get interrupt flag(0x%x)\n", irq_flags);
-    }
-
-    /* Free the IRQ */
-    free_irq(irq_id, prNetDevice);
-    return;
-
-}
-
-#else
-
-/* the name is different in 72 and 82 */
-#ifndef MT_WF_HIF_IRQ_ID /* for MT6572/82/92 */
-#define MT_WF_HIF_IRQ_ID   WF_HIF_IRQ_ID
-#endif /* MT_WF_HIF_IRQ_ID */
-
-INT_32
-glBusSetIrq (
-    PVOID pvData,
-    PVOID pfnIsr,
-    PVOID pvCookie
-    )
-{
-    int ret = 0;
-    struct net_device *prNetDevice;
-    GLUE_INFO_T *GlueInfo;
-    GL_HIF_INFO_T *HifInfo;
-
-
-    /* Init */
-    ASSERT(pvData);
-    if (!pvData) {
-        return -1;
-    }
-
-    prNetDevice = (struct net_device *) pvData;
-    GlueInfo = (GLUE_INFO_T *) pvCookie;
-    ASSERT(GlueInfo);
-    if (!GlueInfo) {
-        printk("GlueInfo == NULL!\n");
-        return -1;
-    }
-
-    HifInfo = &GlueInfo->rHifInfo;
-
-
-    /* Register AHB IRQ */
-    if (request_irq(MT_WF_HIF_IRQ_ID,
-                    HifAhbISR,
-                    IRQF_TRIGGER_LOW, HIF_MOD_NAME, prNetDevice)) {
-        printk("request irq %d fail!\n", MT_WF_HIF_IRQ_ID);
-        return -1;
-    }
-
-#if (CONF_HIF_DMA_INT == 1)
-    if (request_irq(MT_GDMA2_IRQ_ID,
-                    HifDmaISR,
-                    IRQF_TRIGGER_LOW, "AHB_DMA", prNetDevice)) {
-        printk("request irq %d fail!\n", MT_GDMA2_IRQ_ID);
-        free_irq(MT_WF_HIF_IRQ_ID, prNetDevice);
-        return -1;
-    }
-#endif /* CONF_HIF_DMA_INT */
-
-    return ret;
 
 } /* end of glBusSetIrq() */
 
@@ -1072,34 +916,37 @@ glBusFreeIrq (
     )
 {
     struct net_device *prNetDevice;
-    GLUE_INFO_T *GlueInfo;
-    GL_HIF_INFO_T *HifInfo;
 
-
-    /* Init */
     ASSERT(pvData);
     if (!pvData) {
-        //printk(KERN_INFO DRV_NAME"%s null pvData\n", __FUNCTION__);
         return;
     }
-
     prNetDevice = (struct net_device *) pvData;
-    GlueInfo = (GLUE_INFO_T *) pvCookie;
-    ASSERT(GlueInfo);
-    if (!GlueInfo) {
-        //printk(KERN_INFO DRV_NAME"%s no glue info\n", __FUNCTION__);
+
+    if (HifAhbRes.pdev == NULL || HifAhbRes.Irq <= 0)
         return;
-    }
-
-    HifInfo = &GlueInfo->rHifInfo;
-
 
     /* Free the IRQ */
-    free_irq(MT_WF_HIF_IRQ_ID, prNetDevice);
+    free_irq(HifAhbRes.Irq, prNetDevice);
     return;
 
-} /* end of glBusreeIrq() */
-#endif
+} /* end of glBusFreeIrq() */
+
+
+/*----------------------------------------------------------------------------*/
+/*!
+* \brief Get the platform device bound to the WiFi device-tree node.
+*
+* \retval NULL if no device is bound
+*/
+/*----------------------------------------------------------------------------*/
+struct device *
+glGetHifDevice (
+    VOID
+    )
+{
+    return HifAhbRes.pdev ? &HifAhbRes.pdev->dev : NULL;
+}
 
 
 /*----------------------------------------------------------------------------*/
@@ -1307,6 +1154,10 @@ kalDevPortRead (
         /* DMA_FROM_DEVICE invalidated (without writeback) the cache */
         /* TODO: if dst_off was not cacheline aligned? */
         DmaConf.Dst = dma_map_single(HifInfo->Dev, Buf, Size, DMA_FROM_DEVICE);
+        if (dma_mapping_error(HifInfo->Dev, DmaConf.Dst)) {
+            printk("[WiFi/HIF] DMA RX map fail\n");
+            return FALSE;
+        }
 #endif /* MTK_DMA_BUF_MEMCPY_SUP */
 
         /* start to read data */
@@ -1370,7 +1221,6 @@ kalDevPortRead (
 {
 //                UCHAR AeeBuffer[100];
                 UINT_32 RegValChip, RegValLP, FwCnt;
-                extern BOOLEAN mtk_wcn_wmt_assert(void);
                 printk("CONNSYS FW CPUINFO:\n");
                 for(FwCnt=0; FwCnt<512; FwCnt++)
                     printk("0x%08x ", MCU_REG_READL(HifInfo, CONN_MCU_CPUPCR)); // CONSYS_REG_READ(CONSYS_CPUPCR_REG)
@@ -1382,18 +1232,18 @@ kalDevPortRead (
                     /* HIF clock & CONNSYS is powered on but own fails */
                     /* for the case we just printk kernel error message */
                     printk("<WLANRXERR><vend_samp.lin> 0x%x 0x%x 0x%x\n",
-                        *(volatile unsigned int *)0xF0000024,
+                        0U, /* vendor infra register, not mapped */
                         (UINT_32)RegValChip, (UINT_32)RegValLP);
                     return TRUE;
                 }
                 printk("<WLANRXERR><vend_samp.lin> 0x%x 0x%x 0x%x\n",
-                    *(volatile unsigned int *)0xF0000024,
+                    0U, /* vendor infra register, not mapped */
                     (UINT_32)RegValChip, (UINT_32)RegValLP);
 
 #if 0
                 mtk_wcn_wmt_assert();
                 sprintf(AeeBuffer, "<WLANRXERR><vend_samp.lin> 0x%x 0x%x 0x%x",
-                        *(volatile unsigned int *)0xF0000024,
+                        0U, /* vendor infra register, not mapped */
                         (UINT_32)RegValChip, (UINT_32)RegValLP);
                 kalSendAeeWarning(AeeBuffer, "", "");
 
@@ -1605,6 +1455,10 @@ kalDevPortWrite (
         */
         /* DMA_TO_DEVICE writeback the cache */
         DmaConf.Src = dma_map_single(HifInfo->Dev, Buf, Size, DMA_TO_DEVICE);
+        if (dma_mapping_error(HifInfo->Dev, DmaConf.Src)) {
+            printk("[WiFi/HIF] DMA TX map fail\n");
+            return FALSE;
+        }
 #endif /* MTK_DMA_BUF_MEMCPY_SUP */
 
         /* start to write */
@@ -1679,7 +1533,6 @@ if (testgdmaclock == 1)
 {
 //                UCHAR AeeBuffer[100];
                 UINT_32 RegValChip, RegValLP, FwCnt;
-                extern BOOLEAN mtk_wcn_wmt_assert(void);
                 printk("CONNSYS FW CPUINFO:\n");
                 for(FwCnt=0; FwCnt<512; FwCnt++)
                     printk("0x%08x ", MCU_REG_READL(HifInfo, CONN_MCU_CPUPCR));
@@ -1691,17 +1544,17 @@ if (testgdmaclock == 1)
                     /* HIF clock & CONNSYS is powered on but own fails */
                     /* for the case we just printk kernel error message */
                     printk("<WLANTXERR><vend_samp.lin> 0x%x 0x%x 0x%x\n",
-                        *(volatile unsigned int *)0xF0000024,
+                        0U, /* vendor infra register, not mapped */
                         (UINT_32)RegValChip, (UINT_32)RegValLP);
                     return TRUE;
                 }
                 printk("<WLANTXERR><vend_samp.lin> 0x%x 0x%x 0x%x\n",
-                    *(volatile unsigned int *)0xF0000024,
+                    0U, /* vendor infra register, not mapped */
                     (UINT_32)RegValChip, (UINT_32)RegValLP);
 #if 0
                 mtk_wcn_wmt_assert();
                 sprintf(AeeBuffer, "<WLANTXERR><vend_samp.lin> 0x%x 0x%x 0x%x",
-                        *(volatile unsigned int *)0xF0000024,
+                        0U, /* vendor infra register, not mapped */
                         (UINT_32)RegValChip, (UINT_32)RegValLP);
                 kalSendAeeWarning(AeeBuffer, "", "");
 #endif
@@ -1953,7 +1806,27 @@ HifDmaISR(
 * \return void
 */
 /*----------------------------------------------------------------------------*/
-#include <mach/mt_gpio.h>
+/*
+   Called by the WMT core when it has powered the WiFi function: the CONSYS is
+   on and patched, so the HIF registers are accessible from here until
+   HifAhbRemove().
+*/
+extern INT_32 mtk_wcn_consys_hw_wifi_paldo_ctrl(UINT_32 enable);
+
+static void
+HifAhbPowerOff (
+    VOID
+    )
+{
+    if (HifAhbRes.fgClkOn) {
+        clk_disable_unprepare(HifAhbRes.DmaClk);
+        HifAhbRes.fgClkOn = FALSE;
+    }
+    if (HifAhbRes.fgPaOn) {
+        mtk_wcn_consys_hw_wifi_paldo_ctrl(0); /* switch to SW mode */
+        HifAhbRes.fgPaOn = FALSE;
+    }
+}
 
 static int
 HifAhbProbe (
@@ -1965,55 +1838,48 @@ HifAhbProbe (
 
     printk(KERN_INFO DRV_NAME "HifAhbProbe()\n");
 
-//    ASSERT(dev);
+    mutex_lock(&HifAhbLock);
 
-    /* power on WiFi TX PA 3.3V and HIF GDMA clock */
-{
-#ifdef CONFIG_MTK_PMIC_MT6397
-#ifdef MTK_EXTERNAL_LDO
-	/* for 8127 tablet */
-	mt_set_gpio_mode(GPIO51, GPIO_MODE_04); 
-	mt_set_gpio_dir(GPIO51, GPIO_DIR_OUT); 
-	mt_set_gpio_pull_enable(GPIO51, GPIO_PULL_ENABLE);
-	mt_set_gpio_pull_select(GPIO51, GPIO_PULL_UP);
-#elif defined(MTK_ALPS_BOX_SUPPORT)
-	/* for 8127 box */
-	mt_set_gpio_mode(GPIO89, GPIO_MODE_04); 
-	mt_set_gpio_dir(GPIO89, GPIO_DIR_OUT); 
-	mt_set_gpio_pull_enable(GPIO89, GPIO_PULL_ENABLE);
-	mt_set_gpio_pull_select(GPIO89, GPIO_PULL_UP);
-#else
-	hwPowerOn(MT65XX_POWER_LDO_VGP4,VOL_3300,"WLAN");
-#endif
-#else
-#ifdef CONFIG_OF  /*for MT6752*/
-    extern INT_32 mtk_wcn_consys_hw_wifi_paldo_ctrl(UINT_32 enable);
-    //hwPowerOn(MT6325_POWER_LDO_VCN33, VOL_3300, "WLAN");
-    mtk_wcn_consys_hw_wifi_paldo_ctrl(1); /* switch to HW mode */
-#else  /*for MT6572/82/92*/
-    extern void upmu_set_vcn33_on_ctrl_wifi(UINT_32 val);
-    hwPowerOn(MT6323_POWER_LDO_VCN33_WIFI, VOL_3300, "WLAN");
-    upmu_set_vcn33_on_ctrl_wifi(1); /* switch to HW mode */
-#endif
-#endif
-
-//    enable_clock(MT_CG_APDMA_SW_CG, "WLAN");
-//    if (pfWlanDmaOps != NULL)
-//        pfWlanDmaOps->DmaClockCtrl(TRUE);
-}
-
-#if (CONF_HIF_DEV_MISC == 1)
-    if (pfWlanProbe((PVOID)&MtkAhbDriver.this_device) != WLAN_STATUS_SUCCESS) {
-#else
-    if (pfWlanProbe((PVOID)&HifAhbPDev->dev) != WLAN_STATUS_SUCCESS) {
-#endif /* CONF_HIF_DEV_MISC */
-
-        //printk(KERN_WARNING DRV_NAME"pfWlanProbe fail!call pfWlanRemove()\n");
-
-        pfWlanRemove();
-        Ret = -1;
+    if (HifAhbRes.pdev == NULL || pfWlanProbe == NULL) {
+        printk(KERN_INFO DRV_NAME "HifAhbProbe(): no WiFi device\n");
+        Ret = -ENODEV;
+        goto out;
+    }
+    if (HifAhbRes.fgProbed) {
+        printk(KERN_INFO DRV_NAME "HifAhbProbe(): already probed\n");
+        goto out;
     }
 
+    /* power on WiFi TX PA 3.3V (HW mode) and the AP DMA clock (kept on while WiFi is on) */
+    Ret = mtk_wcn_consys_hw_wifi_paldo_ctrl(1);
+    if (Ret) {
+        printk(KERN_ERR DRV_NAME "WiFi PA power on fail(%d)\n", Ret);
+        Ret = -EIO;
+        goto out;
+    }
+    HifAhbRes.fgPaOn = TRUE;
+
+    if (HifAhbRes.DmaClk) {
+        Ret = clk_prepare_enable(HifAhbRes.DmaClk);
+        if (Ret) {
+            printk(KERN_ERR DRV_NAME "AP DMA clock enable fail(%d)\n", Ret);
+            HifAhbPowerOff();
+            goto out;
+        }
+        HifAhbRes.fgClkOn = TRUE;
+    }
+
+    if (pfWlanProbe((PVOID)&HifAhbRes.pdev->dev) != WLAN_STATUS_SUCCESS) {
+        pfWlanRemove();
+        HifAhbPowerOff();
+        Ret = -1;
+    }
+    else {
+        HifAhbRes.fgProbed = TRUE;
+    }
+
+out:
+    mutex_unlock(&HifAhbLock);
     return Ret;
 
 }
@@ -2028,6 +1894,19 @@ HifAhbProbe (
 * \return The result of remove (WLAN_STATUS_SUCCESS = 0)
 */
 /*----------------------------------------------------------------------------*/
+static void
+HifAhbRemoveLocked (
+    VOID
+    )
+{
+    if (!HifAhbRes.fgProbed)
+        return;
+
+    pfWlanRemove();
+    HifAhbRes.fgProbed = FALSE;
+    HifAhbPowerOff();
+}
+
 static int
 HifAhbRemove (
     VOID
@@ -2035,44 +1914,10 @@ HifAhbRemove (
 {
     printk(KERN_INFO DRV_NAME"HifAhbRemove()\n");
 
-//    ASSERT(dev);
-    pfWlanRemove();
+    mutex_lock(&HifAhbLock);
+    HifAhbRemoveLocked();
+    mutex_unlock(&HifAhbLock);
 
-{
-#ifdef CONFIG_MTK_PMIC_MT6397
-#ifdef MTK_EXTERNAL_LDO
-	/* for 8127 tablet */
-	mt_set_gpio_mode(GPIO51, GPIO_MODE_04); 
-	mt_set_gpio_dir(GPIO51, GPIO_DIR_OUT); 
-	mt_set_gpio_pull_enable(GPIO51, GPIO_PULL_ENABLE);
-	mt_set_gpio_pull_select(GPIO51, GPIO_PULL_DOWN);
-#elif defined(MTK_ALPS_BOX_SUPPORT)
-	/* for 8127 box */
-	mt_set_gpio_mode(GPIO89, GPIO_MODE_04); 
-	mt_set_gpio_dir(GPIO89, GPIO_DIR_OUT); 
-	mt_set_gpio_pull_enable(GPIO89, GPIO_PULL_ENABLE);
-	mt_set_gpio_pull_select(GPIO89, GPIO_PULL_DOWN);
-#else
-	hwPowerDown(MT65XX_POWER_LDO_VGP4,"WLAN");
-#endif
-#else
-#ifdef CONFIG_OF  /*for MT6752*/
-    extern INT_32 mtk_wcn_consys_hw_wifi_paldo_ctrl(UINT_32 enable);
-    mtk_wcn_consys_hw_wifi_paldo_ctrl(0); /* switch to SW mode */
-    //hwPowerDown(MT6325_POWER_LDO_VCN33, "WLAN");
-#else  /*for MT6572/82/92*/
-    extern void upmu_set_vcn33_on_ctrl_wifi(UINT_32 val);
-    upmu_set_vcn33_on_ctrl_wifi(0); /* switch to SW mode */
-    hwPowerDown(MT6323_POWER_LDO_VCN33_WIFI, "WLAN");
-#endif
-#endif
-
-//    disable_clock(MT_CG_APDMA_SW_CG, "WLAN");
-//    if (pfWlanDmaOps != NULL)
-//        pfWlanDmaOps->DmaClockCtrl(FALSE);
-}
-
-//    printk(KERN_INFO DRV_NAME"HifAhbRemove() done\n");
     return 0;
 
 }
@@ -2245,49 +2090,64 @@ HifAhbMiscClose(
 * \return 0
 */
 /*----------------------------------------------------------------------------*/
+static void __iomem *
+HifAhbMapByName (
+    IN struct platform_device       *PDev,
+    IN const char                   *Name
+    )
+{
+    struct resource *Res = platform_get_resource_byname(PDev, IORESOURCE_MEM, Name);
+
+    /* the windows are shared with other drivers: map without claiming them */
+    if (Res == NULL)
+        return NULL;
+    return devm_ioremap(&PDev->dev, Res->start, resource_size(Res));
+}
+
 static int
 HifAhbPltmProbe(
     IN struct platform_device       *PDev
     )
 {
-    /*
-        TODO: reference codes
-        	struct resource *regs;
-
-        	struct spi_master *master;
-        	struct mt_spi_t *ms;
-
-        	if(!request_mem_region(pdev->resource[0].start, 
-        						   pdev->resource[0].end-pdev->resource[0].start + 1, 
-        						   pdev->name)){
-        		dev_err(&pdev->dev,"request_mem_region busy.\n");
-        		return -EBUSY;
-        	}
-        	
-        	regs = platform_get_resource ( pdev,IORESOURCE_MEM, 0 );
-        	if(!regs){
-        		dev_err(&pdev->dev,"get resource regs NULL.\n");
-        		return -ENXIO;
-        	}
-
-        	irq = platform_get_irq(pdev,0);
-        	if(irq  < 0) {
-        		dev_err(&pdev->dev,"platform_get_irq error. get invalid irq\n");
-        		return irq;
-        	}
-    */
-    HifAhbPDev = PDev;
+    HIF_AHB_RES_T Res = {0};
+    struct clk *Clk;
+    int Ret;
 
     printk("HifAhbPltmProbe\n");
+
+    Res.pdev = PDev;
+
+    Res.HifRegBase = HifAhbMapByName(PDev, "hif");
+    if (Res.HifRegBase == NULL) {
+        dev_err(&PDev->dev, "no \"hif\" register window\n");
+        return -ENODEV;
+    }
+    Res.McuRegBase = HifAhbMapByName(PDev, "mcu-config");
+    Res.DmaRegBase = HifAhbMapByName(PDev, "apdma-hif");
+    if (Res.DmaRegBase == NULL)
+        dev_warn(&PDev->dev, "no \"apdma-hif\" window, PIO mode\n");
+
+    Res.Irq = platform_get_irq(PDev, 0);
+    if (Res.Irq < 0)
+        return Res.Irq;
+
+    Clk = devm_clk_get_optional(&PDev->dev, "apdma");
+    if (IS_ERR(Clk))
+        return dev_err_probe(&PDev->dev, PTR_ERR(Clk), "apdma clock\n");
+    Res.DmaClk = Clk;
+
+    /* the HIF DMA engine addresses the physical memory with 32 bits */
+    Ret = dma_set_mask_and_coherent(&PDev->dev, DMA_BIT_MASK(32));
+    if (Ret)
+        return Ret;
+
+    mutex_lock(&HifAhbLock);
+    HifAhbRes = Res;
+    mutex_unlock(&HifAhbLock);
 
 #if (CONF_HIF_PMIC_TEST == 1)
     wmt_set_jtag_for_mcu();
     wmt_set_jtag_for_gps();
-
-{
-//    extern INT32 mtk_wcn_consys_hw_reg_ctrl(UINT32 on, UINT32 co_clock_en);
-//    mtk_wcn_consys_hw_reg_ctrl(1, 0);
-}
 #endif /* CONF_HIF_PMIC_TEST */
 
 #if (MTK_WCN_SINGLE_MODULE == 1)
@@ -2314,12 +2174,15 @@ HifAhbPltmProbe(
 /*!
 * \brief This function is called by OS platform device module.
 *
+* The WMT callbacks are removed first so that no new probe can start; a probed
+* WiFi device is removed while the register windows are still mapped.
+*
 * \param[in] PDev           Pointer to the platform device structure.
 *
-* \return 0
+* \return (none)
 */
 /*----------------------------------------------------------------------------*/
-static int __exit
+static void
 HifAhbPltmRemove(
     IN struct platform_device       *PDev
     )
@@ -2328,55 +2191,11 @@ HifAhbPltmRemove(
     mtk_wcn_wmt_wlan_unreg();
 #endif /* MTK_WCN_SINGLE_MODULE */
 
-#if (CONF_HIF_PMIC_TEST == 1)
-{
-//    extern INT32 mtk_wcn_consys_hw_reg_ctrl(UINT32 on, UINT32 co_clock_en);
-//    mtk_wcn_consys_hw_reg_ctrl(0, 0);
+    mutex_lock(&HifAhbLock);
+    HifAhbRemoveLocked();
+    memset(&HifAhbRes, 0, sizeof(HifAhbRes));
+    mutex_unlock(&HifAhbLock);
 }
-#endif /* CONF_HIF_PMIC_TEST */
-
-    return 0;
-}
-
-
-#ifdef CONFIG_PM
-/*----------------------------------------------------------------------------*/
-/*!
-* \brief This function is called by OS platform device module.
-*
-* \param[in] PDev           Pointer to the platform device structure.
-* \param[in] Message        
-*
-* \return 0
-*/
-/*----------------------------------------------------------------------------*/
-static int
-HifAhbPltmSuspend(
-    IN struct platform_device       *PDev,
-    pm_message_t                    Message
-    )
-{
-    return 0;
-}
-
-
-/*----------------------------------------------------------------------------*/
-/*!
-* \brief This function is called by OS platform device module.
-*
-* \param[in] PDev           Pointer to the platform device structure.
-*
-* \return 0
-*/
-/*----------------------------------------------------------------------------*/
-static int
-HifAhbPltmResume(
-    IN struct platform_device       *PDev
-    )
-{
-    return 0;
-}
-#endif /* CONFIG_PM */
 
 #endif /* CONF_HIF_DEV_MISC */
 
