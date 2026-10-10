@@ -670,6 +670,15 @@
 
 BOOLEAN fgIsUnderSuspend = false;
 
+/* Set from a successful probe until an explicit remove: lets the whole chip
+ * reset handler decide whether the function has to be powered again. */
+static BOOLEAN fgWifiRequested = FALSE;
+
+/* Power the WiFi function through the WMT core once the driver is registered. */
+static int autostart = 1;
+module_param(autostart, int, 0444);
+MODULE_PARM_DESC(autostart, "power the WiFi function on at module load (1) or leave it to the user (0)");
+
 struct semaphore g_halt_sem;
 int g_u4HaltFlag = 0;
 
@@ -2532,140 +2541,7 @@ void wlanHandleSystemResume(void)
 }
 #endif //! CONFIG_X86
 
-extern void wlanRegisterNotifier(void);
-extern void wlanUnregisterNotifier(void);
 
-
-typedef int (*set_p2p_mode)(struct net_device *netdev, PARAM_CUSTOM_P2P_SET_STRUC_T p2pmode);
-typedef void (*set_dbg_level)(unsigned char modules[DBG_MODULE_NUM]);
-
-extern void register_set_p2p_mode_handler(set_p2p_mode handler);
-extern void register_set_dbg_level_handler(set_dbg_level handler);
-
-int 
-set_p2p_mode_handler(
-    struct net_device *netdev, 
-    PARAM_CUSTOM_P2P_SET_STRUC_T p2pmode
-)
-{
-#if 0
-    P_GLUE_INFO_T prGlueInfo  = *((P_GLUE_INFO_T *)netdev_priv(netdev));
-    PARAM_CUSTOM_P2P_SET_STRUC_T rSetP2P;
-    WLAN_STATUS rWlanStatus = WLAN_STATUS_SUCCESS;
-    UINT_32 u4BufLen = 0;
-
-    rSetP2P.u4Enable = p2pmode.u4Enable;
-    rSetP2P.u4Mode = p2pmode.u4Mode;
-
-    if(!rSetP2P.u4Enable) {
-        p2pNetUnregister(prGlueInfo, TRUE);
-    }
-
-    rWlanStatus = kalIoctl(prGlueInfo,
-                        wlanoidSetP2pMode,
-                        (PVOID)&rSetP2P,
-                        sizeof(PARAM_CUSTOM_P2P_SET_STRUC_T),
-                        FALSE,
-                        FALSE,
-                        TRUE,
-                        FALSE,
-                        &u4BufLen);
-    printk("set_p2p_mode_handler ret = %d\n", rWlanStatus);
-    if(rSetP2P.u4Enable) {
-        p2pNetRegister(prGlueInfo, TRUE);
-    }
-
-    return 0;
-
-#else
-
-    P_GLUE_INFO_T prGlueInfo  = *((P_GLUE_INFO_T *)netdev_priv(netdev));
-    extern BOOLEAN fgIsResetting;
-    extern int g_u4HaltFlag;
-    extern spinlock_t g_p2p_lock;
-    extern int g_u4P2PEnding;
-    extern int g_u4P2POnOffing;
-    PARAM_CUSTOM_P2P_SET_STRUC_T rSetP2P;
-    WLAN_STATUS rWlanStatus = WLAN_STATUS_SUCCESS;
-    BOOLEAN fgIsP2PEnding;
-    UINT_32 u4BufLen = 0;
-    GLUE_SPIN_LOCK_DECLARATION();
-
-    DBGLOG(INIT, INFO, ("%u %u\n", (UINT_32)p2pmode.u4Enable, (UINT_32)p2pmode.u4Mode));
-
-    /* avoid remove & p2p off command simultaneously */
-    GLUE_ACQUIRE_THE_SPIN_LOCK(&g_p2p_lock);
-    fgIsP2PEnding = g_u4P2PEnding;
-    g_u4P2POnOffing = 1;
-    GLUE_RELEASE_THE_SPIN_LOCK(&g_p2p_lock);
-
-    if (fgIsP2PEnding == 1) {
-        /* skip the command if we are removing */
-        GLUE_ACQUIRE_THE_SPIN_LOCK(&g_p2p_lock);
-        g_u4P2POnOffing = 0;
-        GLUE_RELEASE_THE_SPIN_LOCK(&g_p2p_lock);
-        return 0;
-    }
-
-    rSetP2P.u4Enable = p2pmode.u4Enable;
-    rSetP2P.u4Mode = p2pmode.u4Mode;
-
-    if ((!rSetP2P.u4Enable) && (fgIsResetting == FALSE)) {
-        p2pNetUnregister(prGlueInfo, TRUE);
-    }
-
-    /* move out to caller to avoid kalIoctrl & suspend/resume deadlock problem ALPS00844864 */
-    /*
-       Scenario:
-	   1. System enters suspend/resume but not yet enter wlanearlysuspend()
-	      or wlanlateresume();
-
-	   2. System switches to do PRIV_CMD_P2P_MODE and execute kalIoctl()
-	      and get g_halt_sem then do glRegisterEarlySuspend() or
-	      glUnregisterEarlySuspend();
-
-	      But system suspend/resume procedure is not yet finished so we
-	      suspend;
-
-	   3. System switches back to do suspend/resume procedure and execute
-	      kalIoctl(). But driver does not yet release g_halt_sem so system
-	      suspend in wlanearlysuspend() or wlanlateresume();
-
-	      ==> deadlock occurs.
-    */
-
-    rWlanStatus = kalIoctl(prGlueInfo,
-                           wlanoidSetP2pMode,
-                           (PVOID)&rSetP2P, /* pu4IntBuf[0] is used as input SubCmd */
-                           sizeof(PARAM_CUSTOM_P2P_SET_STRUC_T),
-                           FALSE,
-                           FALSE,
-                           TRUE,
-                           FALSE,
-                           &u4BufLen);
-    /* Need to check fgIsP2PRegistered, in case of whole chip reset.
-     * in this case, kalIOCTL return success always, 
-     * and prGlueInfo->prP2pInfo may be NULL */
-    if ((rSetP2P.u4Enable) && (prGlueInfo->prAdapter->fgIsP2PRegistered) &&
-        (fgIsResetting == FALSE)) {
-        p2pNetRegister(prGlueInfo, TRUE);
-    }
-
-    GLUE_ACQUIRE_THE_SPIN_LOCK(&g_p2p_lock);
-    g_u4P2POnOffing = 0;
-    GLUE_RELEASE_THE_SPIN_LOCK(&g_p2p_lock);
-    return 0;
-#endif
-}
-
-static void 
-set_dbg_level_handler(
-    unsigned char dbg_lvl[DBG_MODULE_NUM]
-)
-{
-    kalMemCopy(aucDebugModule, dbg_lvl, sizeof(aucDebugModule));
-    kalPrint("[wlan] change debug level");
-}
 
 /*----------------------------------------------------------------------------*/
 /*!
@@ -2983,12 +2859,11 @@ bailout:
         if(rSubModHandler[P2P_MODULE].subModInit) {
             wlanSubModInit(prGlueInfo);
         }
-        /* register set_p2p_mode handler to mtk_wmt_wifi */
-        register_set_p2p_mode_handler(set_p2p_mode_handler);
 #endif
 #if CFG_SPM_WORKAROUND_FOR_HOTSPOT
-        if (glIsChipNeedWakelock(prGlueInfo))
+        if (glIsChipNeedWakelock(prGlueInfo)) {
             KAL_WAKE_LOCK_INIT(prGlueInfo->prAdapter, &prGlueInfo->prAdapter->rApWakeLock, "WLAN AP");
+        }
 #endif
     }
     while (FALSE);
@@ -3031,6 +2906,7 @@ bailout:
 #endif
 	if (i4Status == WLAN_STATUS_SUCCESS) {
 		/* probe ok */
+		fgWifiRequested = TRUE;
 		DBGLOG(INIT, TRACE, ("wlanProbe ok\n"));
 	} else {
 		/* probe failed */
@@ -3068,9 +2944,6 @@ wlanRemove(
         DBGLOG(INIT, INFO, ("0 == u4WlanDevNum\n"));
         return;
     }
-    /* unregister set_p2p_mode handler to mtk_wmt_wifi */
-    register_set_p2p_mode_handler(NULL);
-
     prDev = arWlanDevInfo[u4WlanDevNum-1].prDev;
     prWlandevInfo = &arWlanDevInfo[u4WlanDevNum-1];
 
@@ -3211,9 +3084,28 @@ wlanRemove(
     DBGLOG(INIT, INFO, ("wlanUnregisterNotifier...\n"));
     wlanUnregisterNotifier();
 
+    if (!fgIsResetting) {
+        fgWifiRequested = FALSE;
+    }
+
     DBGLOG(INIT, INFO, ("wlanRemove ok\n"));
     return;
 } /* end of wlanRemove() */
+
+/*----------------------------------------------------------------------------*/
+/*!
+* \brief Tell whether the WiFi function was running before a whole chip reset.
+*
+* \retval TRUE   it has to be powered on again
+*/
+/*----------------------------------------------------------------------------*/
+BOOLEAN
+wlanIsRequested (
+    VOID
+    )
+{
+    return fgWifiRequested;
+}
 
 /*----------------------------------------------------------------------------*/
 /*!
@@ -3225,6 +3117,8 @@ wlanRemove(
 */
 /*----------------------------------------------------------------------------*/
 //1 Module Entry Point
+static VOID exitWlan(void);
+
 static int initWlan(void)
 {
     int ret = 0, i;
@@ -3246,9 +3140,6 @@ static int initWlan(void)
 #if (CFG_CHIP_RESET_SUPPORT)
     glResetInit();
 #endif
-
-    /* register set_dbg_level handler to mtk_wmt_wifi */
-    register_set_dbg_level_handler(set_dbg_level_handler);
 
     /* Set the initial DEBUG CLASS of each module */
 #if DBG
@@ -3278,6 +3169,16 @@ static int initWlan(void)
     aucDebugModule[DBG_MEM_IDX] = 0;
 #endif /* DBG */
 
+    /* The stock user space wrote "1" to /dev/wmtWifi; the WMT core calls the
+     * probe callback registered by the HIF while powering the function. */
+    if (autostart) {
+        if (mtk_wcn_wmt_func_on(WMTDRV_TYPE_WIFI) == 0) {
+            DBGLOG(INIT, ERROR, ("WMT could not power the WiFi function\n"));
+            exitWlan();
+            return -EIO;
+        }
+    }
+
     return ret;
 } /* end of initWlan() */
 
@@ -3296,8 +3197,8 @@ static VOID exitWlan(void)
 {
     DBGLOG(INIT, INFO, ("exitWlan\n"));
 
-    /* unregister set_dbg_level handler to mtk_wmt_wifi */
-    register_set_dbg_level_handler(NULL);
+    /* the WMT core calls the remove callback of the HIF */
+    mtk_wcn_wmt_func_off(WMTDRV_TYPE_WIFI);
 
 #if CFG_CHIP_RESET_SUPPORT
     glResetUninit();

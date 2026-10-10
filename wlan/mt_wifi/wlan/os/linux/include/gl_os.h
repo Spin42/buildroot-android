@@ -578,9 +578,7 @@
 #include "queue.h"
 #include "gl_kal.h"
 #include "hif.h"
-#if CFG_CHIP_RESET_SUPPORT
-    #include "gl_rst.h"
-#endif
+#include "gl_rst.h"
 
 
 #if (CFG_SUPPORT_TDLS == 1)
@@ -596,6 +594,7 @@
 #endif
 
 extern BOOLEAN fgIsBusAccessFailed;
+extern BOOLEAN fgIsResetting;
 
 /*******************************************************************************
 *                              C O N S T A N T S
