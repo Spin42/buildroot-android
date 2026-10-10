@@ -7,6 +7,7 @@
  *
  * Copyright (c) 2026 Marc Lainez <marc.lainez@gmail.com>
  */
+#include <linux/debugfs.h>
 #include <linux/interrupt.h>
 #include <linux/module.h>
 #include <linux/of.h>
@@ -163,6 +164,29 @@ err_put:
 	return 0;
 }
 
+static int mtk_camsys_stats_show(struct seq_file *m, void *unused)
+{
+	struct mtk_camsys *cam = m->private;
+	unsigned int bit;
+
+	seq_printf(m, "streaming %d sequence %u drops %u hw_errors %u\n", cam->streaming, cam->sequence, cam->drops,
+		   cam->hw_errors);
+	seq_printf(m, "last INT_STATUS %#010x DMA_INT %#010x dma_irqs %u\n", cam->last_st, cam->last_dma,
+		   cam->dma_irqs);
+	for (bit = 0; bit < 32; bit++)
+		if (cam->irq_bits[bit])
+			seq_printf(m, "bit %2u: %u\n", bit, cam->irq_bits[bit]);
+	if (cam->power_count) {
+		seq_printf(m, "TG_VF_CON %#010x TG_INTER_ST %#010x IMGO_BASE %#010x\n",
+			   readl(cam->isp + ISP_TG_VF_CON), readl(cam->isp + ISP_TG_INTER_ST),
+			   readl(cam->isp + ISP_IMGO_BASE_ADDR));
+		seq_printf(m, "TG_SEN_GRAB_PXL %#010x TG_SEN_GRAB_LIN %#010x\n",
+			   readl(cam->isp + ISP_TG_SEN_GRAB_PXL), readl(cam->isp + ISP_TG_SEN_GRAB_LIN));
+	}
+	return 0;
+}
+DEFINE_SHOW_ATTRIBUTE(mtk_camsys_stats);
+
 static int mtk_camsys_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
@@ -233,6 +257,9 @@ static int mtk_camsys_probe(struct platform_device *pdev)
 		dev_err(dev, "cannot register the sensor notifier: %d\n", ret);
 		goto err_media;
 	}
+
+	cam->debugfs = debugfs_create_dir("mtk_camsys", NULL);
+	debugfs_create_file("stats", 0444, cam->debugfs, cam, &mtk_camsys_stats_fops);
 	return 0;
 
 err_media:
@@ -254,6 +281,7 @@ static void mtk_camsys_remove(struct platform_device *pdev)
 {
 	struct mtk_camsys *cam = platform_get_drvdata(pdev);
 
+	debugfs_remove_recursive(cam->debugfs);
 	v4l2_async_nf_unregister(&cam->notifier);
 	v4l2_async_nf_cleanup(&cam->notifier);
 	media_device_unregister(&cam->mdev);

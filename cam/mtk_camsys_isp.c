@@ -213,8 +213,19 @@ irqreturn_t mtk_camsys_isp_irq(int irq, void *data)
 	u32 st = readl(cam->isp + ISP_CTL_INT_STATUS);
 	u32 dma = readl(cam->isp + ISP_CTL_DMA_INT);
 
+	unsigned int bit;
+
 	if (!st && !dma)
 		return IRQ_NONE;
+
+	cam->last_st = st;
+	if (dma) {
+		cam->last_dma = dma;
+		cam->dma_irqs++;
+	}
+	for (bit = 0; bit < 32; bit++)
+		if (st & BIT(bit))
+			cam->irq_bits[bit]++;
 
 	if (st & INT_SOF1)
 		cam->sof_ns = ktime_get_ns();

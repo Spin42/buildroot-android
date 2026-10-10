@@ -102,6 +102,12 @@ struct mtk_camsys {
 	u32 hw_errors;
 	u64 sof_ns;
 	u32 err_bits;
+
+	/* interrupt statistics for debugfs */
+	u32 irq_bits[32];
+	u32 dma_irqs;
+	u32 last_st, last_dma;
+	struct dentry *debugfs;
 };
 
 extern const struct mtk_camsys_port_cfg mtk_camsys_port_cfgs[MTK_CAMSYS_NUM_PORTS];
