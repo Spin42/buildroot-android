@@ -75,6 +75,9 @@ struct consys_hw {
 	u32 jtag;
 	struct mutex lock;
 	struct dentry *dbg;
+	struct debugfs_blob_wrapper emi_blob;
+	struct debugfs_blob_wrapper emi_full_blob;
+	void __iomem *emi_full;
 };
 
 static struct consys_hw *chw;
@@ -565,6 +568,16 @@ static int consys_probe(struct platform_device *pdev)
 	h->dbg = debugfs_create_dir("mt8127_consys", NULL);
 	debugfs_create_file_unsafe("power", 0644, h->dbg, h, &consys_dbg_power_fops);
 	debugfs_create_file_unsafe("chipid", 0444, h->dbg, h, &consys_dbg_chipid_fops);
+	/* The handshake and dump area shared with the CONSYS MCU, for reading the firmware trace. */
+	h->emi_blob.data = (void __force *)h->emi;
+	h->emi_blob.size = CONSYS_EMI_MEM_SIZE;
+	debugfs_create_blob("emi", 0400, h->dbg, &h->emi_blob);
+	h->emi_full = devm_ioremap_wc(h->dev, h->emi_phys, SZ_1M);
+	if (h->emi_full) {
+		h->emi_full_blob.data = (void __force *)h->emi_full;
+		h->emi_full_blob.size = SZ_1M;
+		debugfs_create_blob("emi_full", 0400, h->dbg, &h->emi_full_blob);
+	}
 
 	chw = h;
 	return 0;
