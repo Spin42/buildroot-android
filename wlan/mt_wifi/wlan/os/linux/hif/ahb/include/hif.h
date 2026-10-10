@@ -61,6 +61,9 @@
 #ifndef _HIF_H
 #define _HIF_H
 
+#include <linux/io.h>
+#include <linux/spinlock.h>
+
 #include "gl_typedef.h"
 #include "mtk_porting.h"
 
@@ -92,13 +95,6 @@
 *                              C O N S T A N T S
 ********************************************************************************
 */
-#ifndef CONN_MCU_CONFIG_BASE
-#define CONN_MCU_CONFIG_BASE         0xF8070000 //MT6572
-#endif /* CONN_MCU_CONFIG_BASE */
-
-#define CONSYS_CPUPCR_REG		    (CONN_MCU_CONFIG_BASE + 0x00000160)
-#define CONSYS_REG_READ(addr)       (*((volatile UINT_32*)(addr)))
-
 #define CONN_MCU_DRV_BASE                0x18070000
 #define CONN_MCU_REG_LENGTH              0x0200
 #define CONN_MCU_CPUPCR                  0x0160
@@ -249,8 +245,10 @@ typedef struct _MTK_WCN_HIF_DMA_CONF {
 *                                 M A C R O S
 ********************************************************************************
 */
+/* the CONN_MCU_CONFIG window is optional; reads as 0 when it is not mapped */
 #define MCU_REG_READL(_hif, _addr)          \
-            readl((volatile UINT_32 *)((_hif)->McuRegBaseAddr + _addr))
+            ((_hif)->McuRegBaseAddr ?       \
+             readl((volatile UINT_32 *)((_hif)->McuRegBaseAddr + _addr)) : 0)
 
 /* PIO mode HIF register read/write */
 #define HIF_REG_READL(_hif, _addr)          \

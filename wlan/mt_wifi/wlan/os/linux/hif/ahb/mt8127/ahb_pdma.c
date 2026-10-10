@@ -32,60 +32,12 @@
 
 #define MODULE_AHB_DMA
 
-#include <linux/version.h>      /* constant of kernel version */
-
-#include <linux/kernel.h>       /* bitops.h */
-
-#include <linux/timer.h>        /* struct timer_list */
-#include <linux/jiffies.h>      /* jiffies */
-#include <linux/delay.h>        /* udelay and mdelay macro */
-
-#if CONFIG_ANDROID
-#include <linux/wakelock.h>
-#endif
-
-#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 12)
-#include <linux/irq.h>          /* IRQT_FALLING */
-#endif
-
-#include <linux/netdevice.h>    /* struct net_device, struct net_device_stats */
-#include <linux/etherdevice.h>  /* for eth_type_trans() function */
-#include <linux/wireless.h>     /* struct iw_statistics */
-#include <linux/if_arp.h>
-#include <linux/inetdevice.h>   /* struct in_device */
-
-#include <linux/ip.h>           /* struct iphdr */
-
-#include <linux/string.h>       /* for memcpy()/memset() function */
-#include <linux/stddef.h>       /* for offsetof() macro */
-
-#include <linux/proc_fs.h>      /* The proc filesystem constants/structures */
-
-#include <linux/rtnetlink.h>    /* for rtnl_lock() and rtnl_unlock() */
-#include <linux/kthread.h>      /* kthread_should_stop(), kthread_run() */
-#include <asm/uaccess.h>        /* for copy_from_user() */
-#include <linux/fs.h>           /* for firmware download */
-#include <linux/vmalloc.h>
-
-#include <linux/kfifo.h>        /* for kfifo interface */
-#include <linux/cdev.h>         /* for cdev interface */
-
-#include <linux/firmware.h>     /* for firmware download */
-
-#include <linux/random.h>
-
-
-#include <asm/io.h>             /* readw and writew */
-
-#include <linux/module.h>
-
-//#include "../../../../../../platform/mt6582/kernel/core/include/mach/mt_clkmgr.h"
-#include <mach/mt_clkmgr.h>
+#include <linux/delay.h>        /* msleep */
+#include <linux/io.h>           /* readl, writel */
+#include <linux/printk.h>
 
 #include "hif.h"
 #include "hif_pdma.h"
-
-#include <mach/emi_mpu.h>
 
 //#if (CONF_MTK_AHB_DMA == 1)
 
@@ -154,7 +106,7 @@ HifPdmaAckIntr(
 
 static VOID
 HifPdmaClockCtrl(
-    IN UINT32                   FlgIsEnabled
+    IN UINT_32                   FlgIsEnabled
     );
 
 static VOID
@@ -211,32 +163,23 @@ HifPdmaInit (
     GL_HIF_INFO_T               *HifInfo
     )
 {
-    extern phys_addr_t gConEmiPhyBase;
-
-    /* IO remap PDMA register memory */
-    HifInfo->DmaRegBaseAddr = ioremap(AP_DMA_HIF_BASE, AP_DMA_HIF_0_LENGTH);
+    /*
+       The mapping of the HIF channel register window (AP_DMA_HIF_BASE,
+       AP_DMA_HIF_0_LENGTH bytes) is provided by the caller in
+       HifInfo->DmaRegBaseAddr. Without it the HIF stays in PIO mode.
+    */
+    if (HifInfo->DmaRegBaseAddr == NULL) {
+        printk("PDMA> no DMA register window, use PIO mode\n");
+        HifInfo->DmaOps = NULL;
+        HifInfo->fgDmaEnable = FALSE;
+        return;
+    }
 
     /* assign PDMA operators */
     HifInfo->DmaOps = &HifPdmaOps;
 
     /* enable PDMA mode */
     HifInfo->fgDmaEnable = TRUE;
-
-    /* Set EMI protection here */
-#ifdef MTK_TEE_CCCI_SECURE_SHARE_MEM_SUPPORT
-    printk("WIFI set EMI MPU for TEE project\n");
-    emi_mpu_set_region_protection(gConEmiPhyBase,
-        gConEmiPhyBase + SZ_1M/2,
-        5,
-        SET_ACCESS_PERMISSON(FORBIDDEN,NO_PROTECTION,FORBIDDEN,FORBIDDEN));
-#else
-    printk("WIFI set EMI MPU for non-TEE project\n");
-    emi_mpu_set_region_protection(gConEmiPhyBase,
-        gConEmiPhyBase + SZ_1M/2,
-        4,
-        SET_ACCESS_PERMISSON(FORBIDDEN,NO_PROTECTION,FORBIDDEN,FORBIDDEN));
-#endif
-
 
     printk("PDMA> HifPdmaInit ok!\n");
 }
@@ -265,7 +208,7 @@ HifPdmaConfig (
 {
     GL_HIF_INFO_T *HifInfo = (GL_HIF_INFO_T *)HifInfoSrc;
     MTK_WCN_HIF_DMA_CONF *Conf = (MTK_WCN_HIF_DMA_CONF *)Param;
-    UINT32 RegVal;
+    UINT_32 RegVal;
     
 
     /* Assign fixed value */
@@ -314,7 +257,7 @@ HifPdmaStart(
     )
 {
     GL_HIF_INFO_T *HifInfo = (GL_HIF_INFO_T *)HifInfoSrc;
-    UINT32 RegVal;
+    UINT_32 RegVal;
 
 
     /* Enable interrupt */
@@ -346,8 +289,8 @@ HifPdmaStop(
     )
 {
     GL_HIF_INFO_T *HifInfo = (GL_HIF_INFO_T *)HifInfoSrc;
-    UINT32 RegVal;
-//    UINT32 pollcnt;
+    UINT_32 RegVal;
+//    UINT_32 pollcnt;
 
 
     /* Disable interrupt */
@@ -389,7 +332,7 @@ HifPdmaPollStart(
     )
 {
     GL_HIF_INFO_T *HifInfo = (GL_HIF_INFO_T *)HifInfoSrc;
-	UINT32 RegVal;
+	UINT_32 RegVal;
 
 
     RegVal = HIF_DMAR_READL(HifInfo, AP_DMA_HIF_0_EN);
@@ -413,7 +356,7 @@ HifPdmaPollIntr(
     )
 {
     GL_HIF_INFO_T *HifInfo = (GL_HIF_INFO_T *)HifInfoSrc;
-	UINT32 RegVal;
+	UINT_32 RegVal;
 
 
 	RegVal = HIF_DMAR_READL(HifInfo, AP_DMA_HIF_0_INT_FLAG);
@@ -437,7 +380,7 @@ HifPdmaAckIntr(
     )
 {
     GL_HIF_INFO_T *HifInfo = (GL_HIF_INFO_T *)HifInfoSrc;
-	UINT32 RegVal;
+	UINT_32 RegVal;
 
 
 	/* Write 0 to clear interrupt */
@@ -458,13 +401,14 @@ HifPdmaAckIntr(
 /*----------------------------------------------------------------------------*/
 static VOID
 HifPdmaClockCtrl(
-    IN UINT32                   FlgIsEnabled
+    IN UINT_32                   FlgIsEnabled
     )
 {
-    if (FlgIsEnabled == TRUE)
-        enable_clock(MT_CG_PERI_AP_DMA, "WLAN");
-    else
-        disable_clock(MT_CG_PERI_AP_DMA, "WLAN");
+    /*
+       The AP DMA clock is held enabled for the whole time the WiFi function
+       is on (see HifAhbProbe()), so the per-transfer request has nothing
+       to do. The clock API may sleep and this is called around each transfer.
+    */
 }
 
 
@@ -483,8 +427,8 @@ HifPdmaRegDump(
     )
 {
     GL_HIF_INFO_T *HifInfo = (GL_HIF_INFO_T *)HifInfoSrc;
-    UINT32 RegId, RegVal;
-    UINT32 RegNum = 0;
+    UINT_32 RegId, RegVal;
+    UINT_32 RegNum = 0;
 
 
     printk("PDMA> Register content 0x%x=\n\t", AP_DMA_HIF_BASE);
@@ -501,7 +445,7 @@ HifPdmaRegDump(
         }
     }
 
-    printk("\nPDMA> clock status = 0x%x\n\n", *(volatile unsigned int *)0xF0003018);
+    printk("\n");
 }
 
 
@@ -520,7 +464,7 @@ HifPdmaReset(
     )
 {
     GL_HIF_INFO_T *HifInfo = (GL_HIF_INFO_T *)HifInfoSrc;
-    UINT32 LoopCnt;
+    UINT_32 LoopCnt;
 
 
     /* do warm reset: DMA will wait for current traction finished */

@@ -56,14 +56,12 @@ typedef enum _MTK_WCN_HIF_PDMA_BURST_LEN {
 } MTK_WCN_HIF_PDMA_BURST_LEN;
 
 
-/* reference to MT6572_AP_P_DMA_Spec.doc */
-#ifdef CONFIG_OF
-/*for MT6752*/
-#define AP_DMA_HIF_BASE             0x11000080
-#else
-/*for MT6572/82/92*/
+/*
+   AP DMA channel "HIF_1": channel n of the AP DMA block (0x11000000) is at
+   0x80 * (n + 1), with n = 2 for HIF_1. The window is described by the
+   "apdma-hif" reg entry of the device node; this value is only used in logs.
+*/
 #define AP_DMA_HIF_BASE             0x11000180
-#endif
 
 #define AP_DMA_HIF_0_INT_FLAG       (0x0000)
 #define AP_DMA_HIF_0_INT_EN         (0x0004)
