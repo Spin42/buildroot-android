@@ -65,9 +65,6 @@
 #include <linux/suspend.h>
 #include <linux/device.h>
 #include <linux/platform_device.h>
-#ifdef CONFIG_EARLYSUSPEND
-#include <linux/earlysuspend.h>
-#endif
 
 #define MTK_WMT_VERSION  "SOC Consys WMT Driver - v1.0"
 #define MTK_WMT_DATE     "2013/01/20"
@@ -175,48 +172,11 @@ static INT32 wmt_dbg_lte_coex_test(INT32 par1, INT32 par2, INT32 par3);
 #endif
 #endif
 
-#if CONSYS_WMT_REG_SUSPEND_CB_ENABLE || defined(CONFIG_EARLYSUSPEND)
+#if CONSYS_WMT_REG_SUSPEND_CB_ENABLE
 static int mtk_wmt_func_off_background(void);
 static int mtk_wmt_func_on_background(void);
-#endif
 
-#ifdef CONFIG_EARLYSUSPEND
-
-UINT32 g_early_suspend_flag = 0;
-OSAL_SLEEPABLE_LOCK g_es_lr_lock;
-static void wmt_dev_early_suspend(struct early_suspend *h)
-{
-		osal_lock_sleepable_lock(&g_es_lr_lock);
-    g_early_suspend_flag = 1;
-    osal_unlock_sleepable_lock(&g_es_lr_lock);
-    WMT_INFO_FUNC("@@@@@@@@@@wmt enter early suspend@@@@@@@@@@@@@@\n");
-    if (MTK_WCN_BOOL_FALSE == mtk_wcn_wmt_func_off(WMTDRV_TYPE_LPBK)) {
-        WMT_WARN_FUNC("WMT turn off LPBK fail\n");
-    }
-		else
-		{
-			WMT_INFO_FUNC("WMT turn off LPBK suceed");
-		}
-}
-
-static void wmt_dev_late_resume(struct early_suspend *h)
-{
-    
-    WMT_INFO_FUNC("@@@@@@@@@@wmt enter late resume@@@@@@@@@@@@@@\n");
-    osal_lock_sleepable_lock(&g_es_lr_lock);
-    g_early_suspend_flag = 0;
-    osal_unlock_sleepable_lock(&g_es_lr_lock);
-    mtk_wmt_func_on_background();
-    
-		return 0;
-}
-
-struct early_suspend wmt_early_suspend_handler = {
-    .suspend = wmt_dev_early_suspend,
-    .resume = wmt_dev_late_resume,
-};
-
-#else
+/* There is no early-suspend notification on mainline; the flag stays clear. */
 UINT32 g_early_suspend_flag = 0;
 #endif
 /*******************************************************************************
@@ -224,7 +184,7 @@ UINT32 g_early_suspend_flag = 0;
 ********************************************************************************
 */
 
-#if CONSYS_WMT_REG_SUSPEND_CB_ENABLE || defined(CONFIG_EARLYSUSPEND)
+#if CONSYS_WMT_REG_SUSPEND_CB_ENABLE
 
 static INT32 wmt_pwr_on_thread (void *pvData)
 {
@@ -1494,10 +1454,9 @@ static ssize_t wmt_dev_dbg_write(struct file *file, const char *buffer, unsigned
 INT32 wmt_dev_dbg_setup(VOID)
 {
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,0))
-	static const struct file_operations wmt_dbg_fops = {
-		.owner		= THIS_MODULE,
-		.read		= wmt_dev_dbg_read,
-		.write		= wmt_dev_dbg_write,
+	static const struct proc_ops wmt_dbg_fops = {
+		.proc_read	= wmt_dev_dbg_read,
+		.proc_write	= wmt_dev_dbg_write,
 	};
 	gWmtDbgEntry = proc_create(WMT_DBG_PROCNAME, 0664, NULL, &wmt_dbg_fops );
 	if(gWmtDbgEntry == NULL){
@@ -1648,14 +1607,13 @@ static int wmt_dev_proc_for_aee_write(struct file *file, const char *buffer, uns
 INT32 wmt_dev_proc_for_aee_setup(VOID)
 {
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,0))
-		static const struct file_operations wmt_aee_fops = {
-			.owner		= THIS_MODULE,
-			.read		= wmt_dev_proc_for_aee_read,
-			.write		= wmt_dev_proc_for_aee_write,
+		static const struct proc_ops wmt_aee_fops = {
+			.proc_read	= wmt_dev_proc_for_aee_read,
+			.proc_write	= wmt_dev_proc_for_aee_write,
 		};
 
-		gWmtDbgEntry = proc_create(WMT_AEE_PROCNAME, 0664, NULL, &wmt_aee_fops );
-		if(gWmtDbgEntry == NULL){
+		gWmtAeeEntry = proc_create(WMT_AEE_PROCNAME, 0664, NULL, &wmt_aee_fops );
+		if(gWmtAeeEntry == NULL){
 			WMT_ERR_FUNC("Unable to create /proc entry\n\r");
 			return -1;
 		}
@@ -2024,7 +1982,7 @@ long wmt_dev_tm_temp_query(void)
     
     static INT32 temp_table[HISTORY_NUM] = {99}; //not query yet.
     static INT32 idx_temp_table = 0;
-    static struct timeval query_time, now_time;
+    static struct osal_timeval query_time, now_time;
 
     INT8  query_cond = 0;
     INT32 current_temp = 0;
@@ -2042,7 +2000,7 @@ long wmt_dev_tm_temp_query(void)
        }            
     }
 
-    do_gettimeofday(&now_time);
+    osal_do_gettimeofday(&now_time);
 #if 1
     // Query condition 2:
     // Moniter the ahb bus activity to decide if we have the need to query temperature.
@@ -2104,7 +2062,7 @@ long wmt_dev_tm_temp_query(void)
         wmt_lib_notify_stp_sleep();
         idx_temp_table = (idx_temp_table + 1) % HISTORY_NUM;
         temp_table[idx_temp_table] = current_temp;
-        do_gettimeofday(&query_time);
+        osal_do_gettimeofday(&query_time);
 
         WMT_INFO_FUNC("[Thermal] current_temp = 0x%x \n", (current_temp & 0xFF));
     }
@@ -2786,11 +2744,6 @@ static int WMT_init(void)
 
 	gWmtInitDone = 1;
 	wake_up(&gWmtInitWq);
-#ifdef CONFIG_EARLYSUSPEND
-    osal_sleepable_lock_init(&g_es_lr_lock);
-    register_early_suspend(&wmt_early_suspend_handler);
-    WMT_INFO_FUNC("register_early_suspend finished\n");
-#endif
     WMT_INFO_FUNC("success \n");
     return 0;
 
@@ -2826,12 +2779,6 @@ error:
 static void WMT_exit (void)
 {
     dev_t dev = MKDEV(gWmtMajor, 0);
-#ifdef CONFIG_EARLYSUSPEND
-    unregister_early_suspend(&wmt_early_suspend_handler);
-    osal_sleepable_lock_deinit(&g_es_lr_lock);
-    WMT_INFO_FUNC("unregister_early_suspend finished\n");
-#endif
-
 #if CONSYS_WMT_REG_SUSPEND_CB_ENABLE
 	platform_driver_unregister(&mtk_wmt_dev_drv);
 #endif
