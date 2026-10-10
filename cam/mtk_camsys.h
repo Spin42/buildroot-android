@@ -120,8 +120,8 @@ int mtk_camsys_csi2_register(struct mtk_camsys *cam);
 void mtk_camsys_csi2_unregister(struct mtk_camsys *cam);
 
 /* mtk_camsys_isp.c: ISP pass 1 and the IMGO DMA */
-int mtk_camsys_isp_start(struct mtk_camsys *cam, const struct mtk_camsys_port_cfg *cfg, u32 bytesperline,
-			 dma_addr_t dma);
+void mtk_camsys_isp_start(struct mtk_camsys *cam, const struct mtk_camsys_port_cfg *cfg, u32 bytesperline,
+			  dma_addr_t dma);
 void mtk_camsys_isp_stop(struct mtk_camsys *cam);
 void mtk_camsys_isp_set_base(struct mtk_camsys *cam, dma_addr_t dma);
 irqreturn_t mtk_camsys_isp_irq(int irq, void *data);
