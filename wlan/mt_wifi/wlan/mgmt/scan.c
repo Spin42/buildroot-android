@@ -2352,6 +2352,7 @@ scanReportBss2Cfg80211 (
 		            SpecificprBssDesc->ucChannelNum,
 		            RCPI_TO_dBm(SpecificprBssDesc->ucRCPI));
 			}
+#if CFG_ENABLE_WIFI_DIRECT
 				else
 					{
 					
@@ -2365,6 +2366,7 @@ scanReportBss2Cfg80211 (
 		            RCPI_TO_dBm(SpecificprBssDesc->ucRCPI));
 				
 					}
+#endif
 
 #if CFG_ENABLE_WIFI_DIRECT
 				SpecificprBssDesc->fgIsP2PReport = FALSE;
@@ -2431,11 +2433,10 @@ scanReportBss2Cfg80211 (
 #endif
 					}
 				}
+#if CFG_ENABLE_WIFI_DIRECT
 				else
 				{
-#if CFG_ENABLE_WIFI_DIRECT
 					if(prBssDesc->fgIsP2PReport == TRUE)
-#endif
 					{
 						rChannelInfo.ucChannelNum = prBssDesc->ucChannelNum;
 						rChannelInfo.eBand = prBssDesc->eBand;
@@ -2455,11 +2456,10 @@ scanReportBss2Cfg80211 (
 							pass it. We use u2RawLength for the purpose.
 						*/
 //						prBssDesc->u2RawLength=0;
-#if CFG_ENABLE_WIFI_DIRECT
 						prBssDesc->fgIsP2PReport = FALSE;
-#endif
 					}
 				}
+#endif
 	    	}
 			
 }

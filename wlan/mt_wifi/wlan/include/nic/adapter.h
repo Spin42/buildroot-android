@@ -594,6 +594,16 @@ Add per station flow control when STA is in PS
 #ifndef _ADAPTER_H
 #define _ADAPTER_H
 
+#if !CFG_ENABLE_WIFI_DIRECT
+/* Defined in p2p_fsm.h when Wi-Fi Direct is built. */
+typedef enum _ENUM_HIDDEN_SSID_TYPE_T {
+    ENUM_HIDDEN_SSID_NONE,
+    ENUM_HIDDEN_SSID_LEN,
+    ENUM_HIDDEN_SSID_ZERO_CONTENT,
+    ENUM_HIDDEN_SSID_NUM
+} ENUM_HIDDEN_SSID_TYPE_T, *P_ENUM_HIDDEN_SSID_TYPE_T;
+#endif
+
 /*******************************************************************************
 *                         C O M P I L E R   F L A G S
 ********************************************************************************
@@ -761,9 +771,7 @@ struct _BSS_INFO_T {
 
     UINT_8                  ucSSIDLen;                  /* Length of SSID */
 
-#if CFG_ENABLE_WIFI_DIRECT
     ENUM_HIDDEN_SSID_TYPE_T eHiddenSsidType;            /* For Hidden SSID usage. */
-#endif
 
     UINT_8                  aucSSID[ELEM_MAX_LEN_SSID]; /* SSID used in this BSS */
 
@@ -1347,9 +1355,7 @@ struct _ADAPTER_T {
 	BOOLEAN 				fgIsRoamingEncEnabled;
 #endif /* CFG_SUPPORT_ROAMING_ENC */
 
-#if (CFG_SUPPORT_TDLS == 1)
 	BOOLEAN					fgTdlsIsSup;
-#endif /* CFG_SUPPORT_TDLS */
 
 	UINT_8				ucScanTime;
 

@@ -552,5 +552,18 @@ dumpMemory8 (
 *                              F U N C T I O N S
 ********************************************************************************
 */
+#if DBG
+    #define ASSERT_BREAK(_exp) \
+        { \
+            if (!(_exp)) { \
+                ASSERT(FALSE); \
+                break; \
+            } \
+        }
+
+#else
+    #define ASSERT_BREAK(_exp)
+#endif
+
 #endif /* _DEBUG_H */
 
