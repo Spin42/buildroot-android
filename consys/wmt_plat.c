@@ -165,11 +165,8 @@ INT32 wmt_plat_init(UINT32 co_clock_en)
 	if (ret)
 		return ret;
 
+	/* NULL when the kernel has no wakeup source support; the users of wmt_ws accept that. */
 	wmt_ws = wakeup_source_register(NULL, "wmtFuncCtrl");
-	if (!wmt_ws) {
-		mtk_wcn_cmb_stub_unreg();
-		return -ENOMEM;
-	}
 
 	ret = mtk_wcn_consys_hw_init();
 	if (ret) {
