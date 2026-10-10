@@ -1,5 +1,5 @@
 ccflags-y += -I$(src)/include -I$(src)/../wmt/include -I$(src)/../wmt/linux/include -I$(src)/../btif/inc -I$(src)/../compat \
-	     -DMTK_WCN_WMT_STP_EXP_SYMBOL_ABSTRACT -DWMT_IDC_SUPPORT=0
+	     -DWMT_IDC_SUPPORT=0
 
 obj-m += mt8127_consys.o
 mt8127_consys-y := consys_hw.o wmt_plat.o cmb_stub.o
