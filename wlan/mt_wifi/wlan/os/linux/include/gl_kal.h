@@ -547,10 +547,6 @@
 extern int allocatedMemSize;
 #endif
 
-#if CFG_SUPPORT_MET_PROFILING
-#include "linux/kallsyms.h"
-#include <linux/ftrace_event.h>
-#endif
 /*******************************************************************************
 *                              C O N S T A N T S
 ********************************************************************************
@@ -628,24 +624,6 @@ typedef struct wake_lock    KAL_WAKE_LOCK_T, *P_KAL_WAKE_LOCK_T;
 typedef UINT_32             KAL_WAKE_LOCK_T, *P_KAL_WAKE_LOCK_T;
 #endif
 
-#if CFG_SUPPORT_AGPS_ASSIST
-typedef enum _ENUM_MTK_AGPS_ATTR {
-	MTK_ATTR_AGPS_INVALID,
-	MTK_ATTR_AGPS_CMD,
-	MTK_ATTR_AGPS_DATA,
-	MTK_ATTR_AGPS_IFINDEX,
-	MTK_ATTR_AGPS_IFNAME,
-	MTK_ATTR_AGPS_MAX
-} ENUM_MTK_CCX_ATTR;
-
-typedef enum _ENUM_AGPS_EVENT {
-	AGPS_EVENT_WLAN_ON,
-	AGPS_EVENT_WLAN_OFF,
-	AGPS_EVENT_WLAN_AP_LIST,
-} ENUM_CCX_EVENT;
-BOOLEAN kalIndicateAgpsNotify(P_ADAPTER_T prAdapter, UINT_8 cmd, PUINT_8 data
-, UINT_16 dataLen);
-#endif
 
 /*******************************************************************************
 *                            P U B L I C   D A T A

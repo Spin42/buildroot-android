@@ -661,12 +661,6 @@
 #include "wlan_lib.h"
 #include "gl_cfg80211.h"
 #include "precomp.h"
-#if CFG_SUPPORT_AGPS_ASSIST
-#include "gl_kal.h"
-#endif
-#if defined(CONFIG_MTK_TC1_FEATURE)
-#include <tc1_partition.h>
-#endif
 
 /*******************************************************************************
 *                              C O N S T A N T S
@@ -709,10 +703,6 @@ MODULE_SUPPORTED_DEVICE(NIC_NAME);
 MODULE_LICENSE("GPL");
 
 #define NIC_INF_NAME    "wlan%d" /* interface name */
-#if CFG_TC1_FEATURE
-#define NIC_INF_NAME_IN_AP_MODE  "legacy%d"
-extern volatile int wlan_if_changed;
-#endif
 
 /* support to change debug module info dynamically */
 UINT_8  aucDebugModule[DBG_MODULE_NUM];
@@ -1012,15 +1002,11 @@ glLoadNvram (
         prGlueInfo->fgNvramAvailable = TRUE;
 
         // load MAC Address
-#if !defined(CONFIG_MTK_TC1_FEATURE)
         for (i = 0 ; i < sizeof(PARAM_MAC_ADDR_LEN) ; i += sizeof(UINT_16)) {
             kalCfgDataRead16(prGlueInfo,
                     OFFSET_OF(WIFI_CFG_PARAM_STRUCT, aucMacAddress) + i,
                     (PUINT_16) (((PUINT_8)prRegInfo->aucMacAddr) + i));
         }
-#else
-		TC1_FAC_NAME(FacReadWifiMacAddr)((unsigned char *)prRegInfo->aucMacAddr);
-#endif
 
         // load country code
         kalCfgDataRead16(prGlueInfo,
@@ -1613,18 +1599,6 @@ wlanHardStartXmit(
         return NETDEV_TX_OK;
     }
 
-#if CFG_SUPPORT_HOTSPOT_2_0
-	if (prGlueInfo->fgIsDad) {
-		//kalPrint("[Passpoint R2] Due to ipv4_dad...TX is forbidden\n");
-		dev_kfree_skb(prSkb);
-		return NETDEV_TX_OK;
-	}
-	if (prGlueInfo->fgIs6Dad) {
-		//kalPrint("[Passpoint R2] Due to ipv6_dad...TX is forbidden\n");
-		dev_kfree_skb(prSkb);
-		return NETDEV_TX_OK;
-	}	
-#endif
 
 	STATS_TX_TIME_ARRIVE(prSkb);
     prQueueEntry = (P_QUE_ENTRY_T) GLUE_GET_PKT_QUEUE_ENTRY(prSkb);
@@ -2160,15 +2134,7 @@ wlanNetCreate(
 
     //4 <3> Initial Glue structure
     //4 <3.1> Create net device
-#if CFG_TC1_FEATURE
-    if (wlan_if_changed) {
-        prGlueInfo->prDevHandler = alloc_netdev_mq(sizeof(P_GLUE_INFO_T), NIC_INF_NAME_IN_AP_MODE, ether_setup, CFG_MAX_TXQ_NUM);
-    } else {
-        prGlueInfo->prDevHandler = alloc_netdev_mq(sizeof(P_GLUE_INFO_T), NIC_INF_NAME, ether_setup, CFG_MAX_TXQ_NUM);
-    }
-#else
     prGlueInfo->prDevHandler = alloc_netdev_mq(sizeof(P_GLUE_INFO_T), NIC_INF_NAME, ether_setup, CFG_MAX_TXQ_NUM);
-#endif
 
     DBGLOG(INIT, INFO, ("net_device prDev(0x%p) allocated\n", prGlueInfo->prDevHandler));
     if (!prGlueInfo->prDevHandler) {
@@ -2200,13 +2166,6 @@ wlanNetCreate(
     prGlueInfo->fgIsRegistered = FALSE;
     prGlueInfo->prScanRequest = NULL;
 
-#if CFG_SUPPORT_HOTSPOT_2_0 
-	/* Init DAD */
-	prGlueInfo->fgIsDad  = FALSE;
-	prGlueInfo->fgIs6Dad = FALSE;
-	kalMemZero(prGlueInfo->aucDADipv4,4);
-	kalMemZero(prGlueInfo->aucDADipv6,16);	
-#endif
 
     init_completion(&prGlueInfo->rScanComp);
     init_completion(&prGlueInfo->rHaltComp);
@@ -3070,24 +3029,6 @@ bailout:
     GLUE_RELEASE_THE_SPIN_LOCK(&g_p2p_lock);
 }
 #endif
-#if CFG_SUPPORT_AGPS_ASSIST
-    if (i4Status == WLAN_STATUS_SUCCESS)
-        kalIndicateAgpsNotify(prAdapter, AGPS_EVENT_WLAN_ON, NULL, 0);
-#endif
-#if (CFG_SUPPORT_MET_PROFILING == 1)
-	{
-		int iMetInitRet = WLAN_STATUS_FAILURE;
-		if (i4Status == WLAN_STATUS_SUCCESS)
-		{
-    		DBGLOG(INIT, TRACE, ("init MET procfs...\n"));
-			iMetInitRet = kalMetInitProcfs(prGlueInfo);
-    		if (iMetInitRet < 0)
-			{
-        		DBGLOG(INIT, ERROR, ("wlanProbe: init MET procfs failed\n"));
-			}
-    	}
-	}
-#endif
 	if (i4Status == WLAN_STATUS_SUCCESS) {
 		/* probe ok */
 		DBGLOG(INIT, TRACE, ("wlanProbe ok\n"));
@@ -3234,9 +3175,6 @@ wlanRemove(
     procRemoveProcfs(prDev, NIC_DEVICE_ID_LOW);
 #endif /* WLAN_INCLUDE_PROC */
 
-#if (CFG_SUPPORT_MET_PROFILING == 1)
-    kalMetRemoveProcfs();
-#endif 
 
     /* Force to do DMA reset */
     DBGLOG(INIT, INFO, ("glResetHif\n"));
@@ -3244,9 +3182,6 @@ wlanRemove(
 
     //4 <4> wlanAdapterStop
     prAdapter = prGlueInfo->prAdapter;
-#if CFG_SUPPORT_AGPS_ASSIST
-    kalIndicateAgpsNotify(prAdapter, AGPS_EVENT_WLAN_OFF, NULL, 0);
-#endif
 
     wlanAdapterStop(prAdapter);
     DBGLOG(INIT, INFO, ("Number of Stalled Packets = %d\n", prGlueInfo->i4TxPendingFrameNum));

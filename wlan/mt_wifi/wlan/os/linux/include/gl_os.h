@@ -572,9 +572,6 @@
 
 #include <linux/module.h>
 
-#if CFG_SUPPORT_HOTSPOT_2_0
-#include <net/addrconf.h>
-#endif
 
 #include "gl_typedef.h"
 #include "typedef.h"
@@ -880,12 +877,6 @@ struct _GLUE_INFO_T {
 	UINT_8                  aucWSCAssocInfoIE[200]; /*for Assoc req*/
     UINT_16                 u2WSCAssocInfoIELen;
 
-#if CFG_SUPPORT_HOTSPOT_2_0
-	UINT_8					aucHS20AssocInfoIE[200]; /*for Assoc req*/
-	UINT_16 				u2HS20AssocInfoIELen;
-	UINT_8					ucHotspotConfig;
-	BOOLEAN 				fgConnectHS20AP;
-#endif
 
     /* NVRAM availability */
     BOOLEAN                 fgNvramAvailable;
@@ -913,16 +904,6 @@ struct _GLUE_INFO_T {
 
     KAL_WAKE_LOCK_T         rAhbIsrWakeLock;
 
-#if CFG_SUPPORT_HOTSPOT_2_0
-    BOOLEAN                 fgIsDad;
-    UINT_8                  aucDADipv4[4];
-    BOOLEAN                 fgIs6Dad;
-    UINT_8                  aucDADipv6[16];
-#endif
-#if (CFG_SUPPORT_MET_PROFILING == 1)
-    UINT_8             u8MetProfEnable;
-    INT_16             u16MetUdpPort;
-#endif
     BOOLEAN 		    fgPoorlinkValid;
     UINT_64                 u8Statistic[2];
     UINT_64		    u8TotalFailCnt;

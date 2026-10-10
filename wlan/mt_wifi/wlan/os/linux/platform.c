@@ -369,9 +369,6 @@ void wlanRegisterNotifier(void)
 {
     register_inetaddr_notifier(&inetaddr_notifier);
 
-#if CFG_SUPPORT_HOTSPOT_2_0 
-    //register_inet6addr_notifier(&inet6addr_notifier);
-#endif
 }
 
 //EXPORT_SYMBOL(wlanRegisterNotifier);
@@ -380,9 +377,6 @@ void wlanUnregisterNotifier(void)
 {
     unregister_inetaddr_notifier(&inetaddr_notifier);
 
-#if CFG_SUPPORT_HOTSPOT_2_0 
-    //unregister_inetaddr_notifier(&inet6addr_notifier);
-#endif
 }
 
 //EXPORT_SYMBOL(wlanUnregisterNotifier);
