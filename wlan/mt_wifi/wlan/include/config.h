@@ -944,7 +944,7 @@
 
 #define CFG_SUPPORT_ROAMING_ENC		0	/* enahnced roaming */
 
-#define CFG_SUPPORT_TDLS			1   /* IEEE802.11z TDLS */
+#define CFG_SUPPORT_TDLS			0   /* IEEE802.11z TDLS */
 #define CFG_SUPPORT_TDLS_DBG		0	/* TDLS debug */
 #define CFG_SUPPORT_STATISTICS		1
 #define CFG_SUPPORT_DBG_POWERMODE	1	/* for debugging power always active mode */
@@ -1223,7 +1223,7 @@
 
 #define CFG_INIT_UAPSD_AC_BMP                    0//(BIT(3) | BIT(2) | BIT(1) | BIT(0))
 
-//#define CFG_SUPPORT_WAPI                        0
+#define CFG_SUPPORT_WAPI                        0
 #define CFG_SUPPORT_WPS                          1
 #define CFG_SUPPORT_WPS2                         1
 
@@ -1341,11 +1341,7 @@
  */
 
 #ifdef LINUX
-    #ifdef CONFIG_X86
-        #define CFG_ENABLE_BT_OVER_WIFI         0
-    #else
-        #define CFG_ENABLE_BT_OVER_WIFI         1
-    #endif
+    #define CFG_ENABLE_BT_OVER_WIFI         0
 #else
     #define CFG_ENABLE_BT_OVER_WIFI             0
 #endif
@@ -1367,13 +1363,8 @@
  *------------------------------------------------------------------------------
  */
 #ifdef LINUX
-    #ifdef CONFIG_X86
-        #define CFG_ENABLE_WIFI_DIRECT          0
-        #define CFG_SUPPORT_802_11W             0
-    #else
-        #define CFG_ENABLE_WIFI_DIRECT          1
-        #define CFG_SUPPORT_802_11W             0 /*!< 0(default): Disable 802.11W */
-    #endif
+    #define CFG_ENABLE_WIFI_DIRECT          0
+    #define CFG_SUPPORT_802_11W             0
 #else
     #define CFG_ENABLE_WIFI_DIRECT              0
     #define CFG_SUPPORT_802_11W                 0 /* Not support at WinXP */
@@ -1391,9 +1382,9 @@
  * Enable cfg80211 option after Android 2.2(Froyo) is suggested,
  * cfg80211 on linux 2.6.29 is not mature yet
  */
-#define CFG_ENABLE_WIFI_DIRECT_CFG_80211        1
+#define CFG_ENABLE_WIFI_DIRECT_CFG_80211        0
 
-#define CFG_SUPPORT_HOTSPOT_OPTIMIZATION                1
+#define CFG_SUPPORT_HOTSPOT_OPTIMIZATION                0
 #define     CFG_HOTSPOT_OPTIMIZATION_BEACON_INTERVAL    300
 #define     CFG_HOTSPOT_OPTIMIZATION_DTIM               1
 
@@ -1420,7 +1411,7 @@
  *------------------------------------------------------------------------------
  */
 #define CFG_SUPPORT_ADHOC                       1
-#define CFG_SUPPORT_AAA                         1
+#define CFG_SUPPORT_AAA                         0
 
 
 #if (defined(MT5931) && defined(LINUX))
@@ -1526,9 +1517,9 @@
 
 #define CFG_STRICT_CHECK_CAPINFO_PRIVACY    0
 
-#define CFG_SUPPORT_WFD                     1
+#define CFG_SUPPORT_WFD                     0
 
-#define CFG_SUPPORT_WFD_COMPOSE_IE          1
+#define CFG_SUPPORT_WFD_COMPOSE_IE          0
 
 /*------------------------------------------------------------------------------
  * Flags of Packet Lifetime Profiling Mechanism
@@ -1579,6 +1570,21 @@
 *                                 M A C R O S
 ********************************************************************************
 */
+
+/*------------------------------------------------------------------------------
+ * Features not built for the mainline station-only port
+ *------------------------------------------------------------------------------
+ */
+#define CFG_SUPPORT_HOTSPOT_2_0                 0
+#define CFG_SUPPORT_AGPS_ASSIST                 0
+#define CFG_SUPPORT_AEE                         0
+#define CFG_SUPPORT_XLOG                        0
+#define CFG_SUPPORT_MET_PROFILING               0
+
+#ifdef LINUX
+/* strnicmp() was removed from the kernel */
+#define strnicmp                                strncasecmp
+#endif
 
 /*******************************************************************************
 *                   F U N C T I O N   D E C L A R A T I O N S
