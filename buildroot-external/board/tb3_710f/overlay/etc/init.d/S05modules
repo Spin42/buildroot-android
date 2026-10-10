@@ -1,0 +1,8 @@
+#!/bin/sh
+# Load the modules of the devices the device tree describes (modalias based coldplug).
+case "$1" in
+	start)
+		find /sys/devices -name modalias -type f -exec cat {} + 2>/dev/null | sort -u | xargs modprobe -q -a 2>/dev/null
+		;;
+esac
+exit 0
