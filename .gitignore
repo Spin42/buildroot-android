@@ -6,3 +6,6 @@
 .*.cmd
 Module.symvers
 modules.order
+*.o.d
+*.cmd
+.*.cmd
