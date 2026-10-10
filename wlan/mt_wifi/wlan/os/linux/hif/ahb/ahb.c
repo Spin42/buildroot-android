@@ -1115,6 +1115,7 @@ kalDevPortRead (
 #ifdef MTK_DMA_BUF_MEMCPY_SUP
         VOID *DmaVBuf = NULL, *DmaPBuf = NULL;
 #endif /* MTK_DMA_BUF_MEMCPY_SUP */
+        PUINT_8 RxBounce = NULL;
 
         /* config DMA, Port = MCR_WRDR0 or MCR_WRDR1 */
         DmaConf.Count = Size;
@@ -1153,9 +1154,16 @@ kalDevPortRead (
         */
         /* DMA_FROM_DEVICE invalidated (without writeback) the cache */
         /* TODO: if dst_off was not cacheline aligned? */
-        DmaConf.Dst = dma_map_single(HifInfo->Dev, Buf, Size, DMA_FROM_DEVICE);
+        /* Stack and vmalloc buffers cannot be mapped: bounce them through a linear buffer. */
+        if (!virt_addr_valid(Buf)) {
+            RxBounce = kmalloc(Size, GFP_ATOMIC);
+            if (RxBounce == NULL)
+                return FALSE;
+        }
+        DmaConf.Dst = dma_map_single(HifInfo->Dev, RxBounce ? RxBounce : Buf, Size, DMA_FROM_DEVICE);
         if (dma_mapping_error(HifInfo->Dev, DmaConf.Dst)) {
             printk("[WiFi/HIF] DMA RX map fail\n");
+            kfree(RxBounce);
             return FALSE;
         }
 #endif /* MTK_DMA_BUF_MEMCPY_SUP */
@@ -1296,6 +1304,10 @@ kalDevPortRead (
             kalMemCopy(Buf, DmaVBuf, Size);
 #else
         dma_unmap_single(HifInfo->Dev, DmaConf.Dst, Size, DMA_FROM_DEVICE);
+        if (RxBounce != NULL) {
+            kalMemCopy(Buf, RxBounce, Size);
+            kfree(RxBounce);
+        }
 #endif /* MTK_DMA_BUF_MEMCPY_SUP */
 
         HIF_DBG(("[WiFi/HIF] DMA RX OK!\n"));
@@ -1416,6 +1428,7 @@ kalDevPortWrite (
 #ifdef MTK_DMA_BUF_MEMCPY_SUP
         VOID *DmaVBuf = NULL, *DmaPBuf = NULL;
 #endif /* MTK_DMA_BUF_MEMCPY_SUP */
+        PUINT_8 TxBounce = NULL;
 
         /* config GDMA */
         HIF_DBG_TX(("[WiFi/HIF/DMA] Prepare to send data...\n"));
@@ -1454,9 +1467,15 @@ kalDevPortWrite (
             it, do it after dma_unmap_single(). 
         */
         /* DMA_TO_DEVICE writeback the cache */
-        DmaConf.Src = dma_map_single(HifInfo->Dev, Buf, Size, DMA_TO_DEVICE);
+        if (!virt_addr_valid(Buf)) {
+            TxBounce = kmemdup(Buf, Size, GFP_ATOMIC);
+            if (TxBounce == NULL)
+                return FALSE;
+        }
+        DmaConf.Src = dma_map_single(HifInfo->Dev, TxBounce ? TxBounce : Buf, Size, DMA_TO_DEVICE);
         if (dma_mapping_error(HifInfo->Dev, DmaConf.Src)) {
             printk("[WiFi/HIF] DMA TX map fail\n");
+            kfree(TxBounce);
             return FALSE;
         }
 #endif /* MTK_DMA_BUF_MEMCPY_SUP */
@@ -1585,6 +1604,7 @@ if (testgdmaclock == 1)
 
 #ifndef MTK_DMA_BUF_MEMCPY_SUP
         dma_unmap_single(HifInfo->Dev, DmaConf.Src, Size, DMA_TO_DEVICE);
+        kfree(TxBounce);
 #endif /* MTK_DMA_BUF_MEMCPY_SUP */
 
         HIF_DBG_TX(("[WiFi/HIF] DMA TX OK!\n"));
