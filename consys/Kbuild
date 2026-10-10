@@ -1,0 +1,4 @@
+ccflags-y += -I$(src)/include -I$(src)/../wmt/include -I$(src)/../wmt/linux/include -I$(src)/../btif/inc -I$(src)/../compat
+
+obj-m += mt8127_consys.o
+mt8127_consys-y := consys_hw.o

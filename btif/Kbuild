@@ -1,0 +1,4 @@
+ccflags-y += -I$(src)/inc -I$(src)/hal_inc -I$(src)/mt8127/inc -I$(src)/../compat
+
+obj-m += mtk_btif.o
+mtk_btif-y := mtk_btif_main.o
