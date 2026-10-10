@@ -25,6 +25,7 @@
  ********************************************************************************
  */
 #include "precomp.h"
+#include <linux/sched/clock.h>
 
 #if (CFG_SUPPORT_STATISTICS == 1)
 

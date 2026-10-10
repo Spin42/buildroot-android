@@ -553,7 +553,7 @@ VOID swCtrlCmdCategory0(P_ADAPTER_T prAdapter, UINT_8 ucCate, UINT_8 ucAction, U
                 break;
             case SWCTRL_MAGIC:
                 g_au4SwCr[1] = _SWCTRL_MAGIC ;
-                DBGLOG(SW4, INFO,("BUILD TIME: %s %s\n", __DATE__, __TIME__));
+                DBGLOG(SW4, INFO,("BUILD TIME: unknown\n"));
                 break;
             case SWCTRL_QM_INFO:
                     {
@@ -787,7 +787,9 @@ testPsSetupBss(
     prBssInfo->ucBeaconTimeoutCount = 0;
 
 
+#if CFG_SUPPORT_AAA
     bssInitForAP (prAdapter,prBssInfo, TRUE);
+#endif
 
     COPY_MAC_ADDR(prBssInfo->aucBSSID, _aucZeroMacAddr);
     LINK_INITIALIZE(&prBssInfo->rStaRecOfClientList);
