@@ -1,0 +1,16 @@
+# gen2 MediaTek WiFi driver for the MT8127 CONSYS. One fragment per layer lists its objects:
+#   Kbuild.core  common, nic and mgmt (protocol and firmware interface)
+#   Kbuild.glue  Linux glue (os/linux)
+#   Kbuild.hif   AHB host interface (os/linux/hif/ahb)
+W := mt_wifi/wlan
+
+ccflags-y += -DLINUX -DMT6628 -D_HIF_SDIO=1 -DDBG=0
+ccflags-y += -I$(src)/$(W)/os -I$(src)/$(W)/os/linux/include -I$(src)/$(W)/os/linux/hif/ahb/include
+ccflags-y += -I$(src)/$(W)/include -I$(src)/$(W)/include/nic -I$(src)/$(W)/include/mgmt
+ccflags-y += -I$(src)/../wmt/include -I$(src)/../wmt/linux/include -I$(src)/../consys/include -I$(src)/../compat
+
+obj-m += wlan_mt.o
+
+include $(src)/Kbuild.core
+include $(src)/Kbuild.glue
+include $(src)/Kbuild.hif
