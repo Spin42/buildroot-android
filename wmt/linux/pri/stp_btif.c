@@ -39,6 +39,7 @@
 #include "stp_btif.h"
 
 #include <asm/current.h>
+#include <linux/module.h>
 /*******************************************************************************
 *                              C O N S T A N T S
 ********************************************************************************
@@ -60,6 +61,25 @@
 */
 unsigned long stpBtifId = 0;
 unsigned long *pBtifRef = &stpBtifId;
+
+/* Bring-up trace of the STP traffic: every buffer that crosses the link, with its first bytes. */
+static bool btif_trace;
+module_param(btif_trace, bool, 0644);
+MODULE_PARM_DESC(btif_trace, "log every BTIF TX and RX buffer");
+
+static MTK_WCN_BTIF_RX_CB stp_rx_cb;
+
+static void stp_btif_trace(const char *dir, const UINT8 *buf, UINT32 len)
+{
+	if (btif_trace)
+		pr_info("[STP-BTIF] %s %u bytes: %*ph\n", dir, len, min_t(UINT32, len, 24), buf);
+}
+
+static int stp_btif_rx_trace_cb(const unsigned char *buf, unsigned int len)
+{
+	stp_btif_trace("RX", buf, len);
+	return stp_rx_cb(buf, len);
+}
 /*******************************************************************************
 *                           P R I V A T E   D A T A
 ********************************************************************************
@@ -124,7 +144,8 @@ INT32 mtk_wcn_consys_stp_btif_rx_cb_register(MTK_WCN_BTIF_RX_CB rx_cb)
 		WMT_WARN_FUNC("NULL BTIF ID reference\n!");
 		iRet = -1;
 	}else{
-		iRet = mtk_wcn_btif_rx_cb_register(stpBtifId,rx_cb);
+		stp_rx_cb = rx_cb;
+		iRet = mtk_wcn_btif_rx_cb_register(stpBtifId, stp_btif_rx_trace_cb);
 		if(iRet){
 			WMT_WARN_FUNC("STP register rxcb to btif fail(%d)\n",iRet);
 			iRet = -2;
@@ -158,6 +179,7 @@ INT32 mtk_wcn_consys_stp_btif_tx(const UINT8 *pBuf,const UINT32 len,UINT32 *writ
 		WMT_WARN_FUNC("abnormal pacage length,len(%d),pid[%d/%s]\n",len,current->pid,current->comm);
 		return -2;
 	}
+	stp_btif_trace("TX", pBuf, len);
 	wr_count = mtk_wcn_btif_write(stpBtifId, pBuf, len);
 
 	if(wr_count < 0)
