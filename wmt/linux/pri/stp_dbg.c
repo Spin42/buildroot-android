@@ -20,7 +20,7 @@
 #include <linux/vmalloc.h>
 #include <linux/err.h>
 #include <linux/workqueue.h>
-#include <asm/atomic.h>
+#include <linux/atomic.h>
 
 #include <net/sock.h>
 #include <net/netlink.h>
@@ -59,11 +59,8 @@ MTKSTP_DBG_T *g_stp_dbg = NULL;
 
 #define STP_DBG_FAMILY_NAME        "STP_DBG"
 #define MAX_BIND_PROCESS    (4)
-#ifdef WMT_PLAT_ALPS
-#define STP_DBG_AEE_EXP_API (1)
-#else
+/* The Android exception engine (AEE/AED) does not exist on mainline. */
 #define STP_DBG_AEE_EXP_API (0)
-#endif
 enum {
     __STP_DBG_ATTR_INVALID,
     STP_DBG_ATTR_MSG,
@@ -79,13 +76,7 @@ enum {
 };
 #define MTK_WIFI_COMMAND_MAX    (__STP_DBG_COMMAND_MAX - 1)
 
-static struct genl_family stp_dbg_gnl_family = {
-    .id         = GENL_ID_GENERATE,
-    .hdrsize    = 0,
-    .name       = STP_DBG_FAMILY_NAME,
-    .version    = 1,
-    .maxattr    = STP_DBG_ATTR_MAX,
-};
+static struct genl_family stp_dbg_gnl_family;
 
 static void stp_dbg_nl_init(void);
 static void stp_dbg_nl_deinit(void);
@@ -99,25 +90,33 @@ static int stp_dbg_nl_reset(
     );
 
 /* attribute policy */
-static struct nla_policy stp_dbg_genl_policy[STP_DBG_ATTR_MAX + 1] = {
+static const struct nla_policy stp_dbg_genl_policy[STP_DBG_ATTR_MAX + 1] = {
     [STP_DBG_ATTR_MSG] = { .type = NLA_NUL_STRING },
 };
 
 /* operation definition */
-static struct genl_ops stp_dbg_gnl_ops_bind = {
-    .cmd = STP_DBG_COMMAND_BIND,
-    .flags  = 0,
-    .policy = stp_dbg_genl_policy,
-    .doit   = stp_dbg_nl_bind,
-    .dumpit = NULL,
+static const struct genl_small_ops stp_dbg_gnl_ops[] = {
+    {
+        .cmd    = STP_DBG_COMMAND_BIND,
+        .validate = GENL_DONT_VALIDATE_STRICT | GENL_DONT_VALIDATE_DUMP,
+        .doit   = stp_dbg_nl_bind,
+    },
+    {
+        .cmd    = STP_DBG_COMMAND_RESET,
+        .validate = GENL_DONT_VALIDATE_STRICT | GENL_DONT_VALIDATE_DUMP,
+        .doit   = stp_dbg_nl_reset,
+    },
 };
 
-static struct genl_ops stp_dbg_gnl_ops_reset = {
-    .cmd = STP_DBG_COMMAND_RESET,
-    .flags  = 0,
-    .policy = stp_dbg_genl_policy,
-    .doit   = stp_dbg_nl_reset,
-    .dumpit = NULL,
+static struct genl_family stp_dbg_gnl_family = {
+    .hdrsize    = 0,
+    .name       = STP_DBG_FAMILY_NAME,
+    .version    = 1,
+    .maxattr    = STP_DBG_ATTR_MAX,
+    .policy     = stp_dbg_genl_policy,
+    .module     = THIS_MODULE,
+    .small_ops  = stp_dbg_gnl_ops,
+    .n_small_ops = ARRAY_SIZE(stp_dbg_gnl_ops),
 };
 
 #define E2S(x) #x
@@ -421,7 +420,7 @@ INT32 wcn_core_dump_timeout(void)
 	pbuf = "Trigger assert timeout";
 	len = osal_strlen("Trigger assert timeout");
 	osal_strcpy(&g_core_dump->info[0], TIMEOUT_INFO_HEAD);
-	aed_combo_exception(NULL, 0, (const int*)pbuf, len, (const char*)g_core_dump->info);
+    STP_DBG_ERR_FUNC("%s\n", (const char*)g_core_dump->info);
     return 0;
 }
 
@@ -1055,13 +1054,13 @@ int stp_dbg_dmp_out(MTKSTP_DBG_T *stp_dbg, char *buf, int *len){
 
 static int stp_dbg_fill_hdr(struct stp_dbg_pkt_hdr *hdr, int type, int ack, int seq, int crc, int dir, int len, int dbg_type){
 
-    struct timeval now;
+    struct osal_timeval now;
 
     if(!hdr){
         STP_DBG_ERR_FUNC("function invalid\n");
         return -EINVAL;
     } else {
-        do_gettimeofday(&now);
+        osal_do_gettimeofday(&now);
         hdr->dbg_type = dbg_type;
         hdr->ack = ack;
         hdr->seq = seq;
@@ -1149,18 +1148,6 @@ static void stp_dbg_nl_init(void)
     {
        STP_DBG_ERR_FUNC("%s(): GE_NELINK family registration fail\n", __func__);
     }
-    else 
-    {
-        if(genl_register_ops(&stp_dbg_gnl_family, &stp_dbg_gnl_ops_bind) != 0) 
-        {
-           STP_DBG_ERR_FUNC("%s(): BIND operation registration fail\n", __func__);
-        }
-
-        if(genl_register_ops(&stp_dbg_gnl_family, &stp_dbg_gnl_ops_reset) != 0) 
-        {
-           STP_DBG_ERR_FUNC("%s(): RESET operation registration fail\n", __func__);
-        }
-    }
 
     return;
 }
@@ -1196,15 +1183,9 @@ static int stp_dbg_nl_bind(
     if(num_bind_process < MAX_BIND_PROCESS) 
     {
     
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(3,8,0))
-        bind_pid[num_bind_process] = info->snd_pid;
-        num_bind_process++;
-        STP_DBG_INFO_FUNC("%s():-> pid  = %d\n", __func__, info->snd_pid);
-#else
         bind_pid[num_bind_process] = info->snd_portid;
         num_bind_process++;
         STP_DBG_INFO_FUNC("%s():-> pid  = %d\n", __func__, info->snd_portid);
-#endif
     }
     else 
     {
