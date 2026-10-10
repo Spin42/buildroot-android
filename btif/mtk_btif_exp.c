@@ -8,7 +8,7 @@
 
 /*---------------------------------Function----------------------------------*/
 
-p_mtk_btif btif_exp_srh_id(unsigned long u_id)
+static p_mtk_btif btif_exp_srh_id(unsigned long u_id)
 {
 	int index = 0;
 	p_mtk_btif p_btif = NULL;
@@ -23,7 +23,7 @@ p_mtk_btif btif_exp_srh_id(unsigned long u_id)
 			if (u_id == p_user->u_id) {
 				p_btif = p_user->p_btif;
 				BTIF_DBG_FUNC
-				    ("BTIF's user id(0x%p), p_btif(0x%p)\n",
+				    ("BTIF's user id(0x%lx), p_btif(0x%p)\n",
 				     p_user->u_id, p_btif);
 				break;
 			}
@@ -58,7 +58,7 @@ p_mtk_btif btif_exp_srh_id(unsigned long u_id)
 *       including read/write/dpidle_ctrl/rx_cb_retister
 *       this user id is only an identifier used for owner identification
 *****************************************************************************/
-const int mtk_wcn_btif_open(char *p_owner, unsigned long *p_id)
+int mtk_wcn_btif_open(char *p_owner, unsigned long *p_id)
 {
 	int i_ret = -1;
 	unsigned int index = 0;
@@ -100,7 +100,7 @@ const int mtk_wcn_btif_open(char *p_owner, unsigned long *p_id)
 		p_new_user->enable = false;
 		p_new_user->p_btif = p_btif;
 		p_new_user->u_id = (unsigned long)p_new_user;
-		strncpy(p_new_user->u_name, p_owner, BTIF_USER_NAME_MAX_LEN);
+		strscpy(p_new_user->u_name, p_owner, BTIF_USER_NAME_MAX_LEN);
 		BTIF_INFO_FUNC("owner name:%s, recorded name:%s\n",
 			       p_owner, p_new_user->u_name);
 
@@ -478,7 +478,7 @@ EXPORT_SYMBOL(mtk_wcn_btif_dbg_ctrl);
 
 /**********End of Debug Purpose API declearation**********/
 
-const int btif_open_no_id(void)
+static int btif_open_no_id(void)
 {
 	int i_ret = 0;
 	p_mtk_btif p_btif = &g_btif[0];
@@ -493,7 +493,7 @@ const int btif_open_no_id(void)
 	return i_ret;
 }
 
-const int btif_close_no_id(void)
+static int btif_close_no_id(void)
 {
 	int i_ret = 0;
 	p_mtk_btif p_btif = &g_btif[0];
@@ -508,7 +508,7 @@ const int btif_close_no_id(void)
 	return i_ret;
 }
 
-int btif_write_no_id(const unsigned char *p_buf, unsigned int len)
+static int btif_write_no_id(const unsigned char *p_buf, unsigned int len)
 {
 	int i_ret = -1;
 	p_mtk_btif p_btif = &g_btif[0];
@@ -529,7 +529,7 @@ int btif_write_no_id(const unsigned char *p_buf, unsigned int len)
 	return i_ret;
 }
 
-int btif_dpidle_ctrl_no_id(ENUM_BTIF_DPIDLE_CTRL en_flag)
+static int btif_dpidle_ctrl_no_id(ENUM_BTIF_DPIDLE_CTRL en_flag)
 {
 	int i_ret = -1;
 	p_mtk_btif p_btif = &g_btif[0];
@@ -553,7 +553,7 @@ int btif_wakeup_consys_no_id(void)
 	return i_ret;
 }
 
-int btif_loopback_ctrl_no_id(ENUM_BTIF_LPBK_MODE enable)
+static int btif_loopback_ctrl_no_id(ENUM_BTIF_LPBK_MODE enable)
 {
 	int i_ret = -1;
 	p_mtk_btif p_btif = &g_btif[0];
@@ -564,7 +564,7 @@ int btif_loopback_ctrl_no_id(ENUM_BTIF_LPBK_MODE enable)
 	return i_ret;
 }
 
-int btif_dbg_ctrl_no_id(ENUM_BTIF_DBG_ID flag)
+static int btif_dbg_ctrl_no_id(ENUM_BTIF_DBG_ID flag)
 {
 	int i_ret = -1;
 	p_mtk_btif p_btif = &g_btif[0];

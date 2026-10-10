@@ -37,6 +37,22 @@ int hal_btif_dma_hw_init(P_MTK_DMA_INFO_STR p_dma_info);
 
 /*****************************************************************************
 * FUNCTION
+*  hal_btif_dma_hw_setup
+* DESCRIPTION
+*  record the device tree resources of one BTIF DMA channel
+* PARAMETERS
+* dma_dir      [IN]        DMA's direction
+* base         [IN]        mapped register block of the channel
+* irq          [IN]        Linux IRQ number of the channel
+* apdma_clk    [IN]        AP_DMA clock gate shared by both channels, may be NULL
+* RETURNS
+*  0 means success, negative means fail
+*****************************************************************************/
+int hal_btif_dma_hw_setup(ENUM_DMA_DIR dma_dir, void __iomem *base,
+			  unsigned int irq, struct clk *apdma_clk);
+
+/*****************************************************************************
+* FUNCTION
 *  hal_btif_clk_ctrl
 * DESCRIPTION
 *  control clock output enable/disable of DMA module

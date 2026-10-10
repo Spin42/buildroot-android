@@ -10,22 +10,15 @@
 #include <linux/kfifo.h>
 #include <linux/vmalloc.h>
 #include <linux/slab.h>
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,9,0))
 #include <linux/sched.h>
 #include <linux/sched/rt.h>
-#else
-#include <linux/sched.h>
-#endif
-#ifdef CONFIG_OF
-#include <linux/of_irq.h>
-#include <linux/of_address.h>
-#include <linux/of.h>
-#else
-#include <mach/mt_reg_base.h>
-#include <mach/mt_irq.h>
-#endif
-#include <mach/mt_clkmgr.h>
-#include <mach/sync_write.h>
+#include <linux/clk.h>
+#include <linux/io.h>
+#include <linux/atomic.h>
+#include <linux/spinlock.h>
+#include <linux/timekeeping.h>
+
+#include "btif_compat.h"
 
 extern int mtk_btif_hal_get_log_lvl(void);
 
@@ -39,20 +32,16 @@ typedef irq_handler_t mtk_btif_irq_handler;
 #define DBG_LOG_STR_SIZE 512
 
 /*Log defination*/
-static int hal_log_print(const char *str, ...)
+static inline __printf(1, 2) void hal_log_print(const char *str, ...)
 {
+	struct va_format vaf;
 	va_list args;
-	char temp_sring[DBG_LOG_STR_SIZE];
 
 	va_start(args, str);
-	vsnprintf(temp_sring, DBG_LOG_STR_SIZE, str, args);
+	vaf.fmt = str;
+	vaf.va = &args;
+	printk(KERN_ERR "%pV", &vaf);
 	va_end(args);
-
-	printk(KERN_ERR "%s", temp_sring);
-
-/* printk(KERN_INFO "%s",temp_sring); */
-
-	return 0;
 }
 
 #define BTIF_LOG_LOUD    4
@@ -108,28 +97,6 @@ do { \
 } while (0)
 
 /*-----------------------------------Enum Defination--------------------------------*/
-/*IRQ sensetive type */
-typedef enum _ENUM_IRQ_SENS_TYPE_ {
-	IRQ_SENS_EDGE = 0,
-	IRQ_SENS_LVL = IRQ_SENS_EDGE + 1,
-	IRQ_SENS_TYPE_MAX
-} ENUM_IRQ_SENS_TYPE;
-
-/*IRQ level trigger type */
-typedef enum _ENUM_IRQ_LVL_TYPE_ {
-	IRQ_LVL_LOW = 0,
-	IRQ_LVL_HIGH = IRQ_LVL_LOW + 1,
-	IRQ_LVL_MAX
-} ENUM_IRQ_LVL;
-
-/*IRQ edge trigger type */
-typedef enum _ENUM_IRQ_EDGE_TYPE_ {
-	IRQ_EDGE_FALL = 0,
-	IRQ_EDGE_RAISE = IRQ_EDGE_FALL + 1,
-	IRQ_EDGE_BOTH = IRQ_EDGE_RAISE + 1,
-	IRQ_EDGE_MAX
-} ENUM_IRQ_EDGE;
-
 typedef enum _ENUM_CLOCK_CTRL_ {
 	CLK_OUT_DISABLE = 0,
 	CLK_OUT_ENABLE = CLK_OUT_DISABLE + 1,
@@ -191,16 +158,8 @@ typedef enum _MTK_BTIF_PM_OPID_ {
 typedef struct _MTK_BTIF_IRQ_STR_ {
 	const char *name;
 	bool is_irq_sup;
-	unsigned int irq_id;
-#ifdef CONFIG_OF
-	unsigned int irq_flags;
-#else
-	ENUM_IRQ_SENS_TYPE sens_type;
-	union {
-		ENUM_IRQ_LVL lvl_type;
-		ENUM_IRQ_EDGE edge_type;
-	};
-#endif
+	unsigned int irq_id;	/*Linux virtual IRQ number */
+	unsigned int irq_flags;	/*IRQF_TRIGGER_* taken from the device tree */
 	bool reg_flag;
 	irq_handler_t p_irq_handler;
 } MTK_BTIF_IRQ_STR, *P_MTK_BTIF_IRQ_STR;
@@ -225,7 +184,7 @@ typedef unsigned int (*btif_rx_buf_write) (void *p_btif_info,
 
 /*DMA related information*/
 typedef struct _MTK_DMA_INFO_STR_ {
-	unsigned long base;
+	unsigned long base;	/*virtual address of the channel's register block */
 	ENUM_DMA_DIR dir;
 	P_MTK_BTIF_IRQ_STR p_irq;
 	dma_rx_buf_write rx_cb;
@@ -234,7 +193,7 @@ typedef struct _MTK_DMA_INFO_STR_ {
 
 /*DMA related information*/
 typedef struct _MTK_BTIF_INFO_STR_ {
-	unsigned long base;	/*base address */
+	unsigned long base;	/*virtual address of the BTIF register block */
 	P_MTK_BTIF_IRQ_STR p_irq;	/*irq related information */
 
 	unsigned int tx_fifo_size;	/*BTIF tx FIFO size */
@@ -243,13 +202,11 @@ typedef struct _MTK_BTIF_INFO_STR_ {
 	unsigned int tx_tri_lvl;	/*BTIFtx trigger level in FIFO mode */
 	unsigned int rx_tri_lvl;	/*BTIFrx trigger level in FIFO mode */
 
-	unsigned int clk_gat_addr;	/*clock gating address */
-	unsigned int set_bit;	/*enable clock gating bit */
-	unsigned int clr_bit;	/*clear clock gating bit */
-
 	unsigned int rx_data_len;	/*rx data length */
 
 	btif_rx_buf_write rx_cb;
+
+	struct clk *clk;	/*PERICFG BTIF clock gate, may be NULL */
 
 	struct kfifo *p_tx_fifo;	/*tx fifo */
 	spinlock_t tx_fifo_spinlock;	/*tx fifo spinlock */
@@ -258,35 +215,26 @@ typedef struct _MTK_BTIF_INFO_STR_ {
 /**********End of Structure Definition***********/
 
 /***********register operation***********/
-#ifdef __KERNEL__
-/*byte write  <1 byte> */
-#define btif_reg_sync_writeb(v, a)    mt_reg_sync_writeb(v, a)
-/*word write  <2 byte> */
-#define btif_reg_sync_writew(v, a)    mt_reg_sync_writew(v, a)
-/*long write   <4 byte> */
-#define btif_reg_sync_writel(v, a)    mt_reg_sync_writel(v, a)
-#else
-/*byte write  <1 byte> */
-#define btif_reg_sync_writeb(v, a)    mt65xx_reg_sync_writeb(v, a)
-/*word write  <2 byte> */
-#define btif_reg_sync_writew(v, a)    mt65xx_reg_sync_writew(v, a)
-/*long write   <4 byte> */
-#define btif_reg_sync_writel(v, a)    mt65xx_reg_sync_writel(v, a)
-#endif
-#define BTIF_READ8(REG)               __raw_readb((unsigned char *)(REG))
-#define BTIF_READ16(REG)              __raw_readw((unsigned short *)(REG))
-#define BTIF_READ32(REG)              __raw_readl((unsigned int *)(REG))
+/* Registers are addressed as (virtual base + offset) held in an unsigned long. */
+#define BTIF_IOMEM(a)  ((void __iomem *)(unsigned long)(a))
 
+/*byte write: write, then wait for the write to be issued */
+#define btif_reg_sync_writeb(v, a)    do { writeb((v), BTIF_IOMEM(a)); wmb(); } while (0)
+/*long write: write, then wait for the write to be issued */
+#define btif_reg_sync_writel(v, a)    do { writel((v), BTIF_IOMEM(a)); wmb(); } while (0)
+
+#define BTIF_READ8(REG)               readb(BTIF_IOMEM(REG))
+#define BTIF_READ32(REG)              readl(BTIF_IOMEM(REG))
+
+/* read-modify-write, the register keeps the bits not named */
 #define BTIF_SET_BIT(REG, BITVAL)    do { \
-*((volatile unsigned int *)(REG)) |= ((unsigned int)(BITVAL)); \
-mb(); \
-} \
-while (0)
+	writel(readl(BTIF_IOMEM(REG)) | ((unsigned int)(BITVAL)), BTIF_IOMEM(REG)); \
+	wmb(); \
+} while (0)
 #define BTIF_CLR_BIT(REG, BITVAL)    do { \
-(*(volatile unsigned int *)(REG)) &= ~((unsigned int)(BITVAL)); \
-mb(); \
-} \
-while (0)
+	writel(readl(BTIF_IOMEM(REG)) & ~((unsigned int)(BITVAL)), BTIF_IOMEM(REG)); \
+	wmb(); \
+} while (0)
 
 /***********end of register operation *********/
 
