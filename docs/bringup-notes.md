@@ -21,3 +21,24 @@
 `tools/consys-poweron.sh` run on the tablet (kernel 6.18.55) with every rail and the power domain off before: afterwards
 `CONN_MCU_CONFIG+0x08` reads `0x00008127`. The bus protection status stays clear, so the sequence does not need the
 bus-protect handshake that other domains have.
+
+## Milestone 2 (2026-10-10): BTIF/STP link and ROM patch download
+
+`tools/test-wmt.sh` reboots the tablet, loads `mt8127_consys`, `mtk_btif`, `mtk_stp_wmt_soc` and the debugfs switch
+`wmt_wifi_ctl`, powers the WiFi function and saves the kernel log (`WMT_ARGS="dbg_level=2 btif_trace=1"` adds the WMT
+log and a trace of every BTIF buffer). Result: the chip answers over STP (chip id 0x8127, hardware version 0x8a01 = E2,
+ROM version 0x8a00), both ROM patch parts download and the firmware reports patch version 20150918. The WMT core then
+asks for the WiFi function and stops at `null pointer mtk_wcn_wlan_probe`, the callback the WiFi driver registers.
+
+Findings that cost time:
+
+- **Patch parts.** The stock userspace launcher scanned `/lib/firmware` for `ROMv2_patch_*` files whose header firmware
+  version (big-endian u16 at offset 22) matches the ROM version, and handed each to the driver with its sequence and
+  address. Header bytes 24..27: low nibble of byte 24 = part sequence, high nibble = part count, bytes 25..27 = address of
+  the part (byte 24 is cleared). For E2 both files are parts of one patch: sequence 1 is `ROMv2_patch_1_1_hdr.bin` at
+  0xf00e0000 (inside the shared 1 MiB region, so the region must be mapped for the MCU), sequence 2 is
+  `ROMv2_patch_1_0_hdr.bin` at 0x00060000. A misaligned address made the ROM abort after the last fragment.
+- **Reading the firmware's own trace.** After an assert the firmware leaves its register dump in the shared region;
+  `/sys/kernel/debug/mt8127_consys/emi` and `emi_full` expose it (`exception type: ABT`, registers). The faulting register
+  matched the patch address, which gave the clue.
+- **Method.** `btif_trace=1` logs the STP traffic, which is how the exchange was followed frame by frame.
