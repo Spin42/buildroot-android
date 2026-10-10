@@ -273,6 +273,24 @@ typedef struct _MTK_WCN_HIF_DMA_CONF {
 ********************************************************************************
 */
 
+struct device;
+
+/*----------------------------------------------------------------------------*/
+/*!
+* \brief Get the platform device bound to the "mediatek,mt8127-wlan" node.
+*
+* The device (and its of_node, for "local-mac-address") is available once the
+* platform driver has probed, which happens before the WMT core calls the
+* WiFi probe callback.
+*
+* \retval NULL if no device is bound
+*/
+/*----------------------------------------------------------------------------*/
+struct device *
+glGetHifDevice (
+    VOID
+    );
+
 #ifndef MODULE_AHB_DMA
 
 VOID
