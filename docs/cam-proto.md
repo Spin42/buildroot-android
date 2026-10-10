@@ -172,3 +172,22 @@ before any `isp`, `seninf`, `mipi-rx` access, and `reg`/`status` refuse to read 
 IRQ line configuration (level low, SPI 143) with an unmasked `INT_EN` could storm: the module clears `INT_EN` at
 every stop and tear-down. All waits are bounded. The sensor rails are enabled by the module itself; `stage 0` or
 `rmmod` powers everything down. Writing `reg` or the module parameters directly can bypass all of this.
+
+## Measured results (2026-10-10)
+
+Both sensors capture a complete frame to DRAM with the module as committed:
+
+| | SP2508 (rear) | SP0A20 (front) |
+|---|---|---|
+| Port / lanes | CSI0, 1 lane | CSI1 side of the stock convention (port -1 default), 1 lane |
+| `csi2_vsync` | **1 is required**: with 0 the receiver sees frame packets (22 Hz VS1/SOF1) but no pixels, detected size stays 0 and no frame completes | **1 is required** (same symptom) |
+| Detected size (`SENINF1` +0x2c) | 1616 x 1216 (hi = pixels, lo = lines) | 1280 x 480 (hi = bytes per line, lo = lines: 640 x 480 UYVY) |
+| ISP interrupts | `INT_STATUS 0x1401` = VS1 + PASS1_DON + SOF1 | same |
+| Output | RAW10, standard MIPI packing (4 pixels in 5 bytes: 4 MSB bytes then one byte of 2 LSBs each), stride 2000 bytes for 1600 pixels | UYVY 8-bit, stride 1264 bytes for 632 pixels |
+| Result | `docs/samples/sp2508-*`: colour bars decode into proper bars, a real scene decodes into a recognisable image (noisy: no black level/gain/denoise) | `docs/samples/sp0a20-first-frame.jpg`: a room, orange cast (no white balance), brightened x4.5 |
+
+Confirmed by the hardware: the register recipes of docs/seninf-mipi.md and docs/isp-capture.md work without the stock
+libraries, with the command queue unused: reset, TG programming, SET/CLR images for EN1/EN2/DMA/FMT/CTL, IMGO geometry
+(XSIZE = bytes per line - 1), FBC off, `IMGO_BASE_ADDR` written before the view finder starts, single shot,
+M4U/SMI passing physical addresses. A matrix over `tg_src`, FBC, single/continuous and the base-address modes made no
+difference before the vsync fix. The 24 MHz MCLK, the PMIC rails and the GPIO sequences are as in `tools/camera-probe.sh`.

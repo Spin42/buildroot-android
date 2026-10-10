@@ -28,7 +28,7 @@ const struct cam_sensor cam_sensor_sp2508 = {
 	.pixid = 0,	/* SENSOR_OUTPUT_FORMAT_RAW_B */
 	.vf_delay = 0,
 	.ecc_order = 1,
-	.vsync_pol = 0,	/* SENSOR_CLOCK_POLARITY_HIGH */
+	.vsync_pol = 1,	/* CSI2_CTRL bit 13: without it the receiver sees frame packets but no pixels (measured) */
 	.sync_a = 1,	/* SensorHsyncPolarity = LOW */
 	.sync_b = 0,	/* SensorVsyncPolarity = HIGH */
 };
@@ -50,7 +50,7 @@ const struct cam_sensor cam_sensor_sp0a20 = {
 	.pixid = 0,
 	.vf_delay = 1,	/* SensorInterruptDelayLines */
 	.ecc_order = 1,
-	.vsync_pol = 0,
+	.vsync_pol = 1,	/* needed for pixels to reach the TG (measured) */
 	.sync_a = 1,
 	.sync_b = 0,
 };
