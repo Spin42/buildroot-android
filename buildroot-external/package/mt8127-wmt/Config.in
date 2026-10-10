@@ -1,0 +1,11 @@
+config BR2_PACKAGE_MT8127_WMT
+	bool "mt8127-wmt"
+	depends on BR2_LINUX_KERNEL
+	select BR2_LINUX_NEEDS_MODULES
+	select BR2_PACKAGE_MT8127_BTIF
+	select BR2_PACKAGE_MT8127_CONSYS
+	help
+	  MediaTek WMT and STP core for the MT8127 CONSYS: powers the
+	  subsystem, loads its patch with request_firmware and multiplexes
+	  the WiFi function over the BTIF link. Needs the BTIF and CONSYS
+	  platform packages.

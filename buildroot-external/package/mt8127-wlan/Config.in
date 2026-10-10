@@ -1,0 +1,9 @@
+config BR2_PACKAGE_MT8127_WLAN
+	bool "mt8127-wlan"
+	depends on BR2_LINUX_KERNEL
+	select BR2_LINUX_NEEDS_MODULES
+	select BR2_PACKAGE_MT8127_WMT
+	help
+	  MediaTek gen2 WiFi driver (wlan_mt) for the MT8127 CONSYS, as
+	  a cfg80211 driver on top of the WMT core. Needs the CFG80211
+	  kernel options and the CONSYS firmware (tb3-firmware).

@@ -17,5 +17,5 @@ log.txt
 /archive/
 /.opencode/
 
-# Silead touch firmware, extracted from the stock kernel source (extract_silead_fw.py)
-/buildroot-external/board/tb3_710f/overlay/lib/firmware/
+# proprietary firmware collected by prepare_firmware.sh
+/buildroot-external/board/tb3_710f/firmware/

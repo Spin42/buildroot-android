@@ -14,3 +14,12 @@ source "$BR2_EXTERNAL_ANDROID_PATH/package/hexagonrpc/Config.in"
 source "$BR2_EXTERNAL_ANDROID_PATH/package/reboot-mode/Config.in"
 source "$BR2_EXTERNAL_ANDROID_PATH/package/adsp-boot/Config.in"
 source "$BR2_EXTERNAL_ANDROID_PATH/package/tb3-tools/Config.in"
+source "$BR2_EXTERNAL_ANDROID_PATH/package/tb3-firmware/Config.in"
+
+menu "MediaTek MT8127 connectivity (CONSYS WiFi)"
+source "$BR2_EXTERNAL_ANDROID_PATH/package/mt8127-btif/Config.in"
+source "$BR2_EXTERNAL_ANDROID_PATH/package/mt8127-consys/Config.in"
+source "$BR2_EXTERNAL_ANDROID_PATH/package/mt8127-wmt/Config.in"
+source "$BR2_EXTERNAL_ANDROID_PATH/package/mt8127-wlan/Config.in"
+source "$BR2_EXTERNAL_ANDROID_PATH/package/tb3-wifi/Config.in"
+endmenu

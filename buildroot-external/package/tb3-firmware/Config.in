@@ -1,0 +1,19 @@
+config BR2_PACKAGE_TB3_FIRMWARE
+	bool "tb3-firmware"
+	help
+	  Proprietary firmware of the Lenovo TB3-710F: the Silead touch
+	  controller image and the CONSYS WiFi files (WMT patches, WiFi
+	  RAM code, WMT_SOC.cfg). The files are not redistributable and
+	  are taken from a local directory prepared with
+	  board/tb3_710f/scripts/prepare_firmware.sh.
+
+if BR2_PACKAGE_TB3_FIRMWARE
+
+config BR2_PACKAGE_TB3_FIRMWARE_DIR
+	string "firmware directory"
+	default "$(BR2_EXTERNAL_ANDROID_PATH)/board/tb3_710f/firmware"
+	help
+	  Directory laid out like /lib/firmware that is copied into the
+	  target.
+
+endif
