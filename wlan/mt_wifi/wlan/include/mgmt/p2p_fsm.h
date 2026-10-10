@@ -1933,18 +1933,6 @@ typedef struct _MSG_P2P_SERVICE_DISCOVERY_REQUEST_T {
 
 
 
-#if DBG
-    #define ASSERT_BREAK(_exp) \
-        { \
-            if (!(_exp)) { \
-                ASSERT(FALSE); \
-                break; \
-            } \
-        }
-
-#else
-    #define ASSERT_BREAK(_exp)
-#endif
 
 
 /*******************************************************************************

@@ -121,6 +121,9 @@
 */
 
 /* ieee80211.h of linux has duplicated definitions */
+#ifdef LINUX
+#include <linux/ieee80211.h>
+#endif
 #if defined(WLAN_STATUS_SUCCESS)
 #undef WLAN_STATUS_SUCCESS
 #endif
