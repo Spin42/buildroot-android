@@ -205,9 +205,9 @@ Unpack a RAW10 frame on the host (4 MSB bytes then one byte holding the four 2-b
 
 ```python
 import numpy as np
-b = np.fromfile("/tmp/rear.raw", np.uint8)[:2020 * 1216].reshape(1216, 505, 5)
+b = np.fromfile("/tmp/rear.raw", np.uint8)[:2020 * 1216].reshape(1216, 404, 5)
 lsb = b[:, :, 4:5] >> (2 * np.arange(4)) & 3
-raw = (b[:, :, :4].astype(np.uint16) << 2 | lsb).reshape(1216, 2020 // 5 * 4)   # 1616 pixels per line
+raw = (b[:, :, :4].astype(np.uint16) << 2 | lsb).reshape(1216, 1616)   # 1616 pixels per line
 ```
 
 ## Known limitations and untested points
