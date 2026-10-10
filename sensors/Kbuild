@@ -1,1 +1,1 @@
-# camera sensor subdev drivers
+obj-m += sp2508.o sp0a20.o
