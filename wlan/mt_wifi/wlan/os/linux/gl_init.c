@@ -654,6 +654,8 @@
 *                    E X T E R N A L   R E F E R E N C E S
 ********************************************************************************
 */
+#include <linux/of.h>
+#include <linux/of_net.h>
 #include "gl_os.h"
 #include "debug.h"
 #include "wlan_lib.h"
@@ -943,6 +945,38 @@ wlanSelectQueue(
     skb->priority = _cfg80211_classify8021d(skb);
 
     return au16Wlan1dToQueueIdx[skb->priority];
+}
+
+/*----------------------------------------------------------------------------*/
+/*!
+* \brief Pick the MAC address of the interface: the "local-mac-address" (or
+*        "mac-address") property of the WiFi device node, otherwise a random
+*        locally administered address.
+*
+* \param[in] prGlueInfo Pointer to struct GLUE_INFO_T
+*
+* \return (none)
+*/
+/*----------------------------------------------------------------------------*/
+static void
+glGetMacAddress (
+    IN P_GLUE_INFO_T prGlueInfo
+    )
+{
+    struct device *prDev = (struct device *) prGlueInfo->rHifInfo.Dev;
+    u8 aucMac[ETH_ALEN];
+
+    if (prDev && prDev->of_node && of_get_mac_address(prDev->of_node, aucMac) == 0) {
+        DBGLOG(INIT, INFO, ("MAC address from device tree: "MACSTR"\n", MAC2STR(aucMac)));
+    }
+    else {
+        eth_random_addr(aucMac);
+        printk(KERN_WARNING DRV_NAME "no MAC address in the device tree, using random "MACSTR"\n",
+               MAC2STR(aucMac));
+    }
+
+    COPY_MAC_ADDR(prGlueInfo->rMacAddrOverride, aucMac);
+    prGlueInfo->fgIsMacAddrOverride = TRUE;
 }
 
 /*----------------------------------------------------------------------------*/
@@ -2739,6 +2773,7 @@ wlanProbe(
         prGlueInfo = (P_GLUE_INFO_T) wiphy_priv(prWdev->wiphy);
         gPrDev = prGlueInfo->prDevHandler;
         glSetHifInfo(prGlueInfo, (ULONG) pvData);
+        glGetMacAddress(prGlueInfo);
 
         KAL_WAKE_LOCK_INIT(prAdapter, &prGlueInfo->rAhbIsrWakeLock, "WLAN AHB ISR");
 
@@ -2919,7 +2954,7 @@ bailout:
                 DBGLOG(INIT, WARN, ("set MAC addr fail 0x%x\n", rStatus));
                 prGlueInfo->u4ReadyFlag = 0;
             } else {
-                memcpy(prGlueInfo->prDevHandler->dev_addr, &MacAddr.sa_data, ETH_ALEN);
+                eth_hw_addr_set(prGlueInfo->prDevHandler, (const u8 *) &MacAddr.sa_data);
                 memcpy(prGlueInfo->prDevHandler->perm_addr, prGlueInfo->prDevHandler->dev_addr, ETH_ALEN);
 
                 /* card is ready */

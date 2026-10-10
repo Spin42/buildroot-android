@@ -964,7 +964,7 @@ kalUpdateMACAddress (
     ASSERT(pucMacAddr);
 
     if(UNEQUAL_MAC_ADDR(prGlueInfo->prDevHandler->dev_addr, pucMacAddr)) {
-        memcpy(prGlueInfo->prDevHandler->dev_addr, pucMacAddr, PARAM_MAC_ADDR_LEN);
+        eth_hw_addr_set(prGlueInfo->prDevHandler, pucMacAddr);
     }
 
     return;
@@ -2895,42 +2895,15 @@ kalRetrieveNetworkAddress(
 {
     ASSERT(prGlueInfo);
 
+    /* The address comes from the device tree or is generated at probe time
+     * (see glGetMacAddress()); there is no NVRAM to consult. */
     if(prGlueInfo->fgIsMacAddrOverride == FALSE) {
-    #if !defined(CONFIG_X86)
-	#if !defined(CONFIG_MTK_TC1_FEATURE)
-			UINT_32 i;
-	#endif
-        BOOLEAN fgIsReadError = FALSE;
-
-	#if !defined(CONFIG_MTK_TC1_FEATURE)
-        for(i = 0 ; i < MAC_ADDR_LEN ; i+=2) {
-            if(kalCfgDataRead16(prGlueInfo,
-                        OFFSET_OF(WIFI_CFG_PARAM_STRUCT, aucMacAddress) + i,
-                        (PUINT_16) (((PUINT_8)prMacAddr) + i)) == FALSE) {
-                fgIsReadError = TRUE;
-                break;
-            }
-        }
-	#else
-		TC1_FAC_NAME(FacReadWifiMacAddr)((unsigned char *)prMacAddr);
-	#endif
-
-        if(fgIsReadError == TRUE) {
-            return FALSE;
-        }
-        else {
-            return TRUE;
-        }
-    #else
-        /* x86 Linux doesn't need to override network address so far */
         return FALSE;
-    #endif
     }
-    else {
-        COPY_MAC_ADDR(prMacAddr, prGlueInfo->rMacAddrOverride);
 
-        return TRUE;
-    }
+    COPY_MAC_ADDR(prMacAddr, prGlueInfo->rMacAddrOverride);
+
+    return TRUE;
 }
 
 
@@ -3348,9 +3321,6 @@ kalScanDone(
 	scanReportBss2Cfg80211(prGlueInfo->prAdapter,BSS_TYPE_INFRASTRUCTURE,NULL);	
     cnmTimerStopTimer(prGlueInfo->prAdapter, &prAisFsmInfo->rScanDoneTimer);
 
-    /* check for system configuration for generating error message on scan list */
-    wlanCheckSystemConfiguration(prGlueInfo->prAdapter);
-
     kalIndicateStatusAndComplete(prGlueInfo, WLAN_STATUS_SCAN_COMPLETE, NULL, 0);
 }
 
@@ -3489,6 +3459,11 @@ kalGetConfigurationVersion(
     ASSERT(pu2Part1CfgPeerVersion);
     ASSERT(pu2Part2CfgOwnVersion);
     ASSERT(pu2Part2CfgPeerVersion);
+
+    *pu2Part1CfgOwnVersion = 0;
+    *pu2Part1CfgPeerVersion = 0;
+    *pu2Part2CfgOwnVersion = 0;
+    *pu2Part2CfgPeerVersion = 0;
 
     kalCfgDataRead16(prGlueInfo,
             OFFSET_OF(WIFI_CFG_PARAM_STRUCT, u2Part1OwnVersion),
