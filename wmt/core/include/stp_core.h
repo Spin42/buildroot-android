@@ -346,7 +346,7 @@ extern INT32 mtk_wcn_stp_coredump_start_get(VOID);
 * RETURNS
 *  INT32    length transmitted
 *****************************************************************************/
-extern INT32 mtk_wcn_stp_send_data_raw(const PUINT8 buffer, const UINT32 length, const UINT8 type);
+extern INT32 mtk_wcn_stp_send_data_raw(const UINT8 *buffer, const UINT32 length, const UINT8 type);
 
 /*****************************************************************************
 * FUNCTION

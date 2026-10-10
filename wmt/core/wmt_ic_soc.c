@@ -1894,6 +1894,7 @@ static INT32 mtk_wcn_soc_patch_info_prepare(VOID)
 	WMT_CTRL_DATA ctrlData;
 
 	ctrlData.ctrlId = WMT_CTRL_PATCH_SEARCH;
+	ctrlData.au4CtrlData[0] = gp_soc_info->u4HwVer;
 	iRet = wmt_ctrl(&ctrlData);
 
 	return iRet;

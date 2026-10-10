@@ -32,6 +32,7 @@ extern INT32 wmt_dev_rx_timeout (P_OSAL_EVENT pEvent);
 extern INT32 wmt_dev_patch_get (PUINT8 pPatchName, osal_firmware **ppPatch,INT32 padSzBuf);
 extern INT32 wmt_dev_patch_put(osal_firmware **ppPatch);
 extern VOID wmt_dev_patch_info_free(VOID);
+extern INT32 wmt_dev_patch_search(UINT32 hwVer);
 extern VOID wmt_dev_send_cmd_to_daemon(UINT32 cmd);
 extern MTK_WCN_BOOL wmt_dev_get_early_suspend_state(VOID);
 

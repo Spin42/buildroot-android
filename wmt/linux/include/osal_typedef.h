@@ -32,7 +32,7 @@
 #include <linux/sched.h>
 #include <linux/poll.h>
 #include <asm/current.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <asm/io.h>
 #include <linux/proc_fs.h>
 #include <linux/workqueue.h>
@@ -47,14 +47,26 @@
 #include <linux/jiffies.h>
 #include <linux/slab.h>
 #include <linux/err.h>
-#include <linux/earlysuspend.h>
-#ifdef WMT_PLAT_ALPS
-#include <linux/aee.h>
-#endif
 #include <linux/kfifo.h>
-#include <linux/wakelock.h>
 #include <linux/log2.h>
+#include <linux/pm_wakeup.h>
+#include <linux/timer.h>
 
+
+/* Stand-in for struct timeval/do_gettimeofday(), which the kernel no longer provides. */
+struct osal_timeval {
+	long tv_sec;
+	long tv_usec;
+};
+
+static inline void osal_do_gettimeofday(struct osal_timeval *tv)
+{
+	struct timespec64 ts;
+
+	ktime_get_real_ts64(&ts);
+	tv->tv_sec = (long)ts.tv_sec;
+	tv->tv_usec = ts.tv_nsec / NSEC_PER_USEC;
+}
 
 #ifndef _TYPEDEFS_H     /*fix redifine*/
 typedef char		INT8;

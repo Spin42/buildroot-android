@@ -202,7 +202,7 @@ typedef struct _OSAL_LXOP_Q {
 
 typedef struct _OSAL_WAKE_LOCK_
 {
-   struct wake_lock        wake_lock; 
+   struct wakeup_source   *wake_lock;
    UINT8  name[MAX_WAKE_LOCK_NAME_LEN];
 } OSAL_WAKE_LOCK, *P_OSAL_WAKE_LOCK;
 #if 1

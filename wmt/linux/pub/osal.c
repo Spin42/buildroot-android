@@ -242,10 +242,7 @@ INT32 osal_dbg_assert(INT32 expr, const char *file, INT32 line)
 INT32 osal_dbg_assert_aee(const char *module, const char *detail_description){
     osal_err_print("[WMT-ASSERT]""[E][Module]:%s, [INFO]%s\n", module, detail_description);
 
-#ifdef WMT_PLAT_ALPS
-    //aee_kernel_warning(module,detail_description);
-    aee_kernel_warning_api(__FILE__,__LINE__,DB_OPT_WCN_ISSUE_INFO,module,detail_description);
-#endif
+/* No AEE (Android exception engine) on mainline: the log line above is the report. */
     return 0;
 }
 
@@ -627,12 +624,17 @@ _osal_inline_ INT32 osal_test_and_set_bit(UINT32 bitOffset, P_OSAL_BIT_OP_VAR pD
   *
 */
 
+/* timer_list callbacks receive the timer itself; hand the stored cookie to the legacy handler. */
+static void osal_timer_trampoline(struct timer_list *t)
+{
+    P_OSAL_TIMER pTimer = timer_container_of(pTimer, t, timer);
+
+    pTimer->timeoutHandler(pTimer->timeroutHandlerData);
+}
+
 INT32 osal_timer_create(P_OSAL_TIMER pTimer)
 {
-    struct timer_list *timer = &pTimer->timer;
-    init_timer(timer);
-    timer->function = pTimer->timeoutHandler;
-    timer->data = (unsigned long)pTimer->timeroutHandlerData;
+    timer_setup(&pTimer->timer, osal_timer_trampoline, 0);
     return 0;
 }
 INT32 osal_timer_start(P_OSAL_TIMER pTimer, UINT32 ms)
@@ -647,14 +649,14 @@ INT32 osal_timer_start(P_OSAL_TIMER pTimer, UINT32 ms)
 INT32 osal_timer_stop(P_OSAL_TIMER pTimer)
 {
     struct timer_list *timer = &pTimer->timer;
-    del_timer(timer);
+    timer_delete(timer);
     return 0;
 }
 
 INT32 osal_timer_stop_sync(P_OSAL_TIMER pTimer)
 {
     struct timer_list *timer = &pTimer->timer;
-    del_timer_sync(timer);
+    timer_delete_sync(timer);
     return 0;
 }
 
@@ -665,7 +667,7 @@ INT32 osal_timer_modify(P_OSAL_TIMER pTimer, UINT32 ms)
     return 0;
 }
 
-INT32 _osal_fifo_init(OSAL_FIFO *pFifo, UINT8 *buf, UINT32 size)
+static INT32 _osal_fifo_init(OSAL_FIFO *pFifo, UINT8 *buf, UINT32 size)
 {
     struct kfifo *fifo = NULL;
     INT32  ret = -1;
@@ -712,7 +714,7 @@ INT32 _osal_fifo_init(OSAL_FIFO *pFifo, UINT8 *buf, UINT32 size)
     return (ret < 0) ? (-1) : (0);
 }
 
-INT32 _osal_fifo_deinit(OSAL_FIFO *pFifo)
+static INT32 _osal_fifo_deinit(OSAL_FIFO *pFifo)
 {
     struct kfifo *fifo = NULL;
 
@@ -733,7 +735,7 @@ INT32 _osal_fifo_deinit(OSAL_FIFO *pFifo)
     return 0;
 }
 
-INT32 _osal_fifo_size(OSAL_FIFO *pFifo)
+static INT32 _osal_fifo_size(OSAL_FIFO *pFifo)
 {
     struct kfifo *fifo = NULL;
     INT32  ret = 0;
@@ -760,7 +762,7 @@ INT32 _osal_fifo_size(OSAL_FIFO *pFifo)
 }
 
 /*returns unused bytes in fifo*/
-INT32 _osal_fifo_avail_size(OSAL_FIFO *pFifo)
+static INT32 _osal_fifo_avail_size(OSAL_FIFO *pFifo)
 {
     struct kfifo *fifo = NULL;
     INT32  ret = 0;
@@ -786,7 +788,7 @@ INT32 _osal_fifo_avail_size(OSAL_FIFO *pFifo)
 }
 
 /*returns used bytes in fifo*/
-INT32 _osal_fifo_len(OSAL_FIFO *pFifo)
+static INT32 _osal_fifo_len(OSAL_FIFO *pFifo)
 {
     struct kfifo *fifo = NULL;
     INT32  ret = 0;
@@ -807,7 +809,7 @@ INT32 _osal_fifo_len(OSAL_FIFO *pFifo)
     return ret;
 }
 
-INT32 _osal_fifo_is_empty(OSAL_FIFO *pFifo)
+static INT32 _osal_fifo_is_empty(OSAL_FIFO *pFifo)
 {
     struct kfifo *fifo = NULL;
     INT32  ret = 0;
@@ -832,7 +834,7 @@ INT32 _osal_fifo_is_empty(OSAL_FIFO *pFifo)
     return ret;
 }
 
-INT32 _osal_fifo_is_full(OSAL_FIFO *pFifo)
+static INT32 _osal_fifo_is_full(OSAL_FIFO *pFifo)
 {
     struct kfifo *fifo = NULL;
     INT32  ret = 0;
@@ -857,7 +859,7 @@ INT32 _osal_fifo_is_full(OSAL_FIFO *pFifo)
     return ret;
 }
 
-INT32 _osal_fifo_data_in(OSAL_FIFO *pFifo, const VOID *buf, UINT32 len)
+static INT32 _osal_fifo_data_in(OSAL_FIFO *pFifo, const VOID *buf, UINT32 len)
 {
     struct kfifo *fifo = NULL;
     INT32  ret = 0;
@@ -890,7 +892,7 @@ INT32 _osal_fifo_data_in(OSAL_FIFO *pFifo, const VOID *buf, UINT32 len)
     return ret;
 }
 
-INT32 _osal_fifo_data_out(OSAL_FIFO *pFifo, void *buf, UINT32 len)
+static INT32 _osal_fifo_data_out(OSAL_FIFO *pFifo, void *buf, UINT32 len)
 {
     struct kfifo *fifo = NULL;
     INT32  ret = 0;
@@ -922,7 +924,7 @@ INT32 _osal_fifo_data_out(OSAL_FIFO *pFifo, void *buf, UINT32 len)
     return ret;
 }
 
-INT32 _osal_fifo_reset(OSAL_FIFO *pFifo)
+static INT32 _osal_fifo_reset(OSAL_FIFO *pFifo)
 {
     struct kfifo *fifo = NULL;
 
@@ -1106,8 +1108,9 @@ INT32  osal_wake_lock_init(P_OSAL_WAKE_LOCK pLock)
     } 
     else 
     {
-        wake_lock_init(&pLock->wake_lock, WAKE_LOCK_SUSPEND, pLock->name);
-        
+        /* NULL when the kernel has no wakeup source support; the other osal_wake_*() calls accept that. */
+        pLock->wake_lock = wakeup_source_register(NULL, pLock->name);
+
         return 0;
     }
 }
@@ -1120,7 +1123,7 @@ INT32  osal_wake_lock(P_OSAL_WAKE_LOCK pLock)
     }
     else
     {
-        wake_lock(&pLock->wake_lock);
+        __pm_stay_awake(pLock->wake_lock);
 
         return 0;
     }
@@ -1135,7 +1138,7 @@ INT32  osal_wake_unlock(P_OSAL_WAKE_LOCK pLock)
     }
     else
     {
-        wake_unlock(&pLock->wake_lock);
+        __pm_relax(pLock->wake_lock);
 
         return 0;
     }
@@ -1151,7 +1154,7 @@ INT32  osal_wake_lock_count(P_OSAL_WAKE_LOCK pLock)
     }
     else 
     {
-        count = wake_lock_active(&pLock->wake_lock);    
+        count = pLock->wake_lock ? pLock->wake_lock->active : 0;    
         return count;
     }
 }
@@ -1240,9 +1243,9 @@ INT32 osal_udelay(UINT32 us)
 INT32 osal_gettimeofday(PINT32 sec, PINT32 usec)
 {
     INT32 ret = 0;
-    struct timeval now;
+    struct timespec64 now;
 
-    do_gettimeofday(&now);
+    ktime_get_real_ts64(&now);
 
     if(sec != NULL)
         *sec = now.tv_sec;
@@ -1250,7 +1253,7 @@ INT32 osal_gettimeofday(PINT32 sec, PINT32 usec)
         ret = -1;
 
     if(usec != NULL)
-        *usec = now.tv_usec;
+        *usec = now.tv_nsec / NSEC_PER_USEC;
     else
         ret = -1;
 

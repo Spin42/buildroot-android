@@ -54,20 +54,11 @@
 #include "bgw_desense.h"
 #include <mach/mtk_wcn_cmb_stub.h>
 #include "wmt_idc.h"
-#if WMT_CREATE_NODE_DYNAMIC
-#include <linux/device.h>
-#endif
-
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,0))
 #include <linux/proc_fs.h>
-#endif
 
 #include <linux/suspend.h>
 #include <linux/device.h>
 #include <linux/platform_device.h>
-#ifdef CONFIG_EARLYSUSPEND
-#include <linux/earlysuspend.h>
-#endif
 
 #define MTK_WMT_VERSION  "SOC Consys WMT Driver - v1.0"
 #define MTK_WMT_DATE     "2013/01/20"
@@ -102,6 +93,9 @@ UINT32 pAtchNum = 0;
 
 static UINT8 gEmiBuf[1024*32];
 
+/* Owner of firmware requests; NULL until the char device exists. */
+static struct device *gWmtFwDev;
+
 #if CFG_WMT_PROC_FOR_AEE
 static struct proc_dir_entry *gWmtAeeEntry = NULL;
 #define WMT_AEE_PROCNAME "driver/wmt_aee"
@@ -110,10 +104,8 @@ static UINT32 g_buf_len = 0;
 static UINT8 *pBuf = NULL;
 #endif
 
-#if WMT_CREATE_NODE_DYNAMIC
-struct class * wmt_class = NULL;
-struct device * wmt_dev = NULL;
-#endif
+static struct class * wmt_class = NULL;
+static struct device * wmt_dev = NULL;
 
 #if CFG_WMT_DBG_SUPPORT
 static struct proc_dir_entry *gWmtDbgEntry = NULL;
@@ -175,56 +167,19 @@ static INT32 wmt_dbg_lte_coex_test(INT32 par1, INT32 par2, INT32 par3);
 #endif
 #endif
 
-#if CONSYS_WMT_REG_SUSPEND_CB_ENABLE || defined(CONFIG_EARLYSUSPEND)
+#if CONSYS_WMT_REG_SUSPEND_CB_ENABLE
 static int mtk_wmt_func_off_background(void);
 static int mtk_wmt_func_on_background(void);
 #endif
 
-#ifdef CONFIG_EARLYSUSPEND
-
+/* There is no early-suspend notification on mainline; the flag stays clear. */
 UINT32 g_early_suspend_flag = 0;
-OSAL_SLEEPABLE_LOCK g_es_lr_lock;
-static void wmt_dev_early_suspend(struct early_suspend *h)
-{
-		osal_lock_sleepable_lock(&g_es_lr_lock);
-    g_early_suspend_flag = 1;
-    osal_unlock_sleepable_lock(&g_es_lr_lock);
-    WMT_INFO_FUNC("@@@@@@@@@@wmt enter early suspend@@@@@@@@@@@@@@\n");
-    if (MTK_WCN_BOOL_FALSE == mtk_wcn_wmt_func_off(WMTDRV_TYPE_LPBK)) {
-        WMT_WARN_FUNC("WMT turn off LPBK fail\n");
-    }
-		else
-		{
-			WMT_INFO_FUNC("WMT turn off LPBK suceed");
-		}
-}
-
-static void wmt_dev_late_resume(struct early_suspend *h)
-{
-    
-    WMT_INFO_FUNC("@@@@@@@@@@wmt enter late resume@@@@@@@@@@@@@@\n");
-    osal_lock_sleepable_lock(&g_es_lr_lock);
-    g_early_suspend_flag = 0;
-    osal_unlock_sleepable_lock(&g_es_lr_lock);
-    mtk_wmt_func_on_background();
-    
-		return 0;
-}
-
-struct early_suspend wmt_early_suspend_handler = {
-    .suspend = wmt_dev_early_suspend,
-    .resume = wmt_dev_late_resume,
-};
-
-#else
-UINT32 g_early_suspend_flag = 0;
-#endif
 /*******************************************************************************
 *                          F U N C T I O N S
 ********************************************************************************
 */
 
-#if CONSYS_WMT_REG_SUSPEND_CB_ENABLE || defined(CONFIG_EARLYSUSPEND)
+#if CONSYS_WMT_REG_SUSPEND_CB_ENABLE
 
 static INT32 wmt_pwr_on_thread (void *pvData)
 {
@@ -1494,10 +1449,9 @@ static ssize_t wmt_dev_dbg_write(struct file *file, const char *buffer, unsigned
 INT32 wmt_dev_dbg_setup(VOID)
 {
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,0))
-	static const struct file_operations wmt_dbg_fops = {
-		.owner		= THIS_MODULE,
-		.read		= wmt_dev_dbg_read,
-		.write		= wmt_dev_dbg_write,
+	static const struct proc_ops wmt_dbg_fops = {
+		.proc_read	= wmt_dev_dbg_read,
+		.proc_write	= wmt_dev_dbg_write,
 	};
 	gWmtDbgEntry = proc_create(WMT_DBG_PROCNAME, 0664, NULL, &wmt_dbg_fops );
 	if(gWmtDbgEntry == NULL){
@@ -1648,14 +1602,13 @@ static int wmt_dev_proc_for_aee_write(struct file *file, const char *buffer, uns
 INT32 wmt_dev_proc_for_aee_setup(VOID)
 {
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,0))
-		static const struct file_operations wmt_aee_fops = {
-			.owner		= THIS_MODULE,
-			.read		= wmt_dev_proc_for_aee_read,
-			.write		= wmt_dev_proc_for_aee_write,
+		static const struct proc_ops wmt_aee_fops = {
+			.proc_read	= wmt_dev_proc_for_aee_read,
+			.proc_write	= wmt_dev_proc_for_aee_write,
 		};
 
-		gWmtDbgEntry = proc_create(WMT_AEE_PROCNAME, 0664, NULL, &wmt_aee_fops );
-		if(gWmtDbgEntry == NULL){
+		gWmtAeeEntry = proc_create(WMT_AEE_PROCNAME, 0664, NULL, &wmt_aee_fops );
+		if(gWmtAeeEntry == NULL){
 			WMT_ERR_FUNC("Unable to create /proc entry\n\r");
 			return -1;
 		}
@@ -1721,6 +1674,15 @@ INT32 wmt_dev_rx_timeout (P_OSAL_EVENT pEvent)
     return lRet;
 }
 
+/*
+ * Load a file with request_firmware() from the firmware search path
+ * (/lib/firmware). Any directory part of pName is dropped, so the vendor
+ * absolute names ("/system/etc/firmware/<file>") map to "<file>".
+ *
+ * The content is returned in a vmalloc'ed buffer with padSzBuf bytes of
+ * headroom in front of the file (the patch download code builds its first
+ * command in that space). Returns the file length, or < 0 on error.
+ */
 INT32 wmt_dev_read_file (
     PUINT8 pName,
     const PPUINT8 ppBufPtr,
@@ -1728,15 +1690,11 @@ INT32 wmt_dev_read_file (
     INT32 padSzBuf
     )
 {
-    INT32 iRet = -1;
-    struct file *fd;
-    //ssize_t iRet;
-    INT32 file_len;
-    INT32 read_len;
+    const struct firmware *fw = NULL;
+    const char *base;
     PVOID pBuf;
-
-    //struct cred *cred = get_task_cred(current);
-    const struct cred *cred = get_current_cred();
+    INT32 file_len;
+    INT32 ret;
 
     if (!ppBufPtr ) {
         WMT_ERR_FUNC("invalid ppBufptr!\n");
@@ -1744,56 +1702,37 @@ INT32 wmt_dev_read_file (
     }
     *ppBufPtr = NULL;
 
-    fd = filp_open(pName, O_RDONLY, 0);
-    if (!fd || IS_ERR(fd) || !fd->f_op || !fd->f_op->read) {
-        WMT_ERR_FUNC("failed to open or read!(0x%p, %d, %d, %d)\n", fd, PTR_ERR(fd),cred->fsuid, cred->fsgid);
-        if(IS_ERR(fd))
-        	WMT_ERR_FUNC("error code:%d\n",PTR_ERR(fd));
+    base = strrchr(pName, '/');
+    base = base ? base + 1 : (const char *)pName;
+
+    ret = request_firmware_direct(&fw, base, gWmtFwDev);
+    if (ret) {
+        WMT_ERR_FUNC("request_firmware(%s) fail(%d)\n", base, ret);
         return -1;
     }
 
-    file_len = fd->f_path.dentry->d_inode->i_size;
+    if (offset < 0 || (size_t)offset > fw->size) {
+        WMT_ERR_FUNC("invalid offset(%d) for %s, size(%zu)\n", offset, base, fw->size);
+        release_firmware(fw);
+        return -1;
+    }
+    file_len = fw->size - offset;
+
     pBuf = vmalloc((file_len + BCNT_PATCH_BUF_HEADROOM + 3) & ~0x3UL);
     if (!pBuf) {
         WMT_ERR_FUNC("failed to vmalloc(%d)\n", (INT32)((file_len + 3) & ~0x3UL));
-        goto read_file_done;
+        release_firmware(fw);
+        return -1;
     }
 
-    do {
-        if (fd->f_pos != offset) {
-            if (fd->f_op->llseek) {
-                if (fd->f_op->llseek(fd, offset, 0) != offset) {
-                    WMT_ERR_FUNC("failed to seek!!\n");
-                    goto read_file_done;
-                }
-            }
-            else {
-                fd->f_pos = offset;
-            }
-        }
+    memcpy((UINT8 *)pBuf + padSzBuf, fw->data + offset, file_len);
+    release_firmware(fw);
 
-        read_len = fd->f_op->read(fd, pBuf + padSzBuf, file_len, &fd->f_pos);
-        if (read_len != file_len) {
-            WMT_WARN_FUNC("read abnormal: read_len(%d), file_len(%d)\n", read_len, file_len);
-        }
-    } while (false);
-
-    iRet = 0;
     *ppBufPtr = pBuf;
-
-read_file_done:
-    if (iRet) {
-        if (pBuf) {
-            vfree(pBuf);
-        }
-    }
-
-    filp_close(fd, NULL);
-
-    return (iRet) ? iRet : read_len;
+    return file_len;
 }
 
-// TODO: [ChangeFeature][George] refine this function name for general filesystem read operation, not patch only.
+/* Read a firmware/config file into a newly allocated osal_firmware. */
 INT32 wmt_dev_patch_get (
     PUINT8 pPatchName,
     osal_firmware **ppPatch,
@@ -1802,15 +1741,6 @@ INT32 wmt_dev_patch_get (
 {
     INT32 iRet = -1;
     osal_firmware *pfw;
-    uid_t orig_uid;
-    gid_t orig_gid;
-
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,29))
-    //struct cred *cred = get_task_cred(current);
-    struct cred *cred = (struct cred *)get_current_cred();
-#endif
-
-    mm_segment_t orig_fs = get_fs();
 
     if (*ppPatch) {
         WMT_WARN_FUNC("f/w patch already exists \n");
@@ -1827,35 +1757,14 @@ INT32 wmt_dev_patch_get (
         return -1;
     }
 
-    pfw = kzalloc(sizeof(osal_firmware), /*GFP_KERNEL*/GFP_ATOMIC);
+    pfw = kzalloc(sizeof(osal_firmware), GFP_KERNEL);
     if (!pfw) {
-        WMT_ERR_FUNC("kzalloc(%d) fail\n", sizeof(osal_firmware));
+        WMT_ERR_FUNC("kzalloc(%zu) fail\n", sizeof(osal_firmware));
         return -2;
     }
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,29))
-    orig_uid = cred->fsuid;
-    orig_gid = cred->fsgid;
-    cred->fsuid = cred->fsgid = 0;
-#else
-    orig_uid = current->fsuid;
-    orig_gid = current->fsgid;
-    current->fsuid = current->fsgid = 0;
-#endif
-
-    set_fs(get_ds());
-
-    /* load patch file from fs */
-    iRet = wmt_dev_read_file(pPatchName, &pfw->data, 0, padSzBuf);
-    set_fs(orig_fs);
-
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,29))
-    cred->fsuid = orig_uid;
-    cred->fsgid = orig_gid;
-#else
-    current->fsuid = orig_uid;
-    current->fsgid = orig_gid;
-#endif
+    /* load patch file from the firmware path */
+    iRet = wmt_dev_read_file(pPatchName, (PPUINT8)&pfw->data, 0, padSzBuf);
 
     if (iRet > 0) {
         pfw->size = iRet;
@@ -1885,6 +1794,47 @@ INT32 wmt_dev_patch_put(osal_firmware **ppPatch)
 }
 
 
+/*
+ * Kernel-side replacement for the launcher's "srh_patch" answer: pick the ROM
+ * patch for the chip hardware version and publish it as a one-entry patch
+ * list (the same data WMT_IOCTL_SET_PATCH_NUM/INFO deliver).
+ *
+ *   hw version 0x8A00 (E1) -> ROMv2_patch_1_0_hdr.bin
+ *   hw version 0x8A01 (E2) -> ROMv2_patch_1_1_hdr.bin
+ *
+ * The patch is loaded as a whole; the "partial patch" address bytes carry the
+ * all-ones value of the command template.
+ */
+#define WMT_PATCH_NAME_FMT "ROMv2_patch_1_%u_hdr.bin"
+
+INT32 wmt_dev_patch_search(UINT32 hwVer)
+{
+    P_WMT_PATCH_INFO pInfo;
+
+    if ((hwVer & 0xFF00) != 0x8A00) {
+        WMT_ERR_FUNC("no patch for hw version 0x%x\n", hwVer);
+        return -1;
+    }
+
+    wmt_dev_patch_info_free();
+    pInfo = kzalloc(sizeof(WMT_PATCH_INFO), GFP_KERNEL);
+    if (!pInfo) {
+        WMT_ERR_FUNC("allocate memory fail!\n");
+        return -2;
+    }
+
+    pInfo->dowloadSeq = 1;
+    osal_memset(pInfo->addRess, 0xFF, sizeof(pInfo->addRess));
+    snprintf(pInfo->patchName, sizeof(pInfo->patchName), WMT_PATCH_NAME_FMT, hwVer & 0xFF);
+
+    pPatchInfo = pInfo;
+    pAtchNum = 1;
+    wmt_lib_set_patch_num(pAtchNum);
+    wmt_lib_set_patch_info(pPatchInfo);
+    WMT_INFO_FUNC("patch for hw version 0x%x: %s\n", hwVer, pInfo->patchName);
+    return 0;
+}
+
 VOID wmt_dev_patch_info_free(VOID)
 {
 	if (pPatchInfo) {
@@ -1896,10 +1846,10 @@ VOID wmt_dev_patch_info_free(VOID)
 
 MTK_WCN_BOOL wmt_dev_is_file_exist(PUINT8 pFileName)
 {
-    struct file *fd = NULL;
-    //ssize_t iRet;
-    INT32 fileLen = -1;
-    const struct cred *cred = get_current_cred();
+    const struct firmware *fw = NULL;
+    const char *base;
+    INT32 fileLen;
+
     if(pFileName == NULL)
     {
         WMT_ERR_FUNC("invalid file name pointer(%p)\n", pFileName);
@@ -1911,17 +1861,15 @@ MTK_WCN_BOOL wmt_dev_is_file_exist(PUINT8 pFileName)
         return MTK_WCN_BOOL_FALSE;
     }
 
+    base = strrchr(pFileName, '/');
+    base = base ? base + 1 : (const char *)pFileName;
 
-    //struct cred *cred = get_task_cred(current);
-
-    fd = filp_open(pFileName, O_RDONLY, 0);
-    if (!fd || IS_ERR(fd) || !fd->f_op || !fd->f_op->read) {
-        WMT_ERR_FUNC("failed to open or read(%s)!(0x%p, %d, %d)\n", pFileName, fd, cred->fsuid, cred->fsgid);
+    if (request_firmware_direct(&fw, base, gWmtFwDev)) {
+        WMT_ERR_FUNC("failed to open or read(%s)!\n", pFileName);
         return MTK_WCN_BOOL_FALSE;
     }
-    fileLen = fd->f_path.dentry->d_inode->i_size;
-    filp_close(fd, NULL);
-    fd = NULL;
+    fileLen = fw->size;
+    release_firmware(fw);
     if(fileLen <= 0)
     {
         WMT_ERR_FUNC("invalid file(%s), length(%d)\n", pFileName, fileLen);
@@ -2024,7 +1972,7 @@ long wmt_dev_tm_temp_query(void)
     
     static INT32 temp_table[HISTORY_NUM] = {99}; //not query yet.
     static INT32 idx_temp_table = 0;
-    static struct timeval query_time, now_time;
+    static struct osal_timeval query_time, now_time;
 
     INT8  query_cond = 0;
     INT32 current_temp = 0;
@@ -2042,7 +1990,7 @@ long wmt_dev_tm_temp_query(void)
        }            
     }
 
-    do_gettimeofday(&now_time);
+    osal_do_gettimeofday(&now_time);
 #if 1
     // Query condition 2:
     // Moniter the ahb bus activity to decide if we have the need to query temperature.
@@ -2104,7 +2052,7 @@ long wmt_dev_tm_temp_query(void)
         wmt_lib_notify_stp_sleep();
         idx_temp_table = (idx_temp_table + 1) % HISTORY_NUM;
         temp_table[idx_temp_table] = current_temp;
-        do_gettimeofday(&query_time);
+        osal_do_gettimeofday(&query_time);
 
         WMT_INFO_FUNC("[Thermal] current_temp = 0x%x \n", (current_temp & 0xFF));
     }
@@ -2230,6 +2178,45 @@ unsigned int WMT_poll(struct file *filp, poll_table *wait)
     return mask;
 }
 
+/*
+ * Select the host interface (arg: STP_xxx | WMT_FM_xxx << 4) and pass it to
+ * the WMT core. This is what the user-space launcher does through
+ * WMT_IOCTL_SET_STP_MODE; WMT_init() calls it with the BTIF default.
+ */
+static INT32 wmt_dev_set_stp_mode(unsigned long arg)
+{
+    INT32 iRet = 0;
+    P_OSAL_OP pOp;
+    MTK_WCN_BOOL bRet;
+    P_OSAL_SIGNAL pSignal = NULL;
+    P_WMT_HIF_CONF pHif = NULL;
+
+    iRet = wmt_lib_set_hif(arg);
+    if (0 != iRet)
+    {
+        WMT_INFO_FUNC("wmt_lib_set_hif fail\n");
+        return iRet;
+    }
+
+    pOp = wmt_lib_get_free_op();
+    if (!pOp) {
+        WMT_INFO_FUNC("get_free_lxop fail\n");
+        return 0;
+    }
+    pSignal = &pOp->signal;
+    pOp->op.opId = WMT_OPID_HIF_CONF;
+
+    pHif = wmt_lib_get_hif();
+
+    osal_memcpy(&pOp->op.au4OpData[0], pHif, sizeof(WMT_HIF_CONF));
+    pOp->op.u4InfoBit = WMT_OP_HIF_BIT;
+    pSignal->timeoutValue = 0;
+
+    bRet = wmt_lib_put_act_op(pOp);
+    WMT_DBG_FUNC("WMT_OPID_HIF_CONF result(%d) \n", bRet);
+    return (MTK_WCN_BOOL_FALSE == bRet) ? -EFAULT : 0;
+}
+
 //INT32 WMT_ioctl(struct inode *inode, struct file *filp, UINT32 cmd, unsigned long arg)
 long
 WMT_unlocked_ioctl (
@@ -2275,39 +2262,7 @@ WMT_unlocked_ioctl (
 
     case WMT_IOCTL_SET_STP_MODE: /* stp/hif/fm mode */
 
-        /* set hif conf */
-        do {
-            P_OSAL_OP pOp;
-            MTK_WCN_BOOL bRet;
-            P_OSAL_SIGNAL pSignal = NULL;
-            P_WMT_HIF_CONF pHif = NULL;
-
-            iRet = wmt_lib_set_hif(arg);
-            if (0 != iRet)
-            {
-                WMT_INFO_FUNC("wmt_lib_set_hif fail\n");
-                break;
-            }
-
-            pOp = wmt_lib_get_free_op();
-            if (!pOp) {
-                WMT_INFO_FUNC("get_free_lxop fail\n");
-                break;
-            }
-            pSignal = &pOp->signal;
-            pOp->op.opId = WMT_OPID_HIF_CONF;
-
-            pHif = wmt_lib_get_hif();
-
-            osal_memcpy(&pOp->op.au4OpData[0], pHif, sizeof(WMT_HIF_CONF));
-            pOp->op.u4InfoBit = WMT_OP_HIF_BIT;
-            pSignal->timeoutValue = 0;
-
-            bRet = wmt_lib_put_act_op(pOp);
-            WMT_DBG_FUNC("WMT_OPID_HIF_CONF result(%d) \n", bRet);
-            iRet = (MTK_WCN_BOOL_FALSE == bRet) ? -EFAULT : 0;
-        } while (0);
-
+        iRet = wmt_dev_set_stp_mode(arg);
         break;
 
     case WMT_IOCTL_FUNC_ONOFF_CTRL: /* test turn on/off func */
@@ -2694,7 +2649,7 @@ void wmt_dev_send_cmd_to_daemon(UINT32 cmd)
 
 static int WMT_init(void)
 {
-    dev_t devID = MKDEV(gWmtMajor, 0);
+    dev_t devID = 0;
     INT32 cdevErr = -1;
     INT32 ret = -1;
     WMT_INFO_FUNC("WMT Version= %s DATE=%s\n" , MTK_WMT_VERSION, MTK_WMT_DATE);
@@ -2705,11 +2660,12 @@ static int WMT_init(void)
 	
     stp_drv_init();
 
-    ret = register_chrdev_region(devID, WMT_DEV_NUM, WMT_DRIVER_NAME);
+    ret = alloc_chrdev_region(&devID, 0, WMT_DEV_NUM, WMT_DRIVER_NAME);
     if (ret) {
         WMT_ERR_FUNC("fail to register chrdev\n");
         return ret;
     }
+    gWmtMajor = MAJOR(devID);
 
     cdev_init(&gWmtCdev, &gWmtFops);
     gWmtCdev.owner = THIS_MODULE;
@@ -2721,14 +2677,14 @@ static int WMT_init(void)
     }
     WMT_INFO_FUNC("driver(major %d) installed \n", gWmtMajor);
 
-#if WMT_CREATE_NODE_DYNAMIC
-	wmt_class = class_create(THIS_MODULE,"stpwmt");
+	/* /dev/stpwmt is created by devtmpfs/udev */
+	wmt_class = class_create("stpwmt");
 	if(IS_ERR(wmt_class))
 		goto error;
 	wmt_dev = device_create(wmt_class,NULL,devID,NULL,"stpwmt");
 	if(IS_ERR(wmt_dev))
 		goto error;
-#endif
+	gWmtFwDev = wmt_dev;
 
 #if 0
     pWmtDevCtx = wmt_drv_create();
@@ -2755,6 +2711,13 @@ static int WMT_init(void)
     ret = wmt_lib_init();
     if (ret) {
         WMT_ERR_FUNC("wmt_lib_init() fails (%d) \n", ret);
+        goto error;
+    }
+
+    /* No launcher: select BTIF as the host interface here. */
+    ret = wmt_dev_set_stp_mode(STP_BTIF_FULL | (WMT_FM_COMM << 4));
+    if (ret) {
+        WMT_ERR_FUNC("host interface setup fails (%d) \n", ret);
         goto error;
     }
 #if CFG_WMT_DBG_SUPPORT
@@ -2786,11 +2749,6 @@ static int WMT_init(void)
 
 	gWmtInitDone = 1;
 	wake_up(&gWmtInitWq);
-#ifdef CONFIG_EARLYSUSPEND
-    osal_sleepable_lock_init(&g_es_lr_lock);
-    register_early_suspend(&wmt_early_suspend_handler);
-    WMT_INFO_FUNC("register_early_suspend finished\n");
-#endif
     WMT_INFO_FUNC("success \n");
     return 0;
 
@@ -2799,24 +2757,20 @@ error:
 #if CFG_WMT_DBG_SUPPORT    
     wmt_dev_dbg_remove();
 #endif
-#if WMT_CREATE_NODE_DYNAMIC
-	if(!(IS_ERR(wmt_dev)))
+	if(!IS_ERR_OR_NULL(wmt_dev))
 		device_destroy(wmt_class,devID);
-	if(!(IS_ERR(wmt_class)))
-	{
+	wmt_dev = NULL;
+	gWmtFwDev = NULL;
+	if(!IS_ERR_OR_NULL(wmt_class))
 		class_destroy(wmt_class);
-		wmt_class = NULL;
-	}
-#endif
+	wmt_class = NULL;
 
     if (cdevErr == 0) {
         cdev_del(&gWmtCdev);
     }
 
-    if (ret == 0) {
-        unregister_chrdev_region(devID, WMT_DEV_NUM);
-        gWmtMajor = -1;
-    }
+    unregister_chrdev_region(devID, WMT_DEV_NUM);
+    gWmtMajor = -1;
 
     WMT_ERR_FUNC("fail \n");
 
@@ -2826,12 +2780,6 @@ error:
 static void WMT_exit (void)
 {
     dev_t dev = MKDEV(gWmtMajor, 0);
-#ifdef CONFIG_EARLYSUSPEND
-    unregister_early_suspend(&wmt_early_suspend_handler);
-    osal_sleepable_lock_deinit(&g_es_lr_lock);
-    WMT_INFO_FUNC("unregister_early_suspend finished\n");
-#endif
-
 #if CONSYS_WMT_REG_SUSPEND_CB_ENABLE
 	platform_driver_unregister(&mtk_wmt_dev_drv);
 #endif
@@ -2849,18 +2797,17 @@ static void WMT_exit (void)
 #if CFG_WMT_PROC_FOR_AEE
 	wmt_dev_proc_for_aee_remove();
 #endif
-#if WMT_CREATE_NODE_DYNAMIC
 	if(wmt_dev)
 	{
 		device_destroy(wmt_class,dev);
 		wmt_dev = NULL;
+		gWmtFwDev = NULL;
 	}
 	if(wmt_class)
 	{
 		class_destroy(wmt_class);
 		wmt_class = NULL;
 	}
-#endif
     cdev_del(&gWmtCdev);
     unregister_chrdev_region(dev, WMT_DEV_NUM);
     gWmtMajor = -1;
