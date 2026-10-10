@@ -7,10 +7,7 @@
  */
 #include <linux/ktime.h>
 #include <linux/minmax.h>
-#include <linux/pm_runtime.h>
-#include <media/v4l2-event.h>
 #include <media/v4l2-ioctl.h>
-#include <media/v4l2-mc.h>
 #include <media/videobuf2-dma-contig.h>
 
 #include "mtk_camsys.h"
@@ -139,7 +136,7 @@ static int start_streaming(struct vb2_queue *q, unsigned int count)
 	}
 	cfg = &mtk_camsys_port_cfgs[cam->active_port];
 
-	ret = pm_runtime_resume_and_get(cam->dev);
+	ret = mtk_camsys_power_get(cam);
 	if (ret)
 		goto err_buffers;
 
@@ -169,7 +166,7 @@ static int start_streaming(struct vb2_queue *q, unsigned int count)
 err_pipe:
 	video_device_pipeline_stop(&cam->vdev);
 err_pm:
-	pm_runtime_put(cam->dev);
+	mtk_camsys_power_put(cam);
 err_buffers:
 	return_buffers(cam, VB2_BUF_STATE_QUEUED);
 	return ret;
@@ -187,7 +184,7 @@ static void stop_streaming(struct vb2_queue *q)
 	mtk_camsys_isp_stop(cam);
 	v4l2_subdev_disable_streams(&cam->csi2, MTK_CSI2_PAD_SRC, BIT_ULL(0));
 	video_device_pipeline_stop(&cam->vdev);
-	pm_runtime_put(cam->dev);
+	mtk_camsys_power_put(cam);
 
 	dev_dbg(cam->dev, "stopped after %u frames, %u dropped, %u hardware errors\n", cam->sequence, cam->drops,
 		cam->hw_errors);
@@ -323,8 +320,6 @@ static const struct v4l2_ioctl_ops ioctl_ops = {
 	.vidioc_expbuf = vb2_ioctl_expbuf,
 	.vidioc_streamon = vb2_ioctl_streamon,
 	.vidioc_streamoff = vb2_ioctl_streamoff,
-	.vidioc_subscribe_event = v4l2_ctrl_subscribe_event,
-	.vidioc_unsubscribe_event = v4l2_event_unsubscribe,
 };
 
 static const struct v4l2_file_operations video_fops = {

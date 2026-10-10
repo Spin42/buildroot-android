@@ -3,13 +3,13 @@
  * Camera power and clocks: ISP power domain, IMG clock gates, camtg mux, TG phase counter and the 24 MHz sensor
  * master clock exported as a clock provider. The order and the values follow tools/camera-probe.sh.
  *
- * The master clock is prepared by taking a runtime PM reference (domain, gates and camtg mux on) and gated by the
- * ADCLK_EN bit of the TG phase counter.
+ * The master clock is prepared by taking a power reference (domain, gates and camtg mux on) and gated by the
+ * ADCLK_EN bit of the TG phase counter. The references are counted here rather than through runtime PM so that the
+ * driver does not depend on CONFIG_PM.
  */
 #include <linux/clk-provider.h>
 #include <linux/iopoll.h>
 #include <linux/of.h>
-#include <linux/pm_runtime.h>
 
 #include "mtk_camsys.h"
 
@@ -99,9 +99,9 @@ void mtk_camsys_tg_clock_restore(struct mtk_camsys *cam)
 		tg_clock_setup(cam);
 }
 
-int mtk_camsys_pm_resume(struct device *dev)
+static int power_up(struct mtk_camsys *cam)
 {
-	struct mtk_camsys *cam = dev_get_drvdata(dev);
+	struct device *dev = cam->dev;
 	u32 cg;
 	int ret;
 
@@ -127,25 +127,43 @@ int mtk_camsys_pm_resume(struct device *dev)
 	return 0;
 }
 
-int mtk_camsys_pm_suspend(struct device *dev)
+static void power_down(struct mtk_camsys *cam)
 {
-	struct mtk_camsys *cam = dev_get_drvdata(dev);
-
 	mtk_camsys_rmw(cam->seninf, SENINF1_TG_PH_CNT, TG_PH_CNT_PCEN | TG_PH_CNT_ADCLK_EN, 0);
 	mtk_camsys_rmw(cam->topckgen, TOP_CLK_CFG_1, 0, CAMTG_PDN);
 	writel(IMG_CG_CAM_MASK, cam->imgsys + IMG_CG_SET);
 	domain_off(cam);
-	return 0;
+}
+
+int mtk_camsys_power_get(struct mtk_camsys *cam)
+{
+	int ret = 0;
+
+	mutex_lock(&cam->power_lock);
+	if (!cam->power_count)
+		ret = power_up(cam);
+	if (!ret)
+		cam->power_count++;
+	mutex_unlock(&cam->power_lock);
+	return ret;
+}
+
+void mtk_camsys_power_put(struct mtk_camsys *cam)
+{
+	mutex_lock(&cam->power_lock);
+	if (!--cam->power_count)
+		power_down(cam);
+	mutex_unlock(&cam->power_lock);
 }
 
 static int mclk_prepare(struct clk_hw *hw)
 {
-	return pm_runtime_resume_and_get(to_cam(hw)->dev);
+	return mtk_camsys_power_get(to_cam(hw));
 }
 
 static void mclk_unprepare(struct clk_hw *hw)
 {
-	pm_runtime_put_sync(to_cam(hw)->dev);
+	mtk_camsys_power_put(to_cam(hw));
 }
 
 static int mclk_enable(struct clk_hw *hw)

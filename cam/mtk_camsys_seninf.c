@@ -8,7 +8,6 @@
  */
 #include <linux/delay.h>
 #include <linux/minmax.h>
-#include <linux/pm_runtime.h>
 #include <media/v4l2-subdev.h>
 
 #include "mtk_camsys.h"
@@ -303,7 +302,7 @@ static int csi2_enable_streams(struct v4l2_subdev *sd, struct v4l2_subdev_state 
 		return PTR_ERR(remote);
 	sensor = media_entity_to_v4l2_subdev(remote->entity);
 
-	ret = pm_runtime_resume_and_get(cam->dev);
+	ret = mtk_camsys_power_get(cam);
 	if (ret)
 		return ret;
 
@@ -311,7 +310,7 @@ static int csi2_enable_streams(struct v4l2_subdev *sd, struct v4l2_subdev_state 
 	ret = v4l2_subdev_enable_streams(sensor, remote->index, BIT_ULL(0));
 	if (ret) {
 		phy_off(cam);
-		pm_runtime_put(cam->dev);
+		mtk_camsys_power_put(cam);
 		return ret;
 	}
 	seninf_route(cam, port->cfg, port->lanes);
@@ -330,16 +329,29 @@ static int csi2_disable_streams(struct v4l2_subdev *sd, struct v4l2_subdev_state
 						    BIT_ULL(0));
 	}
 	phy_off(cam);
-	pm_runtime_put(cam->dev);
+	mtk_camsys_power_put(cam);
 	return 0;
+}
+
+/* Record the sink pad that feeds the ISP and make the source format follow it. */
+void mtk_camsys_csi2_set_active(struct mtk_camsys *cam, int port)
+{
+	struct v4l2_subdev_state *state;
+
+	cam->active_port = port;
+
+	state = v4l2_subdev_lock_and_get_active_state(&cam->csi2);
+	if (state) {
+		csi2_fill_format(v4l2_subdev_state_get_format(state, MTK_CSI2_PAD_SRC),
+				 csi2_pad_cfg(cam, MTK_CSI2_PAD_SRC));
+		v4l2_subdev_unlock_state(state);
+	}
 }
 
 static int csi2_link_setup(struct media_entity *entity, const struct media_pad *local,
 			   const struct media_pad *remote, u32 flags)
 {
-	struct v4l2_subdev *sd = media_entity_to_v4l2_subdev(entity);
-	struct mtk_camsys *cam = sd_to_cam(sd);
-	struct v4l2_subdev_state *state;
+	struct mtk_camsys *cam = sd_to_cam(media_entity_to_v4l2_subdev(entity));
 
 	if (!(local->flags & MEDIA_PAD_FL_SINK))
 		return 0;
@@ -347,16 +359,9 @@ static int csi2_link_setup(struct media_entity *entity, const struct media_pad *
 	if (flags & MEDIA_LNK_FL_ENABLED) {
 		if (cam->active_port >= 0 && cam->active_port != local->index)
 			return -EBUSY;
-		cam->active_port = local->index;
+		mtk_camsys_csi2_set_active(cam, local->index);
 	} else if (cam->active_port == local->index) {
-		cam->active_port = -1;
-	}
-
-	state = v4l2_subdev_lock_and_get_active_state(sd);
-	if (state) {
-		csi2_fill_format(v4l2_subdev_state_get_format(state, MTK_CSI2_PAD_SRC),
-				 csi2_pad_cfg(cam, MTK_CSI2_PAD_SRC));
-		v4l2_subdev_unlock_state(state);
+		mtk_camsys_csi2_set_active(cam, -1);
 	}
 	return 0;
 }

@@ -68,6 +68,8 @@ struct mtk_camsys {
 
 	/* Camera power and the sensor master clock; tg_lock serialises the TG phase counter register. */
 	spinlock_t tg_lock;
+	struct mutex power_lock;
+	unsigned int power_count;
 	bool domain_ours;
 	bool mclk_on;
 	struct clk_hw mclk_hw;
@@ -111,13 +113,14 @@ static inline void mtk_camsys_rmw(void __iomem *base, u32 off, u32 clr, u32 set)
 
 /* mtk_camsys_clk.c: power, clocks, sensor master clock */
 int mtk_camsys_clk_register(struct mtk_camsys *cam);
-int mtk_camsys_pm_resume(struct device *dev);
-int mtk_camsys_pm_suspend(struct device *dev);
+int mtk_camsys_power_get(struct mtk_camsys *cam);
+void mtk_camsys_power_put(struct mtk_camsys *cam);
 void mtk_camsys_tg_clock_restore(struct mtk_camsys *cam);
 
 /* mtk_camsys_seninf.c: CSI-2 receiver subdev and MIPI RX programming */
 int mtk_camsys_csi2_register(struct mtk_camsys *cam);
 void mtk_camsys_csi2_unregister(struct mtk_camsys *cam);
+void mtk_camsys_csi2_set_active(struct mtk_camsys *cam, int port);
 
 /* mtk_camsys_isp.c: ISP pass 1 and the IMGO DMA */
 void mtk_camsys_isp_start(struct mtk_camsys *cam, const struct mtk_camsys_port_cfg *cfg, u32 bytesperline,
