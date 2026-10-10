@@ -1,3 +1,6 @@
 # MT8127 camera capture pipeline
 obj-m += mtk_cam_proto.o
 mtk_cam_proto-y := cam_proto.o cam_power.o cam_sensor.o cam_seninf.o cam_isp.o
+
+obj-m += mtk_camsys.o
+mtk_camsys-y := mtk_camsys_core.o mtk_camsys_clk.o mtk_camsys_seninf.o mtk_camsys_isp.o mtk_camsys_video.o

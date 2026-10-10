@@ -8,7 +8,10 @@ software ISP) handles stills and plain V4L2 applications handle video.
 Layout:
 
 - `docs/` register-level documents recovered from the stock kernel and from the stock userspace camera library
-- later: kernel drivers (sensor interface and capture, sensor drivers) and the device-tree changes
+- `cam/`: `mtk_camsys` (V4L2 + media-controller capture driver, `docs/v4l2-driver.md`) and `mtk_cam_proto` (debugfs
+  prototype, `docs/cam-proto.md`)
+- `sensors/`: SP2508 and SP0A20 sensor subdev drivers (`docs/sensors.md`)
+- `docs/bindings/`: device-tree bindings
 
 Starting points (local): the stock kernel source in `~/Projects/lenovo_tab3_7/vendor-kernel/szazs89-tb3`, the stock
 `libcamdrv.so` in `~/Projects/lenovo_tab3_7/dump/bootloader_analysis/system_extract/lib/`, the hardware notes in

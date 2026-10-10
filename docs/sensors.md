@@ -21,8 +21,8 @@ Bindings: `bindings/superpix,sp2508.yaml`, `bindings/superpix,sp0a20.yaml` (the 
 |---|---|---|---|
 | `compatible` | `superpix,sp2508` | `superpix,sp0a20` | |
 | `reg` | `0x3c` | `0x21` | I2C0 |
-| `clocks`, `clock-names = "xclk"` | optional | optional | 24 MHz MCLK; no provider yet |
-| `clock-frequency` | required, 24000000 | required, 24000000 | checked against the clock rate when a clock is given |
+| `clocks`, `clock-names = "xclk"` | required | required | 24 MHz MCLK from the camsys node (`docs/v4l2-driver.md`) |
+| `clock-frequency` | optional, 24000000 | optional, 24000000 | the clock rate is used when absent |
 | `avdd-supply` | `vcama` (2.8 V) | `vcama` | enabled first |
 | `dovdd-supply` | `vcamio` (1.8 V) | `vcamio` | enabled 5 ms after `avdd` |
 | `reset-gpios` | required, active low | optional, active low | logical 1 = reset asserted |
@@ -31,8 +31,8 @@ Bindings: `bindings/superpix,sp2508.yaml`, `bindings/superpix,sp0a20.yaml` (the 
 | `port/endpoint` | `data-lanes = <1>`, `link-frequencies = 300000000` | `data-lanes = <1>`, `link-frequencies = 104000000` | one lane only |
 
 The regulators and `reset-gpios`/`powerdown-gpios` polarity flags are what make the GPIO levels right: the drivers
-only use logical values. If the MCLK is gated by SoC registers (stock `ISP_MCLK1_EN`), whoever owns the CSI receiver
-must switch it on before the sensor is powered; the drivers only enable a clock when `clocks` is present.
+only use logical values. The MCLK is gated by SoC registers (stock `ISP_MCLK1_EN`) owned by the camsys driver, which
+exports it as a clock; the sensor drivers enable it as `xclk` in their power-on sequence.
 
 ### Rear sensor (SP2508) on the MT8127 board
 
@@ -41,7 +41,8 @@ must switch it on before the sensor is powered; the drivers only enable a clock 
 	camera@3c {
 		compatible = "superpix,sp2508";
 		reg = <0x3c>;
-		clock-frequency = <24000000>;
+		clocks = <&camsys>;
+		clock-names = "xclk";
 		avdd-supply = <&mt6323_vcama_reg>;
 		dovdd-supply = <&mt6323_vcamio_reg>;
 		reset-gpios = <&pio 53 GPIO_ACTIVE_LOW>;
@@ -51,7 +52,7 @@ must switch it on before the sensor is powered; the drivers only enable a clock 
 
 		port {
 			sp2508_ep: endpoint {
-				remote-endpoint = <&seninf_csi0_ep>;
+				remote-endpoint = <&camsys_csi0_ep>;
 				data-lanes = <1>;
 				link-frequencies = /bits/ 64 <300000000>;
 			};
@@ -67,7 +68,8 @@ must switch it on before the sensor is powered; the drivers only enable a clock 
 	camera@21 {
 		compatible = "superpix,sp0a20";
 		reg = <0x21>;
-		clock-frequency = <24000000>;
+		clocks = <&camsys>;
+		clock-names = "xclk";
 		avdd-supply = <&mt6323_vcama_reg>;
 		dovdd-supply = <&mt6323_vcamio_reg>;
 		reset-gpios = <&pio 55 GPIO_ACTIVE_LOW>;
@@ -77,7 +79,7 @@ must switch it on before the sensor is powered; the drivers only enable a clock 
 
 		port {
 			sp0a20_ep: endpoint {
-				remote-endpoint = <&seninf_csi1_ep>;
+				remote-endpoint = <&camsys_csi1_ep>;
 				data-lanes = <1>;
 				link-frequencies = /bits/ 64 <104000000>;
 			};
@@ -86,8 +88,8 @@ must switch it on before the sensor is powered; the drivers only enable a clock 
 };
 ```
 
-`seninf_csi0_ep`/`seninf_csi1_ep` are placeholders for the endpoints of the capture pipeline (main = CSI0, sub = CSI1
-per `seninf-mipi.md`). Both sensors share the MCLK and the I2C bus; the driver of the inactive one is not powered.
+`camsys_csi0_ep`/`camsys_csi1_ep` are the endpoints of the `ports` node of the camsys device (rear = CSI0 = port 0,
+front = CSI1 = port 1, see `v4l2-driver.md`). Both sensors share the MCLK and the I2C bus; the driver of the inactive one is not powered.
 
 ## Power sequences (as implemented)
 
