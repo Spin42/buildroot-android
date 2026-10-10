@@ -810,21 +810,10 @@ kalFirmwareOpen (
 
     /* save uid and gid used for filesystem access.
      * set user and group to 0(root) */
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,29))
-    orgfsuid = current->fsuid;
-    orgfsgid = current->fsgid;
-    current->fsuid = current->fsgid = 0;
-#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 35))
     struct cred *cred = (struct cred *) get_current_cred();
     orgfsuid = cred->fsuid;
     orgfsgid = cred->fsgid;
     cred->fsuid = cred->fsgid = 0;
-#else
-    struct cred *cred = get_task_cred(current);
-    orgfsuid = cred->fsuid;
-    orgfsgid = cred->fsgid;
-    cred->fsuid = cred->fsgid = 0;
-#endif
 
     ASSERT(prGlueInfo);
 
@@ -884,16 +873,9 @@ kalFirmwareOpen (
 error_open:
     /* restore */
     set_fs(orgfs);
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,29))
-    current->fsuid = orgfsuid;
-    current->fsgid = orgfsgid;
-#else
     cred->fsuid = orgfsuid;
     cred->fsgid = orgfsgid;
-    #if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 35))
     put_cred(cred);
-    #endif
-#endif
     return WLAN_STATUS_FAILURE;
 }
 
@@ -923,23 +905,12 @@ kalFirmwareClose (
 
         /* restore */
         set_fs(orgfs);
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,29))
-        current->fsuid = orgfsuid;
-        current->fsgid = orgfsgid;
-#else
         {
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 35))
             struct cred *cred = (struct cred *) get_current_cred();
-#else
-            struct cred *cred = get_task_cred(current);
-#endif
             cred->fsuid = orgfsuid;
             cred->fsgid = orgfsgid;
-    #if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 35))
             put_cred(cred);
-    #endif
         }
-#endif
         filp = NULL;
     }
 
@@ -1008,11 +979,7 @@ kalFirmwareSize (
     ASSERT(prGlueInfo);
     ASSERT(pu4Size);
 
-#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 12)
     *pu4Size = filp->f_path.dentry->d_inode->i_size;
-#else
-    *pu4Size = filp->f_dentry->d_inode->i_size;
-#endif
 
     return WLAN_STATUS_SUCCESS;
 }
@@ -1317,11 +1284,7 @@ kalQueryTxChksumOffloadParam (
     ASSERT(pvPacket);
     ASSERT(pucFlag);
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 19)
-    if (skb->ip_summed == CHECKSUM_HW)
-#else
     if (skb->ip_summed == CHECKSUM_PARTIAL)
-#endif
     {
 
 #if DBG
@@ -1813,16 +1776,12 @@ kalRxIndicatePkts (
     DBGLOG(BOW, TRACE, ("\n"));
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 0)
         if(!in_interrupt()){
             netif_rx_ni(prSkb); /* only in non-interrupt context */
         }
         else {
             netif_rx(prSkb);
         }
-#else
-        netif_rx(prSkb);
-#endif
 
         wlanReturnPacket(prGlueInfo->prAdapter, NULL);
     }
@@ -1906,16 +1865,16 @@ kalIndicateStatusAndComplete (
             /* retrieve channel */
             ucChannelNum = wlanGetChannelNumberByNetwork(prGlueInfo->prAdapter, NETWORK_TYPE_AIS_INDEX);
             if(ucChannelNum <= 14) {
-                prChannel = ieee80211_get_channel(priv_to_wiphy(prGlueInfo), ieee80211_channel_to_frequency(ucChannelNum, IEEE80211_BAND_2GHZ));
+                prChannel = ieee80211_get_channel(priv_to_wiphy(prGlueInfo), ieee80211_channel_to_frequency(ucChannelNum, NL80211_BAND_2GHZ));
             }
             else {
-                prChannel = ieee80211_get_channel(priv_to_wiphy(prGlueInfo), ieee80211_channel_to_frequency(ucChannelNum, IEEE80211_BAND_5GHZ));
+                prChannel = ieee80211_get_channel(priv_to_wiphy(prGlueInfo), ieee80211_channel_to_frequency(ucChannelNum, NL80211_BAND_5GHZ));
             }
 
-            /* ensure BSS exists */
+            /* ensure BSS exists; cfg80211 takes over the reference below */
             bss = cfg80211_get_bss(priv_to_wiphy(prGlueInfo), prChannel, arBssid,
-                    ssid.aucSsid, ssid.u4SsidLen, 
-                    WLAN_CAPABILITY_ESS, WLAN_CAPABILITY_ESS);
+                    ssid.aucSsid, ssid.u4SsidLen,
+                    IEEE80211_BSS_TYPE_ESS, IEEE80211_PRIVACY_ANY);
 
             if(bss == NULL) {
                 /* create BSS on-the-fly */
@@ -1924,6 +1883,7 @@ kalIndicateStatusAndComplete (
                 if(prBssDesc != NULL) {
                     bss = cfg80211_inform_bss(priv_to_wiphy(prGlueInfo),
                         prChannel,
+                        CFG80211_BSS_FTYPE_UNKNOWN,
                         arBssid,
                         0,                                      /* TSF */
                         WLAN_CAPABILITY_ESS,
@@ -1936,26 +1896,34 @@ kalIndicateStatusAndComplete (
             }
 
             /* CFG80211 Indication */
-            if(eStatus == WLAN_STATUS_MEDIA_CONNECT 
-                    && prGlueInfo->prDevHandler->ieee80211_ptr->sme_state == CFG80211_SME_CONNECTING) {
-                cfg80211_connect_result(prGlueInfo->prDevHandler,
+            if(eStatus == WLAN_STATUS_MEDIA_CONNECT
+                    && !prGlueInfo->prDevHandler->ieee80211_ptr->connected) {
+                cfg80211_connect_bss(prGlueInfo->prDevHandler,
                         arBssid,
-                        prGlueInfo->aucReqIe,
-                        prGlueInfo->u4ReqIeLength,
-                        prGlueInfo->aucRspIe,
-                        prGlueInfo->u4RspIeLength,
-                        WLAN_STATUS_SUCCESS,
-                        GFP_KERNEL);
-            }
-            else if(eStatus == WLAN_STATUS_ROAM_OUT_FIND_BEST
-                    && prGlueInfo->prDevHandler->ieee80211_ptr->sme_state == CFG80211_SME_CONNECTED) {
-                cfg80211_roamed_bss(prGlueInfo->prDevHandler, 
                         bss,
                         prGlueInfo->aucReqIe,
                         prGlueInfo->u4ReqIeLength,
                         prGlueInfo->aucRspIe,
                         prGlueInfo->u4RspIeLength,
-                        GFP_KERNEL);
+                        WLAN_STATUS_SUCCESS,
+                        GFP_KERNEL,
+                        NL80211_TIMEOUT_UNSPECIFIED);
+            }
+            else if(eStatus == WLAN_STATUS_ROAM_OUT_FIND_BEST
+                    && prGlueInfo->prDevHandler->ieee80211_ptr->connected
+                    && bss != NULL) {
+                struct cfg80211_roam_info rRoamInfo = {
+                    .req_ie = prGlueInfo->aucReqIe,
+                    .req_ie_len = prGlueInfo->u4ReqIeLength,
+                    .resp_ie = prGlueInfo->aucRspIe,
+                    .resp_ie_len = prGlueInfo->u4RspIeLength,
+                };
+
+                rRoamInfo.links[0].bss = bss;
+                cfg80211_roamed(prGlueInfo->prDevHandler, &rRoamInfo, GFP_KERNEL);
+            }
+            else if(bss != NULL) {
+                cfg80211_put_bss(priv_to_wiphy(prGlueInfo), bss);
             }
         }
 
@@ -1973,18 +1941,18 @@ kalIndicateStatusAndComplete (
 #if 1   /* CONSOLE_MESSAGE */
          DBGLOG(INIT, INFO, ("[wifi] %s netif_carrier_off %d\n",
 				prGlueInfo->prDevHandler->name,
-				prGlueInfo->prDevHandler->ieee80211_ptr->sme_state));
+				prGlueInfo->prDevHandler->ieee80211_ptr->connected));
 #endif
 
         netif_carrier_off(prGlueInfo->prDevHandler);
 
         if(prGlueInfo->fgIsRegistered == TRUE
-                && prGlueInfo->prDevHandler->ieee80211_ptr->sme_state == CFG80211_SME_CONNECTED) {
+                && prGlueInfo->prDevHandler->ieee80211_ptr->connected) {
             P_WIFI_VAR_T prWifiVar = &prGlueInfo->prAdapter->rWifiVar;
 			UINT_16 u2DeauthReason = prWifiVar->arBssInfo[NETWORK_TYPE_AIS_INDEX].u2DeauthReason;
             /* CFG80211 Indication */
 			DBGLOG(INIT, INFO, ("[wifi] %s cfg80211_disconnected\n", prGlueInfo->prDevHandler->name));
-            cfg80211_disconnected(prGlueInfo->prDevHandler, u2DeauthReason, NULL, 0, GFP_KERNEL);
+            cfg80211_disconnected(prGlueInfo->prDevHandler, u2DeauthReason, NULL, 0, FALSE, GFP_KERNEL);
         }
 
         prGlueInfo->eParamMediaStateIndicated = PARAM_MEDIA_STATE_DISCONNECTED;
@@ -2007,12 +1975,14 @@ kalIndicateStatusAndComplete (
 				prScanRequest, ScanCnt, ScanDoneFailCnt));
 
         if(prScanRequest != NULL) {
-            cfg80211_scan_done(prScanRequest, FALSE);
+            struct cfg80211_scan_info rScanInfo = { .aborted = false };
+
+            cfg80211_scan_done(prScanRequest, &rScanInfo);
         }
         break;
         case WLAN_STATUS_CONNECT_INDICATION:
             /* indicate AIS Jion fail  event */
-            if(prGlueInfo->prDevHandler->ieee80211_ptr->sme_state == CFG80211_SME_CONNECTING) {
+            if(!prGlueInfo->prDevHandler->ieee80211_ptr->connected) {
             cfg80211_connect_result(prGlueInfo->prDevHandler,
                     prGlueInfo->prAdapter->rWifiVar.rAisFsmInfo.prTargetBssDesc->aucBSSID,
                     prGlueInfo->aucReqIe,
@@ -2221,9 +2191,7 @@ kalSendCompleteAndAwakeQueue (
     ASSERT(prGlueInfo->i4TxPendingFrameNum);
 
     prSkb = (struct sk_buff *) pvPacket;
-#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 26)
     u2QueueIdx = skb_get_queue_mapping(prSkb);
-#endif
     ASSERT(u2QueueIdx < CFG_MAX_TXQ_NUM);
 
     if (GLUE_GET_PKT_IS_PAL(prSkb)) {
@@ -2248,7 +2216,6 @@ kalSendCompleteAndAwakeQueue (
     ASSERT(prDev);
 
     if(fgIsValidDevice == TRUE) {
-#if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 26)
         if (netif_subqueue_stopped(prDev, prSkb) &&
                 prGlueInfo->ai4TxPendingFrameNumPerQueue[ucNetworkType][u2QueueIdx] <= CFG_TX_START_NETIF_PER_QUEUE_THRESHOLD) {
             netif_wake_subqueue(prDev, u2QueueIdx);
@@ -2257,15 +2224,6 @@ kalSendCompleteAndAwakeQueue (
             prGlueInfo->rHifInfo.HifLoopbkFlg &= ~0x01;
 #endif /* CONF_HIF_LOOPBACK_AUTO */
         }
-#else
-        if (prGlueInfo->i4TxPendingFrameNum < CFG_TX_STOP_NETIF_QUEUE_THRESHOLD) {
-            netif_wake_queue(prGlueInfo->prDevHandler);
-
-#if (CONF_HIF_LOOPBACK_AUTO == 1)
-            prGlueInfo->rHifInfo.HifLoopbkFlg &= ~0x01;
-#endif /* CONF_HIF_LOOPBACK_AUTO */
-        }
-#endif
     }
 
 
@@ -4304,10 +4262,10 @@ kalIndicateBssInfo (
 
     /* search through channel entries */
     if(ucChannelNum <= 14) {
-        prChannel = ieee80211_get_channel(wiphy, ieee80211_channel_to_frequency(ucChannelNum, IEEE80211_BAND_2GHZ));
+        prChannel = ieee80211_get_channel(wiphy, ieee80211_channel_to_frequency(ucChannelNum, NL80211_BAND_2GHZ));
     }
     else {
-        prChannel = ieee80211_get_channel(wiphy, ieee80211_channel_to_frequency(ucChannelNum, IEEE80211_BAND_5GHZ));
+        prChannel = ieee80211_get_channel(wiphy, ieee80211_channel_to_frequency(ucChannelNum, NL80211_BAND_5GHZ));
     }
 
     if(prChannel != NULL && prGlueInfo->prScanRequest != NULL) {
@@ -4331,11 +4289,7 @@ kalIndicateBssInfo (
             DBGLOG(SCN, TRACE, ("cfg80211_inform_bss_frame() returned with NULL\n"));
         }
         else {
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 10, 0))
             cfg80211_put_bss(wiphy, bss);
-#else
-            cfg80211_put_bss(bss);
-#endif
 			DBGLOG(SCN, TRACE, ("iok\n"));
         }
     }
@@ -4366,42 +4320,17 @@ kalReadyOnChannel (
     )
 {
     struct ieee80211_channel *prChannel = NULL;
-    enum nl80211_channel_type rChannelType;
-    
     //ucChannelNum = wlanGetChannelNumberByNetwork(prGlueInfo->prAdapter, NETWORK_TYPE_AIS_INDEX);
 
     if(prGlueInfo->fgIsRegistered == TRUE) {
         if(ucChannelNum <= 14) {
-            prChannel = ieee80211_get_channel(priv_to_wiphy(prGlueInfo), ieee80211_channel_to_frequency(ucChannelNum, IEEE80211_BAND_2GHZ));
+            prChannel = ieee80211_get_channel(priv_to_wiphy(prGlueInfo), ieee80211_channel_to_frequency(ucChannelNum, NL80211_BAND_2GHZ));
         }
         else {
-            prChannel = ieee80211_get_channel(priv_to_wiphy(prGlueInfo), ieee80211_channel_to_frequency(ucChannelNum, IEEE80211_BAND_5GHZ));
+            prChannel = ieee80211_get_channel(priv_to_wiphy(prGlueInfo), ieee80211_channel_to_frequency(ucChannelNum, NL80211_BAND_5GHZ));
         }
 
-        switch(eSco) {
-        case CHNL_EXT_SCN:
-            rChannelType = NL80211_CHAN_NO_HT;
-            break;
-
-        case CHNL_EXT_SCA:
-            rChannelType = NL80211_CHAN_HT40MINUS;
-            break;
-
-        case CHNL_EXT_SCB:
-            rChannelType = NL80211_CHAN_HT40PLUS;
-            break;
-
-        case CHNL_EXT_RES:
-        default:
-            rChannelType = NL80211_CHAN_HT20;
-            break;
-        }
-
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 10, 0))
         cfg80211_ready_on_channel(prGlueInfo->prDevHandler->ieee80211_ptr, u8Cookie, prChannel, u4DurationMs, GFP_KERNEL);
-#else
-        cfg80211_ready_on_channel(prGlueInfo->prDevHandler, u8Cookie, prChannel, rChannelType, u4DurationMs, GFP_KERNEL);
-#endif
     }
 
     return;
@@ -4429,42 +4358,17 @@ kalRemainOnChannelExpired (
     )
 {
     struct ieee80211_channel *prChannel = NULL;
-    enum nl80211_channel_type rChannelType;
-    
     ucChannelNum = wlanGetChannelNumberByNetwork(prGlueInfo->prAdapter, NETWORK_TYPE_AIS_INDEX);
 
     if(prGlueInfo->fgIsRegistered == TRUE) {
         if(ucChannelNum <= 14) {
-            prChannel = ieee80211_get_channel(priv_to_wiphy(prGlueInfo), ieee80211_channel_to_frequency(ucChannelNum, IEEE80211_BAND_2GHZ));
+            prChannel = ieee80211_get_channel(priv_to_wiphy(prGlueInfo), ieee80211_channel_to_frequency(ucChannelNum, NL80211_BAND_2GHZ));
         }
         else {
-            prChannel = ieee80211_get_channel(priv_to_wiphy(prGlueInfo), ieee80211_channel_to_frequency(ucChannelNum, IEEE80211_BAND_5GHZ));
+            prChannel = ieee80211_get_channel(priv_to_wiphy(prGlueInfo), ieee80211_channel_to_frequency(ucChannelNum, NL80211_BAND_5GHZ));
         }
 
-        switch(eSco) {
-        case CHNL_EXT_SCN:
-            rChannelType = NL80211_CHAN_NO_HT;
-            break;
-
-        case CHNL_EXT_SCA:
-            rChannelType = NL80211_CHAN_HT40MINUS;
-            break;
-
-        case CHNL_EXT_SCB:
-            rChannelType = NL80211_CHAN_HT40PLUS;
-            break;
-
-        case CHNL_EXT_RES:
-        default:
-            rChannelType = NL80211_CHAN_HT20;
-            break;
-        }
-
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 10, 0))
         cfg80211_remain_on_channel_expired(prGlueInfo->prDevHandler->ieee80211_ptr, u8Cookie, prChannel, GFP_KERNEL);
-#else
-        cfg80211_remain_on_channel_expired(prGlueInfo->prDevHandler, u8Cookie, prChannel, rChannelType, GFP_KERNEL);
-#endif
     }
 
     return;
@@ -4502,21 +4406,12 @@ kalIndicateMgmtTxStatus (
             break;
         }
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 10, 0))
         cfg80211_mgmt_tx_status(prGlueInfo->prDevHandler->ieee80211_ptr,
                         u8Cookie,
                         pucFrameBuf,
                         u4FrameLen,
                         fgIsAck,
                         GFP_KERNEL);
-#else
-        cfg80211_mgmt_tx_status(prGlueInfo->prDevHandler,
-                        u8Cookie,
-                        pucFrameBuf,
-                        u4FrameLen,
-                        fgIsAck,
-                        GFP_KERNEL);
-#endif
 
     } while (FALSE);
 
@@ -4565,56 +4460,17 @@ kalIndicateRxMgmtFrame (
 #endif
         i4Freq = nicChannelNum2Freq(ucChnlNum) / 1000;
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 10, 0)
         cfg80211_rx_mgmt(prGlueInfo->prDevHandler->ieee80211_ptr, //struct net_device * dev,
                             i4Freq,
                             RCPI_TO_dBm(prSwRfb->prHifRxHdr->ucRcpi),
                             prSwRfb->pvHeader,
                             prSwRfb->u2PacketLen,
-                            GFP_KERNEL);
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 2, 0)
-        cfg80211_rx_mgmt(prGlueInfo->prDevHandler, //struct net_device * dev,
-                            i4Freq,
-                            RCPI_TO_dBm(prSwRfb->prHifRxHdr->ucRcpi),
-                            prSwRfb->pvHeader,
-                            prSwRfb->u2PacketLen,
-                            GFP_KERNEL);
-#else
-        cfg80211_rx_mgmt(prGlueInfo->prDevHandler, //struct net_device * dev,
-                            i4Freq,
-                            prSwRfb->pvHeader,
-                            prSwRfb->u2PacketLen,
-                            GFP_KERNEL);
-#endif
+                            0);
 
     } while (FALSE);
 
 } /* kalIndicateRxMgmtFrame */
 
-#if CFG_SUPPORT_AGPS_ASSIST
-BOOLEAN kalIndicateAgpsNotify(P_ADAPTER_T prAdapter, UINT_8 cmd, PUINT_8 data, UINT_16 dataLen){
-	P_GLUE_INFO_T prGlueInfo = prAdapter->prGlueInfo;
-	
-	struct sk_buff *skb = cfg80211_testmode_alloc_event_skb(priv_to_wiphy(prGlueInfo),
-																dataLen, GFP_KERNEL);
-	//DBGLOG(CCX, INFO, ("WLAN_STATUS_AGPS_NOTIFY, cmd=%d\n", cmd));
-	if (unlikely(nla_put(skb, MTK_ATTR_AGPS_CMD, sizeof(cmd), &cmd) < 0))
-		goto nla_put_failure;
-	if (dataLen > 0 && data && unlikely(nla_put(skb, MTK_ATTR_AGPS_DATA, dataLen, data) < 0))
-    	goto nla_put_failure;
-	if (unlikely(nla_put(skb, MTK_ATTR_AGPS_IFINDEX, sizeof(UINT_32), &prGlueInfo->prDevHandler->ifindex) < 0))
-    	goto nla_put_failure;
-	/* currently, the ifname maybe wlan0, p2p0, so the maximum name length will be 5 bytes */
-	if (unlikely(nla_put(skb, MTK_ATTR_AGPS_IFNAME, 5, prGlueInfo->prDevHandler->name) < 0))
-    	goto nla_put_failure;
-	cfg80211_testmode_event(skb, GFP_KERNEL);
-	return TRUE;
-	
-nla_put_failure:
-	kfree_skb(skb);
-	return FALSE;
-}
-#endif
 
 #if (CFG_SUPPORT_MET_PROFILING == 1)
 #define PROC_MET_PROF_CTRL                 "met_ctrl"
