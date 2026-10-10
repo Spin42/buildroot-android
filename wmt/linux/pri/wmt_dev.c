@@ -2890,6 +2890,10 @@ EXPORT_SYMBOL(mtk_wcn_soc_common_drv_exit);
 module_init(WMT_init);
 module_exit(WMT_exit);
 #endif
+module_param_named(dbg_level, gWmtDbgLvl, uint, 0644);
+MODULE_PARM_DESC(dbg_level, "WMT log level: 0 error, 1 warning, 2 info, 3 debug, 4 loud");
+module_param_named(stp_dbg_level, gStpDbgLvl, uint, 0644);
+MODULE_PARM_DESC(stp_dbg_level, "STP log level: 0 error, 1 warning, 2 info, 3 debug, 4 loud");
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("MediaTek Inc WCN");
 MODULE_DESCRIPTION("MTK WCN combo driver for WMT function");
