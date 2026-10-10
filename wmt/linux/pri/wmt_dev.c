@@ -1795,43 +1795,91 @@ INT32 wmt_dev_patch_put(osal_firmware **ppPatch)
 
 
 /*
- * Kernel-side replacement for the launcher's "srh_patch" answer: pick the ROM
- * patch for the chip hardware version and publish it as a one-entry patch
- * list (the same data WMT_IOCTL_SET_PATCH_NUM/INFO deliver).
- *
- *   hw version 0x8A00 (E1) -> ROMv2_patch_1_0_hdr.bin
- *   hw version 0x8A01 (E2) -> ROMv2_patch_1_1_hdr.bin
- *
- * The patch is loaded as a whole; the "partial patch" address bytes carry the
- * all-ones value of the command template.
+ * ROM patches are the files ROMv2_patch_1_<n>_hdr.bin. Every file whose firmware version (u16 at
+ * offset 22 of the header) matches the ROM version of the chip is one part of the patch; the four
+ * bytes at offset 24 of the header give the part's download sequence (low nibble of the first
+ * byte) and the total number of parts (high nibble), and are also the address the part is
+ * downloaded to. This is what the stock userspace launcher passed to the driver.
  */
 #define WMT_PATCH_NAME_FMT "ROMv2_patch_1_%u_hdr.bin"
+#define WMT_PATCH_MAX_FILES 8
+#define WMT_PATCH_HDR_FWVER_OFFSET 22
+#define WMT_PATCH_HDR_INFO_OFFSET 24
+#define WMT_PATCH_HDR_SIZE 28
 
 INT32 wmt_dev_patch_search(UINT32 hwVer)
 {
     P_WMT_PATCH_INFO pInfo;
+    WMT_PATCH_INFO part[WMT_PATCH_MAX_FILES] = {};
+    UINT32 romVer = hwVer & 0xFF00;
+    UINT32 total = 0;
+    UINT32 found = 0;
+    UINT32 n;
 
-    if ((hwVer & 0xFF00) != 0x8A00) {
+    if (romVer != 0x8A00) {
         WMT_ERR_FUNC("no patch for hw version 0x%x\n", hwVer);
         return -1;
     }
 
+    for (n = 0; n < WMT_PATCH_MAX_FILES; n++) {
+        const struct firmware *fw;
+        const UINT8 *hdr;
+        UINT32 seq;
+        char name[sizeof(part[0].patchName)];
+
+        snprintf(name, sizeof(name), WMT_PATCH_NAME_FMT, n);
+        if (request_firmware_direct(&fw, name, gWmtFwDev))
+            continue;
+
+        hdr = fw->data;
+        if (fw->size < WMT_PATCH_HDR_SIZE ||
+            (hdr[WMT_PATCH_HDR_FWVER_OFFSET] | (hdr[WMT_PATCH_HDR_FWVER_OFFSET + 1] << 8)) != romVer) {
+            release_firmware(fw);
+            continue;
+        }
+
+        seq = hdr[WMT_PATCH_HDR_INFO_OFFSET] & 0x0F;
+        total = hdr[WMT_PATCH_HDR_INFO_OFFSET] >> 4;
+        if (seq < 1 || seq > WMT_PATCH_MAX_FILES) {
+            WMT_ERR_FUNC("%s: invalid download sequence %u\n", name, seq);
+            release_firmware(fw);
+            continue;
+        }
+
+        part[seq - 1].dowloadSeq = seq;
+        osal_memcpy(part[seq - 1].addRess, hdr + WMT_PATCH_HDR_INFO_OFFSET, sizeof(part[0].addRess));
+        osal_memcpy(part[seq - 1].patchName, name, sizeof(name));
+        WMT_INFO_FUNC("patch part %u of %u: %s, address 0x%02x,0x%02x,0x%02x,0x%02x\n", seq, total, name,
+                      hdr[WMT_PATCH_HDR_INFO_OFFSET], hdr[WMT_PATCH_HDR_INFO_OFFSET + 1],
+                      hdr[WMT_PATCH_HDR_INFO_OFFSET + 2], hdr[WMT_PATCH_HDR_INFO_OFFSET + 3]);
+        found++;
+        release_firmware(fw);
+    }
+
+    if (!found || found != total) {
+        WMT_ERR_FUNC("found %u of %u patch parts\n", found, total);
+        return -1;
+    }
+
     wmt_dev_patch_info_free();
-    pInfo = kzalloc(sizeof(WMT_PATCH_INFO), GFP_KERNEL);
+    pInfo = kcalloc(total, sizeof(WMT_PATCH_INFO), GFP_KERNEL);
     if (!pInfo) {
         WMT_ERR_FUNC("allocate memory fail!\n");
         return -2;
     }
-
-    pInfo->dowloadSeq = 1;
-    osal_memset(pInfo->addRess, 0xFF, sizeof(pInfo->addRess));
-    snprintf(pInfo->patchName, sizeof(pInfo->patchName), WMT_PATCH_NAME_FMT, hwVer & 0xFF);
+    for (n = 0; n < total; n++) {
+        if (part[n].dowloadSeq != n + 1) {
+            WMT_ERR_FUNC("patch part %u is missing\n", n + 1);
+            kfree(pInfo);
+            return -1;
+        }
+        pInfo[n] = part[n];
+    }
 
     pPatchInfo = pInfo;
-    pAtchNum = 1;
+    pAtchNum = total;
     wmt_lib_set_patch_num(pAtchNum);
     wmt_lib_set_patch_info(pPatchInfo);
-    WMT_INFO_FUNC("patch for hw version 0x%x: %s\n", hwVer, pInfo->patchName);
     return 0;
 }
 
