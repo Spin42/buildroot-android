@@ -10,20 +10,16 @@
 #include <linux/list.h>
 #include <linux/dma-mapping.h>
 #include <linux/vmalloc.h>
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,9,0))
 #include <linux/sched.h>
 #include <linux/sched/rt.h>
-#else
-#include <linux/sched.h>
-#endif
 #include <linux/kthread.h>
 #include <linux/workqueue.h>
 #include <linux/interrupt.h>
 #include <linux/fs.h>
 #include <linux/uaccess.h>
 #include <linux/string.h>
-#include <linux/time.h>		/* gettimeofday */
-#include <asm-generic/bug.h>
+#include <linux/timekeeping.h>
+#include <linux/bug.h>
 
 #include "hal_btif_pub.h"
 #include "hal_btif_dma_pub.h"
@@ -158,7 +154,7 @@ typedef void (*MTK_BTIF_RX_NOTIFY) (void);
 
 typedef struct _btif_log_buf_t_ {
 	unsigned int len;
-	struct timeval timer;
+	btif_timestamp timer;
 	unsigned char buffer[BTIF_LOG_SZ];
 } BTIF_LOG_BUF_T, *P_BTIF_LOG_BUF_T;
 
