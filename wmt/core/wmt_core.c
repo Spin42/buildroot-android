@@ -316,7 +316,7 @@ wmt_core_tx (
         osal_assert(0);
     }
 #endif
-    iRet = wmt_ctrl_tx_ex(pData, size, writtenSize, bRawFlag);
+    iRet = wmt_ctrl_tx_ex((PUINT8)pData, size, writtenSize, bRawFlag);
 	if (0 == *writtenSize)
 	{
 		INT32 retry_times = 0;
@@ -328,7 +328,7 @@ wmt_core_tx (
 			WMT_ERR_FUNC("WMT-CORE: retrying, wait for %d ms\n", retry_delay_ms);
 			osal_sleep_ms(retry_delay_ms);
 			
-			iRet = wmt_ctrl_tx_ex(pData, size, writtenSize, bRawFlag);
+			iRet = wmt_ctrl_tx_ex((PUINT8)pData, size, writtenSize, bRawFlag);
 			retry_times++;
 		}
 	}

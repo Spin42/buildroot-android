@@ -1464,7 +1464,7 @@ int mtk_wcn_stp_btm_get_dmp(char *buf, int *len)
 * RETURNS
 *  0: Sccuess  Negative value: Fail
 *****************************************************************************/
-int mtk_wcn_stp_psm_notify_stp(const MTKSTP_PSM_ACTION_T action){
+int mtk_wcn_stp_psm_notify_stp(const UINT32 action){
     return stp_psm_notify_stp(STP_PSM_CORE(stp_core_ctx), action);
 }
 
