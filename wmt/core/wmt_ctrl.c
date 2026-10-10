@@ -533,13 +533,12 @@ INT32  wmt_ctrl_stp_open(P_WMT_CTRL_DATA pWmtCtrlData)
 
 INT32  wmt_ctrl_patch_search(P_WMT_CTRL_DATA pWmtCtrlData)
 {
-    P_DEV_WMT pDev = &gDevWmt; /* single instance */
-    INT32 iRet;
-    UINT8 cmdStr[NAME_MAX + 1] = {0};
-    osal_snprintf(cmdStr, NAME_MAX, "srh_patch");
-    iRet = wmt_ctrl_ul_cmd(pDev, cmdStr);
+    /* The patch is chosen in the kernel by hardware version (au4CtrlData[0]);
+     * there is no user-space launcher to ask. */
+    INT32 iRet = wmt_dev_patch_search(pWmtCtrlData->au4CtrlData[0]);
+
     if (iRet) {
-        WMT_WARN_FUNC("wmt_ctrl_ul_cmd fail(%d)\n", iRet);
+        WMT_WARN_FUNC("wmt_dev_patch_search fail(%d)\n", iRet);
         return -1;
     }
     return 0;
