@@ -865,7 +865,7 @@ kalFirmwareImageUnmapping (
 *
 * \param[in] prGlueInfo     Pointer of GLUE Data Structure
 * \param[in] rLockCategory  Specify which SPIN_LOCK
-* \param[out] pu4Flags      Pointer of a variable for saving IRQ flags
+* \param[out] pulFlags      Pointer of a variable for saving IRQ flags
 *
 * \return (none)
 */
@@ -876,23 +876,23 @@ VOID
 kalAcquireSpinLock (
     IN P_GLUE_INFO_T                prGlueInfo,
     IN ENUM_SPIN_LOCK_CATEGORY_E    rLockCategory,
-    OUT PUINT_32                    pu4Flags
+    OUT unsigned long               *pulFlags
     )
 {
-    UINT_32 u4Flags = 0;
+    unsigned long ulFlags = 0;
 
     ASSERT(prGlueInfo);
-    ASSERT(pu4Flags);
+    ASSERT(pulFlags);
 
     if (rLockCategory < SPIN_LOCK_NUM) {
 
 #if CFG_USE_SPIN_LOCK_BOTTOM_HALF
         spin_lock_bh(&prGlueInfo->rSpinLock[rLockCategory]);
 #else /* !CFG_USE_SPIN_LOCK_BOTTOM_HALF */
-        spin_lock_irqsave(&prGlueInfo->rSpinLock[rLockCategory], u4Flags);
+        spin_lock_irqsave(&prGlueInfo->rSpinLock[rLockCategory], ulFlags);
 #endif /* !CFG_USE_SPIN_LOCK_BOTTOM_HALF */
 
-        *pu4Flags = u4Flags;
+        *pulFlags = ulFlags;
 //		DBGLOG(INIT, TRACE, ("A+%d\n", rLockCategory));
     }
 
@@ -907,7 +907,7 @@ kalAcquireSpinLock (
 *
 * \param[in] prGlueInfo     Pointer of GLUE Data Structure
 * \param[in] rLockCategory  Specify which SPIN_LOCK
-* \param[in] u4Flags        Saved IRQ flags
+* \param[in] ulFlags        Saved IRQ flags
 *
 * \return (none)
 */
@@ -916,7 +916,7 @@ VOID
 kalReleaseSpinLock (
     IN P_GLUE_INFO_T                prGlueInfo,
     IN ENUM_SPIN_LOCK_CATEGORY_E    rLockCategory,
-    IN UINT_32                      u4Flags
+    IN unsigned long                ulFlags
     )
 {
     ASSERT(prGlueInfo);
@@ -928,7 +928,7 @@ kalReleaseSpinLock (
 #if CFG_USE_SPIN_LOCK_BOTTOM_HALF
         spin_unlock_bh(&prGlueInfo->rSpinLock[rLockCategory]);
 #else /* !CFG_USE_SPIN_LOCK_BOTTOM_HALF */
-        spin_unlock_irqrestore(&prGlueInfo->rSpinLock[rLockCategory], u4Flags);
+        spin_unlock_irqrestore(&prGlueInfo->rSpinLock[rLockCategory], ulFlags);
 #endif /* !CFG_USE_SPIN_LOCK_BOTTOM_HALF */
 
     }
@@ -1457,7 +1457,6 @@ kalRxIndicatePkts (
 		TdlsexRxFrameHandle(prGlueInfo, prSkb->data, prSkb->len);
 #endif /* CFG_SUPPORT_TDLS */
 
-        prNetDev->last_rx = jiffies;
         prSkb->protocol = eth_type_trans(prSkb, prNetDev);
         prSkb->dev = prNetDev;
         //DBGLOG_MEM32(RX, TRACE, (PUINT_32)prSkb->data, prSkb->len);
@@ -1481,12 +1480,7 @@ kalRxIndicatePkts (
     DBGLOG(BOW, TRACE, ("\n"));
 #endif
 
-        if(!in_interrupt()){
-            netif_rx_ni(prSkb); /* only in non-interrupt context */
-        }
-        else {
-            netif_rx(prSkb);
-        }
+        netif_rx(prSkb);
 
         wlanReturnPacket(prGlueInfo->prAdapter, NULL);
     }
@@ -3222,16 +3216,14 @@ kalGetTxPendingCmdCount(
 
 VOID
 kalOsTimerInitialize (
-    IN P_GLUE_INFO_T    prGlueInfo,
-    IN PVOID            prTimerHandler
+    IN P_GLUE_INFO_T            prGlueInfo,
+    IN void                     (*prTimerHandler)(struct timer_list *)
     )
 {
 
     ASSERT(prGlueInfo);
 
-    init_timer(&(prGlueInfo->tickfn));
-    prGlueInfo->tickfn.function = prTimerHandler;
-    prGlueInfo->tickfn.data = (ULONG) prGlueInfo;
+    timer_setup(&(prGlueInfo->tickfn), prTimerHandler, 0);
 }
 
 // Todo
@@ -3252,10 +3244,7 @@ kalSetTimer(
     )
 {
     ASSERT(prGlueInfo);
-    del_timer_sync(&(prGlueInfo->tickfn));
-
-    prGlueInfo->tickfn.expires = jiffies + u4Interval * HZ / MSEC_PER_SEC;
-    add_timer(&(prGlueInfo->tickfn));
+    mod_timer(&(prGlueInfo->tickfn), jiffies + u4Interval * HZ / MSEC_PER_SEC);
 
     return TRUE; /* success */
 }
@@ -3278,11 +3267,9 @@ kalCancelTimer(
 
     clear_bit(GLUE_FLAG_TIMEOUT_BIT, &prGlueInfo->ulFlag);
 
-    if (del_timer_sync(&(prGlueInfo->tickfn)) >=0) {
-        return TRUE;
-    } else {
-        return FALSE;
-    }
+    timer_delete_sync(&(prGlueInfo->tickfn));
+
+    return TRUE;
 }
 /*----------------------------------------------------------------------------*/
 /*!
@@ -3344,10 +3331,10 @@ kalRandomNumber(
  */
 /*----------------------------------------------------------------------------*/
 VOID
-kalTimeoutHandler (ULONG arg)
+kalTimeoutHandler (struct timer_list *prTimer)
 {
 
-    P_GLUE_INFO_T prGlueInfo = (P_GLUE_INFO_T) arg;
+    P_GLUE_INFO_T prGlueInfo = timer_container_of(prGlueInfo, prTimer, tickfn);
 
     ASSERT(prGlueInfo);
 
@@ -3718,7 +3705,7 @@ kalIsAPmode(
 *
 * \param[in] prGlueInfo     Pointer of GLUE Data Structure
 * \param[in] rLockCategory  Specify which SPIN_LOCK
-* \param[out] pu4Flags      Pointer of a variable for saving IRQ flags
+* \param[out] pulFlags      Pointer of a variable for saving IRQ flags
 *
 * \return physical addr
 */
@@ -3750,7 +3737,7 @@ kalIOPhyAddrGet (
 *
 * \param[in] prGlueInfo     Pointer of GLUE Data Structure
 * \param[in] rLockCategory  Specify which SPIN_LOCK
-* \param[out] pu4Flags      Pointer of a variable for saving IRQ flags
+* \param[out] pulFlags      Pointer of a variable for saving IRQ flags
 *
 * \return physical addr
 */
@@ -4104,11 +4091,5 @@ kalIndicateRxMgmtFrame (
 
 UINT_64 kalGetBootTime(void) 
 {
-	struct timespec ts;
-	UINT_64 bootTime = 0;
-	get_monotonic_boottime(&ts);
-	bootTime = ts.tv_sec;
-	bootTime *= USEC_PER_SEC;
-	bootTime += ts.tv_nsec/NSEC_PER_USEC;
-	return bootTime;
+	return div_u64(ktime_get_boottime_ns(), NSEC_PER_USEC);
 }

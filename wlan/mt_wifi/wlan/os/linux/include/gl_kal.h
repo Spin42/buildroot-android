@@ -642,7 +642,7 @@ typedef UINT_32             KAL_WAKE_LOCK_T, *P_KAL_WAKE_LOCK_T;
 /*----------------------------------------------------------------------------*/
 /* Macros of SPIN LOCK operations for using in Driver Layer                   */
 /*----------------------------------------------------------------------------*/
-#define KAL_SPIN_LOCK_DECLARATION()             UINT_32 __u4Flags
+#define KAL_SPIN_LOCK_DECLARATION()             unsigned long __u4Flags
 
 #define KAL_ACQUIRE_SPIN_LOCK(_prAdapter, _rLockCategory)   \
             kalAcquireSpinLock(((P_ADAPTER_T)_prAdapter)->prGlueInfo, _rLockCategory, &__u4Flags)
@@ -801,7 +801,7 @@ typedef UINT_32             KAL_WAKE_LOCK_T, *P_KAL_WAKE_LOCK_T;
 #define kalStrnChr(s, n, c)                           strnchr(s, n, c)
 #define kalStrLen(s)                                strlen(s)
 #define kalStrnLen(s, b)                             strnlen(s, b)
-#define kalStrniCmp(s1,s2,n)                          strnicmp(s1,s2, n)
+#define kalStrniCmp(s1,s2,n)                          strncasecmp(s1,s2, n)
 #define kalStrtoul(cp, endp, base)                    simple_strtoul(cp, endp, base)
 #define kalStrtol(cp, endp, base)                    simple_strtol(cp, endp, base)
 #define kalSnprintf(buf, size, fmt, ...)              snprintf(buf, size, fmt, __VA_ARGS__)
@@ -1725,20 +1725,26 @@ VOID
 kalAcquireSpinLock(
     IN P_GLUE_INFO_T                prGlueInfo,
     IN ENUM_SPIN_LOCK_CATEGORY_E    rLockCategory,
-    OUT PUINT_32                    pu4Flags
+    OUT unsigned long               *pulFlags
     );
 
 VOID
 kalReleaseSpinLock(
     IN P_GLUE_INFO_T                prGlueInfo,
     IN ENUM_SPIN_LOCK_CATEGORY_E    rLockCategory,
-    IN UINT_32                      u4Flags
+    IN unsigned long                ulFlags
     );
 
 VOID
 kalUpdateMACAddress(
     IN P_GLUE_INFO_T    prGlueInfo,
     IN PUINT_8          pucMacAddr
+    );
+
+VOID
+kalQueryRegistryMacAddr (
+    IN  P_GLUE_INFO_T   prGlueInfo,
+    OUT PUINT_8         paucMacAddr
     );
 
 VOID
@@ -1757,7 +1763,7 @@ kalPacketAlloc(
 VOID
 kalOsTimerInitialize(
     IN P_GLUE_INFO_T     prGlueInfo,
-    IN PVOID             prTimerHandler
+    IN void              (*prTimerHandler)(struct timer_list *)
     );
 
 BOOLEAN
@@ -2195,7 +2201,7 @@ kalRandomNumber(
     );
 
 VOID
-kalTimeoutHandler (ULONG arg);
+kalTimeoutHandler (struct timer_list *prTimer);
 
 VOID
 kalSetEvent (P_GLUE_INFO_T pr);

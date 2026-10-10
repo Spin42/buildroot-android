@@ -708,7 +708,6 @@ typedef struct _WLANDEV_INFO_T {
 
 MODULE_AUTHOR(NIC_AUTHOR);
 MODULE_DESCRIPTION(NIC_DESC);
-MODULE_SUPPORTED_DEVICE(NIC_NAME);
 MODULE_LICENSE("GPL");
 
 #define NIC_INF_NAME    "wlan%d" /* interface name */
@@ -912,7 +911,7 @@ static const struct cfg80211_ops mtk_wlan_ops = {
 * \return (none)
 */
 /*----------------------------------------------------------------------------*/
-unsigned int _cfg80211_classify8021d(struct sk_buff *skb)
+static unsigned int _cfg80211_classify8021d(struct sk_buff *skb)
 {
     unsigned int dscp = 0;
 
@@ -939,7 +938,8 @@ static const UINT_16 au16Wlan1dToQueueIdx[8] = { 1, 0, 0, 1, 2, 2, 3, 3 };
 static UINT_16
 wlanSelectQueue(
     struct net_device *dev,
-    struct sk_buff *skb)
+    struct sk_buff *skb,
+    struct net_device *sb_dev)
 {
     skb->priority = _cfg80211_classify8021d(skb);
 
@@ -1531,6 +1531,7 @@ wlanSetMulticastListWorkQueue (struct work_struct *work) {
  * another workqueue for sleeping. We don't want to block
  * tx_thread, so we can't let tx_thread to do this */
 
+#if CFG_ENABLE_WIFI_DIRECT
 void
 p2pSetMulticastListWorkQueueWrapper (P_GLUE_INFO_T prGlueInfo) {
 
@@ -1550,6 +1551,8 @@ p2pSetMulticastListWorkQueueWrapper (P_GLUE_INFO_T prGlueInfo) {
 
     return;
 } /* end of p2pSetMulticastListWorkQueueWrapper() */
+#endif
+
 
 
 
@@ -1564,7 +1567,7 @@ p2pSetMulticastListWorkQueueWrapper (P_GLUE_INFO_T prGlueInfo) {
 * \retval NETDEV_TX_BUSY - on failure, packet will be discarded by upper layer.
 */
 /*----------------------------------------------------------------------------*/
-int
+netdev_tx_t
 wlanHardStartXmit(
     struct sk_buff *prSkb,
     struct net_device *prDev
@@ -1702,7 +1705,7 @@ wlanHardStartXmit(
 * \return net_device_stats buffer pointer.
 */
 /*----------------------------------------------------------------------------*/
-struct net_device_stats *
+static struct net_device_stats *
 wlanGetStats (
     IN struct net_device *prDev
     )
@@ -1883,7 +1886,9 @@ wlanStop(
     GLUE_RELEASE_SPIN_LOCK(prGlueInfo, SPIN_LOCK_NET_DEV);
 
     if(prScanRequest) {
-        cfg80211_scan_done(prScanRequest, TRUE);
+        struct cfg80211_scan_info rScanInfo = { .aborted = true };
+
+        cfg80211_scan_done(prScanRequest, &rScanInfo);
     }
 
     netif_tx_stop_all_queues(prDev);
@@ -1901,7 +1906,7 @@ wlanStop(
  * \return   none
  */
 /*----------------------------------------------------------------------------*/
-VOID
+static VOID
 wlanUpdateChannelTable(
     P_GLUE_INFO_T prGlueInfo
     )
@@ -2000,6 +2005,7 @@ wlanNetRegister(
             DBGLOG(INIT, ERROR, ("wlanNetRegister: wiphy context is not registered.\n"));
             wlanClearDevIdx(prWdev->netdev);
             i4DevIdx = -1;
+            break;
         }
 
         if(register_netdev(prWdev->netdev) < 0) {
@@ -2143,7 +2149,7 @@ wlanNetCreate(
 
     //4 <3> Initial Glue structure
     //4 <3.1> Create net device
-    prGlueInfo->prDevHandler = alloc_netdev_mq(sizeof(P_GLUE_INFO_T), NIC_INF_NAME, ether_setup, CFG_MAX_TXQ_NUM);
+    prGlueInfo->prDevHandler = alloc_netdev_mq(sizeof(P_GLUE_INFO_T), NIC_INF_NAME, NET_NAME_ENUM, ether_setup, CFG_MAX_TXQ_NUM);
 
     DBGLOG(INIT, INFO, ("net_device prDev(0x%p) allocated\n", prGlueInfo->prDevHandler));
     if (!prGlueInfo->prDevHandler) {
@@ -2316,8 +2322,7 @@ void wlanHandleSystemSuspend(void)
 
     // <2> get the IPv4 address
     if(!prDev || !(prDev->ip_ptr)||\
-        !((struct in_device *)(prDev->ip_ptr))->ifa_list||\
-        !(&(((struct in_device *)(prDev->ip_ptr))->ifa_list->ifa_local))){
+        !((struct in_device *)(prDev->ip_ptr))->ifa_list){
         DBGLOG(INIT, INFO, ("ip is not avaliable.\n"));
         return;
     }
@@ -2342,8 +2347,7 @@ void wlanHandleSystemSuspend(void)
 #ifdef  CONFIG_IPV6
     // <5> get the IPv6 address
     if(!prDev || !(prDev->ip6_ptr)||\
-        !((struct in_device *)(prDev->ip6_ptr))->ifa_list||\
-        !(&(((struct in_device *)(prDev->ip6_ptr))->ifa_list->ifa_local))){
+        !((struct in_device *)(prDev->ip6_ptr))->ifa_list){
         DBGLOG(INIT, INFO, ("ipv6 is not avaliable.\n"));
         return;
     }
@@ -2482,8 +2486,7 @@ void wlanHandleSystemResume(void)
 
     // <2> get the IPv4 address
     if(!(prDev->ip_ptr)||\
-        !((struct in_device *)(prDev->ip_ptr))->ifa_list||\
-        !(&(((struct in_device *)(prDev->ip_ptr))->ifa_list->ifa_local))){
+        !((struct in_device *)(prDev->ip_ptr))->ifa_list){
         DBGLOG(INIT, INFO, ("ip is not avaliable.\n"));
         return;
     }
@@ -2496,8 +2499,7 @@ void wlanHandleSystemResume(void)
 #ifdef  CONFIG_IPV6
     // <5> get the IPv6 address
     if(!prDev || !(prDev->ip6_ptr)||\
-        !((struct in_device *)(prDev->ip6_ptr))->ifa_list||\
-        !(&(((struct in_device *)(prDev->ip6_ptr))->ifa_list->ifa_local))){
+        !((struct in_device *)(prDev->ip6_ptr))->ifa_list){
         DBGLOG(INIT, INFO, ("ipv6 is not avaliable.\n"));
         return;
     }
@@ -2874,6 +2876,7 @@ bailout:
 		{
 		case PROC_INIT_FAIL:
 			wlanNetUnregister(prWdev);
+			fallthrough;
 		case NET_REGISTER_FAIL:
 			set_bit(GLUE_FLAG_HALT_BIT, &prGlueInfo->ulFlag);
 			/* wake up main thread */
@@ -2882,12 +2885,15 @@ bailout:
 		    wait_for_completion_interruptible(&prGlueInfo->rHaltComp);
         	KAL_WAKE_LOCK_DESTROY(prGlueInfo->prAdapter, &prGlueInfo->rAhbIsrWakeLock);
 			wlanAdapterStop(prAdapter);
+			fallthrough;
 		case ADAPTER_START_FAIL:
         	if (prWdev != NULL)
             	glBusFreeIrq(prWdev->netdev, *((P_GLUE_INFO_T *) netdev_priv(prWdev->netdev)));
+			fallthrough;
 		case BUS_SET_IRQ_FAIL:
 			KAL_WAKE_LOCK_DESTROY(prAdapter, &prGlueInfo->rAhbIsrWakeLock);
 			wlanNetDestroy(prWdev);
+			fallthrough;
 		case NET_CREATE_FAIL:
 		case BUS_INIT_FAIL:
 		default:
@@ -3009,8 +3015,9 @@ wlanRemove(
     DBGLOG(INIT, INFO, ("down g_halt_sem...\n"));
     down(&g_halt_sem);
 #if CFG_SPM_WORKAROUND_FOR_HOTSPOT
-    if (glIsChipNeedWakelock(prGlueInfo))
+    if (glIsChipNeedWakelock(prGlueInfo)) {
         KAL_WAKE_LOCK_DESTROY(prGlueInfo->prAdapter, &prGlueInfo->prAdapter->rApWakeLock);
+    }
 #endif
 
 //    flush_delayed_work_sync(&workq);
@@ -3125,7 +3132,9 @@ static int initWlan(void)
 
     DBGLOG(INIT, INFO, ("initWlan\n"));
 
+#if CFG_ENABLE_WIFI_DIRECT
     spin_lock_init(&g_p2p_lock);
+#endif
 
     /* memory pre-allocation */
     kalInitIOBuffer();

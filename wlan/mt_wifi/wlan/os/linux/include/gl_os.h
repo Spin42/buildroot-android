@@ -500,12 +500,11 @@
 
 #define DRV_NAME "["CHIP_NAME"]: "
 
-/* Define if target platform is Android.
- * It should already be defined in Android kernel source
+/* Android wake locks do not exist on a mainline kernel; the KAL_WAKE_LOCK
+ * macros compile to nothing.
  */
-#ifndef CONFIG_ANDROID
+#undef CONFIG_ANDROID
 #define CONFIG_ANDROID      0
-#endif
 
 /* for CFG80211 IE buffering mechanism */
 #define CFG_CFG80211_IE_BUF_LEN     (512)
@@ -930,7 +929,6 @@ struct _GLUE_INFO_T {
 
     typedef irqreturn_t (*PFN_WLANISR)(int irq, void *dev_id, struct pt_regs *regs);
 
-typedef void (*PFN_LINUX_TIMER_FUNC)(unsigned long);
 
 
 /* generic sub module init/exit handler
@@ -983,7 +981,7 @@ typedef struct _SUB_MODULE_HANDLER {
             spin_unlock_bh(prLock);
 
 #else /* !CFG_USE_SPIN_LOCK_BOTTOM_HALF */
-    #define GLUE_SPIN_LOCK_DECLARATION()                        UINT_32 __u4Flags = 0
+    #define GLUE_SPIN_LOCK_DECLARATION()                        unsigned long __u4Flags = 0
     #define GLUE_ACQUIRE_SPIN_LOCK(prGlueInfo, rLockCategory)   \
             { \
                 if (rLockCategory < SPIN_LOCK_NUM) \
@@ -1093,16 +1091,16 @@ typedef struct _SUB_MODULE_HANDLER {
 
 
 #define DbgPrint(...)
-
-/* The glue info is the private area of its wiphy. */
-static inline struct wiphy *priv_to_wiphy(void *priv)
-{
-    return container_of(priv, struct wiphy, priv);
-}
 /*******************************************************************************
 *                  F U N C T I O N   D E C L A R A T I O N S
 ********************************************************************************
 */
+void wlanHandleSystemSuspend(void);
+void wlanHandleSystemResume(void);
+void wlanRegisterNotifier(void);
+void wlanUnregisterNotifier(void);
+netdev_tx_t wlanHardStartXmit(struct sk_buff *prSkb, struct net_device *prDev);
+
 #ifdef WLAN_INCLUDE_PROC
 INT_32
 procRemoveProcfs (

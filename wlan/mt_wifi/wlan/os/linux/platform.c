@@ -202,8 +202,7 @@ static int netdev_event(struct notifier_block *nb, unsigned long notification, v
 
     // <3> get the IPv4 address
     if(!prDev || !(prDev->ip_ptr)||\
-            !((struct in_device *)(prDev->ip_ptr))->ifa_list||\
-            !(&(((struct in_device *)(prDev->ip_ptr))->ifa_list->ifa_local))){
+            !((struct in_device *)(prDev->ip_ptr))->ifa_list){
         DBGLOG(REQ, INFO, ("ip is not avaliable.\n"));
         return NOTIFY_DONE;
     }
@@ -223,8 +222,7 @@ static int netdev_event(struct notifier_block *nb, unsigned long notification, v
 //#ifdef  CONFIG_IPV6
 #if 0
     if(!prDev || !(prDev->ip6_ptr)||\
-        !((struct in_device *)(prDev->ip6_ptr))->ifa_list||\
-        !(&(((struct in_device *)(prDev->ip6_ptr))->ifa_list->ifa_local))){
+        !((struct in_device *)(prDev->ip6_ptr))->ifa_list){
         printk(KERN_INFO "ipv6 is not avaliable.\n");
         return NOTIFY_DONE;
     }

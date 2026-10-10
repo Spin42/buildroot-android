@@ -72,7 +72,7 @@ static void mtk_wifi_reset(
 *                   F U N C T I O N   D E C L A R A T I O N S
 ********************************************************************************
 */
-static void *
+static void
 glResetCallback (
     ENUM_WMTDRV_TYPE_T  eSrcType,
     ENUM_WMTDRV_TYPE_T  eDstType,
@@ -150,7 +150,7 @@ glResetUninit(
  * @retval 
  */
 /*----------------------------------------------------------------------------*/
-static void *
+static void
 glResetCallback (
     ENUM_WMTDRV_TYPE_T  eSrcType,
     ENUM_WMTDRV_TYPE_T  eDstType,
@@ -193,8 +193,6 @@ glResetCallback (
     default:
         break;
     }
-
-    return NULL;
 }
 
 

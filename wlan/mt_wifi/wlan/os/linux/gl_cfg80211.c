@@ -92,8 +92,6 @@ static UINT_8 gucKeyIndex = 255;
 *                   F U N C T I O N   D E C L A R A T I O N S
 ********************************************************************************
 */
-extern void wlanHandleSystemResume(void);
-extern void wlanHandleSystemSuspend(void);
 
 /*******************************************************************************
 *                              F U N C T I O N S
