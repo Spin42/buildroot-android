@@ -48,7 +48,7 @@ exports it as a clock; the sensor drivers enable it as `xclk` in their power-on 
 		reset-gpios = <&pio 53 GPIO_ACTIVE_LOW>;
 		powerdown-gpios = <&pio 56 GPIO_ACTIVE_HIGH>;
 		orientation = <1>;	/* back */
-		rotation = <0>;		/* to be checked on a picture */
+		rotation = <90>;	/* stock sensor orientation (tuning.md) */
 
 		port {
 			sp2508_ep: endpoint {
@@ -117,7 +117,7 @@ Supplies are enabled one by one (not with the bulk API) because the order matter
 
 | Control | Range | Register |
 |---|---|---|
-| `EXPOSURE` | 7..VTS-5 lines (stock clamps at 7 and VTS-5), default 777 | 0x03/0x04 |
+| `EXPOSURE` | 7..VTS-5 lines, default 777 (the stock only clamps at 7, see `tuning.md`) | 0x03/0x04 |
 | `ANALOGUE_GAIN` | 0x10..0x90, step 1, code/16 = multiplier: 1.0x..9.0x | 0x24 |
 | `HBLANK` | 704..2110 pixels, step 2 | 0x09/0x0a = hblank/2 - 32 |
 | `VBLANK` | 25..211 lines | 0x06 = vblank + 44 |
@@ -126,7 +126,8 @@ Supplies are enabled one by one (not with the bulk API) because the order matter
 | `TEST_PATTERN` | Disabled, Color Bars | 0x0d with 0xfb and the 0xac latch |
 
 - Gain unit: the stock converts the MTK gain (64 = 1x) to `reg = 0x10 * gain/64`, i.e. a linear 1/16 code, and
-  clamps it to 0x10..0x90. A libcamera `CameraSensorHelper` for the SP2508 needs `gain = code / 16`.
+  clamps it to 0x10..0x90. A libcamera `CameraSensorHelper` for the SP2508 needs `gain = code / 16`
+  (`libcamera-patches/`).
 - The register init is written when streaming starts (after power-on); the digital gain registers of page 2 are set
   to 0xb0 by the stock init and left there. The stock sets 0x3f = 0 (HV mirror) for all modes and the
   raw_B order is valid with it; the driver writes it after the init table and exposes no flip controls (changing
@@ -162,6 +163,7 @@ Supplies are enabled one by one (not with the bulk API) because the order matter
 - SP0A20: VGA output on the bus (the stock only states 640x480 minus the ISP margins), the MIPI lane count (the stock
   never sets one; it defaults to a single lane), the link frequency (derived from 13 MHz x 16 bit) and the mapping of
   the 0xdb steps to 1/3 EV are assumptions. The vendor reset line handling is not defined.
-- Orientation/rotation of the modules are not known; the stock mirrors the SP2508 in software for its own ISP.
+- Orientation/rotation: the stock reports the rear sensor at 90 degrees with the same mirror setting (0x3f = 0),
+  hence `rotation = <90>`; not checked on a picture. The front module orientation is not known.
 - `v4l2_subdev_s_stream_helper` is used with `enable_streams`/`disable_streams`; runtime PM powers the sensors only
   while streaming (and during probe).
