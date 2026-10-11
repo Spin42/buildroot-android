@@ -1,0 +1,21 @@
+#!/bin/sh
+# Load the MT8127 CONSYS Bluetooth driver with a stable address derived from the eMMC CID, before bluetoothd starts.
+
+start() {
+	cid=$(cat /sys/block/mmcblk0/device/cid 2>/dev/null)
+	if [ -n "$cid" ]; then
+		h=$(echo -n "tb3-bt-$cid" | sha256sum | cut -c1-12)
+		# Locally administered, unicast.
+		b0=$(( (0x${h%??????????} & 0xfc) | 0x02 ))
+		addr=$(printf '%02x' $b0)$(echo ${h#??} | sed 's/../:&/g')
+		modprobe mtk_consys_bt bdaddr=$addr
+	else
+		modprobe mtk_consys_bt
+	fi
+}
+
+case "$1" in
+	start) start ;;
+	stop) ;;
+	*) echo "Usage: $0 {start|stop}"; exit 1 ;;
+esac
