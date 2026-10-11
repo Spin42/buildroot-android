@@ -126,7 +126,14 @@ Power: the FM core powers up at the first open of `/dev/radioN`. At the last clo
 `--set-ctrl mute=1` turns the radio off (at that close). Removing the module powers it off.
 
 Debugfs (`/sys/kernel/debug/mtk_consys_fm/reg`, needs the radio on): write `r <fm addr>`, `w <fm addr> <val>`,
-`tr`/`tw` (top), `hr`/`hw` (host), hex values; read back the result of the last read. Packet traces:
+`tr`/`tw` (top), `hr`/`hw` (host), hex values; `i2s` dumps the I2S output setup (FM 0x9b, 0x9c, 0x7d, host
+0x80101054, 0x80050078, 0x80101030), `i2s_on` writes it again, `aif [state]` calls the WMT audio interface
+control (default 2, FM I2S); read the file for the result of the last dump or read.
+
+FM 0x9b reads back only its low bits: after writing 0xf9ab it reads 0x000b (bit 0 I2S on, bit 1 I2S
+format, bit 3 slave, as in the MT6630 `I2s_Setting()`), which is the expected state. The CONSYS pin mode
+0x80050078[27:16] must read 0x111 (FM I2S); after the WMT pin control the driver reads it back and, if WMT did
+not set it, writes it through the FM host interface. Packet traces:
 `echo 'file fm_*.c +p' > /sys/kernel/debug/dynamic_debug/control`.
 
 ## Audio path
@@ -138,7 +145,12 @@ driver is `aud_path = FM_AUD_I2S`, `i2s mode = MASTER`, `rate = 32K`, `i2s_pad =
 is digital: the FM core is I2S master at 32 kHz, CONSYS forwards it over an internal pad to the "2nd I2S input"
 of the AFE (`AFE_I2S_CON`), which the HAL configures slave, 16-bit, I2S format, pad = CONSYS, phase-shift fix on
 (`Set2ndI2SInConfig()`, vendor `sound/soc/mediatek/mt_soc_audio_v1/mt_soc_afe_control.c`). Its samples are
-interconnect inputs I00/I01.
+interconnect inputs I00/I01. Both are confirmed in the MT8127 HAL binary: `AudioFMResourceManager::SetFmSourceModuleEnable()`
+builds the `AudioDigtalI2S` with slave = 1 and pad select = !IsFmChipPadSelConnSys() = 0, so `AFE_I2S_CON`
+bit 28 stays 0 (0x8000000c, then enable); and its interconnection table (`AudioInterConnection`, 19 outputs
+per input) has I00→O05 = 0x28 bit 16, I01→O06 = 0x28 bit 22, I05→O03 = 0x24 bit 21. When the FM rate differs
+from the playback rate the HAL also enables the I2S-in ASRC (`SetI2SASRCConfig`, AFE 0x550-0x56c); capturing at
+32 kHz needs no ASRC. Its direct mode routes I00/I01 → O15/O16 → hardware gain 1 → I12/I13 → O03/O04.
 
 Mainline (kernel branch `6.18/test/fm-audio`):
 
