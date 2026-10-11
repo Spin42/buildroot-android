@@ -207,9 +207,7 @@ hotplug helper (`S10mdev`; module autoload off unless `s3ve3g.modules=auto` is o
 or `/etc/s3ve3g/modules-autoload` exists, then `modules-coldplug` loads what matches the hardware,
 with `msm` and the panels blacklisted as in rescue), the USB gadget (`S45usb-gadget`: `1d6b:0104`,
 product `s3ve3g`, serial `31cf1659`, ACM + NCM, `10.0.42.1`, `unudhcpd` gives the host `10.0.42.2`,
-`telnetd` bound to `10.0.42.1:23` without a password), `dropbear` (`S50dropbear`), and the status
-reporter (`S99status`: the "s3ve3g persistent" banner on `tty0` and `/dev/kmsg`, then an alive
-line every 5 s). init respawns `/usr/sbin/ttygs0-console`: banner, `dmesg`, then a root shell on
+`telnetd` bound to `10.0.42.1:23` without a password) and `dropbear` (`S50dropbear`). init respawns `/usr/sbin/ttygs0-console`: banner, `dmesg`, then a root shell on
 `ttyGS0`. Logs go to `/run/s3ve3g/` and syslog (`/var/log/messages`).
 
 ssh: the same authorized keys and the same fixed host key as the rescue image
