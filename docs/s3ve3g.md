@@ -133,6 +133,8 @@ pd_ignore_unused panic=10 lk2nd.pass-ramoops`. The simple-framebuffer node lists
 | keys: Vol Up 106, Vol Down 107, Home 108 | downstream DT, same as ms013g |
 | SM5502 MUIC on i2c-gpio (SDA 4, SCL 5), 0x25, IRQ GPIO 52; USB extcon | downstream `msm8226-sm5502.dtsi`, wiring of `qcom-msm8226-samsung-matisse-common.dtsi` |
 | L15 3.3 V | downstream: the panel `vdd` (ms013g uses 2.8 V) |
+| `pronto` + `iris` (the dtsi default `qcom,wcn3660a`), L3 `vddmx`, L6 `vddpx`, L10 XO, L16 PA, L24 RFA/dig, wlan pins GPIO 40-44 | regulator constraints and pins from the stock kernel; dual-band IRIS (802.11a/b/g/n, no 11ac) |
+| L8 (Pronto PLL), L10, L16, L24 always on, with the firmware's loads | as the vendor kernel and the other msm8226 Samsungs; switched on demand, the radio start stalled (8 s calibration upload) and the first scans locked the phone up |
 
 ## Rescue
 
@@ -202,10 +204,11 @@ label s3ve3g
   `/tmp` and `/run` are tmpfs (`/etc/fstab`); `reboot` and `poweroff` go through BusyBox init,
   which stops the services and remounts root read-only.
 
-Services (`/etc/init.d`, in order): watchdog pinger (`S05watchdog`, `-T 20 -t 5`), `mdev` as the
+Services (`/etc/init.d`, in order): watchdog pinger (`S05watchdog`, `-T 20 -t 5`), the firmware
+mount (`S08firmware`, see WiFi below), `mdev` as the
 hotplug helper (`S10mdev`; module autoload off unless `s3ve3g.modules=auto` is on the command line
 or `/etc/s3ve3g/modules-autoload` exists, then `modules-coldplug` loads what matches the hardware,
-with `msm` and the panels blacklisted as in rescue), the USB gadget (`S45usb-gadget`: `1d6b:0104`,
+with `msm` and the panels blacklisted as in rescue), the WCNSS drivers (`S30wcnss`), the USB gadget (`S45usb-gadget`: `1d6b:0104`,
 product `s3ve3g`, serial `31cf1659`, ACM + NCM, `10.0.42.1`, `unudhcpd` gives the host `10.0.42.2`,
 `telnetd` bound to `10.0.42.1:23` without a password) and `dropbear` (`S50dropbear`). init respawns `/usr/sbin/ttygs0-console`: banner, `dmesg`, then a root shell on
 `ttyGS0`. Logs go to `/run/s3ve3g/` and syslog (`/var/log/messages`).
@@ -216,6 +219,50 @@ ssh: the same authorized keys and the same fixed host key as the rescue image
 ```
 ssh -o UserKnownHostsFile=<output>/../rescue-ssh/known_hosts root@10.0.42.1
 ```
+
+### WiFi and Bluetooth (WCNSS)
+
+The Pronto core inside the SoC runs Qualcomm firmware and talks to Linux over SMD:
+`qcom_wcnss_pil` (remoteproc) loads and boots it, `wcn36xx` is the mac80211 driver (`wlan0`,
+2.4 and 5 GHz, no 11ac) and `btqcomsmd` the Bluetooth HCI (`hci0`). All three are modules.
+
+**Firmware comes from the phone, not from the image.** `wcnss.mdt` and its segments `wcnss.b00`
+.. `wcnss.b09` sit in `/image` of the `apnhlos` partition (vfat, `mmcblk0p1`). `S08firmware` finds the
+partition by `PARTNAME=apnhlos` in `/sys/class/block/*/uevent`, mounts it read-only
+(`ro,nodev,nosuid,noexec,shortname=lower`) on `/run/firmware/apnhlos`, and writes
+`/run/firmware/apnhlos/image` to `/sys/module/firmware_class/parameters/path`. The kernel searches
+that directory first, then `/lib/firmware`, so no file list or symlink is tied to one firmware
+version. The path holds one directory only: firmware from a second partition (the modem's, for
+example) needs symlinks from `/lib/firmware` instead.
+
+The image ships what is not on `apnhlos`:
+
+| File | From |
+|---|---|
+| `/lib/firmware/wlan/prima/WCNSS_qcom_wlan_nv.bin` | `package/s3ve3g-firmware`: LineageOS `android_device_samsung_msm8226-common` `702c16ad`, `prima/WCNSS_qcom_wlan_nv.bin` (byte-identical to the phone's stock copy, sha256 in the package hash file) |
+| `/lib/firmware/regulatory.db`, `regulatory.db.p7s` | `wireless-regdb`; the kernel checks the signature with its built-in keys (`CFG80211_REQUIRE_SIGNED_REGDB`, `CFG80211_USE_KERNEL_REGDB_KEYS`) |
+
+**Drivers load by name.** Module autoload is off by default on this system, so `S30wcnss` runs
+`modprobe -a qcom_wcnss_pil wcn36xx btqcomsmd` once `wcnss.mdt` is in the firmware path (with
+`s3ve3g.modules=auto` the modalias path would load them too; loading twice is harmless).
+`s3ve3g.wcnss=off` on the kernel command line or `/etc/s3ve3g/wcnss-off` skips it.
+
+**Nothing connects by itself.** `wlan0` stays down. `iw`, `wpa_supplicant` (nl80211, WPA3, WPS,
+EAP, `wpa_cli`, `wpa_passphrase`) and `udhcpc` are there; `/etc/wpa_supplicant.conf` holds only
+the control socket and a commented example:
+
+```
+wpa_passphrase "<ssid>" "<passphrase>" >> /etc/wpa_supplicant.conf
+wpa_supplicant -B -i wlan0 -c /etc/wpa_supplicant.conf
+udhcpc -i wlan0
+```
+
+`iw dev wlan0 scan` works without any of that once `ip link set wlan0 up` has run.
+
+**No debug output on the console.** Leave `wcn36xx`'s `debug_mask` at 0. With debug enabled, every
+DXE interrupt logs at `KERN_DEBUG`, and with `loglevel=8` on the command line each line is drawn on
+the framebuffer console: during a scan that is enough to stall the system. If you need it, lower
+the console level first (`dmesg -n 5`) and read the log with `dmesg -w` over ssh.
 
 ### Updating the system
 

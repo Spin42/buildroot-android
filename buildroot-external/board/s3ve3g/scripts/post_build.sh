@@ -53,3 +53,7 @@ chmod 600 "${TARGET_DIR}/etc/dropbear/dropbear_ed25519_host_key"
 echo "10.0.42.1 $(cut -d' ' -f1,2 "${SSH_DIR}/ssh_host_ed25519_key.pub")" > "${SSH_DIR}/known_hosts"
 
 rm -f "${TARGET_DIR}/etc/init.d/S50telnet" "${TARGET_DIR}/etc/init.d/unudhcpd"
+
+# --- WiFi -----------------------------------------------------------------------------------------
+# Network credentials go in here; git only records 644/755.
+chmod 600 "${TARGET_DIR}/etc/wpa_supplicant.conf"
