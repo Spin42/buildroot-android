@@ -43,7 +43,6 @@ ledtrig-pattern
 qcom-rng
 qcom_stats
 rpm_master_stats
-syscon-reboot-mode
 i2c-qcom-cci
 pwm-clk
 icc-smd-rpm
