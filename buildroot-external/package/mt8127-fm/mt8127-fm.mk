@@ -17,6 +17,7 @@ endef
 
 define MT8127_FM_INSTALL_TARGET_CMDS
 	$(INSTALL) -D -m 0755 $(@D)/tools/fm-radio $(TARGET_DIR)/usr/bin/fm-radio
+	$(INSTALL) -D -m 0755 $(MT8127_FM_PKGDIR)/S36fmradio $(TARGET_DIR)/etc/init.d/S36fmradio
 endef
 
 $(eval $(kernel-module))
