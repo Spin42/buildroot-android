@@ -30,6 +30,23 @@ int main(int argc, char *argv[]) {
 
   sync();
 
+  /*
+   * Fork so the parent exits immediately, allowing the SSH session
+   * to close cleanly. The child performs the actual reboot.
+   */
+  pid_t pid = fork();
+  if (pid < 0) {
+    perror("fork");
+    return 1;
+  }
+  if (pid > 0) {
+    /* parent: exit right away */
+    return 0;
+  }
+
+  /* child: detach from terminal */
+  setsid();
+
   if (syscall(SYS_reboot, LINUX_REBOOT_MAGIC1, LINUX_REBOOT_MAGIC2,
               LINUX_REBOOT_CMD_RESTART2, mode) < 0) {
     perror("reboot");
