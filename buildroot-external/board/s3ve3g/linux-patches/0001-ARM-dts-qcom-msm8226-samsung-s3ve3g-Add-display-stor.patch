@@ -1,0 +1,263 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Sun, 11 Oct 2026 21:02:01 +0200
+Subject: [PATCH] ARM: dts: qcom: msm8226-samsung-s3ve3g: Add display, storage,
+ keys, USB
+
+Describe the bootloader framebuffer, eMMC and SD card, the GPIO keys and
+USB with the SM5502 MUIC as extcon. SMEM sits at 0x0fa00000 on the
+Samsung msm8226 boards, and the panel supply L15 is 3.3 V here.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ .../dts/qcom/qcom-msm8226-samsung-s3ve3g.dts  | 222 +++++++++++++++++-
+ 1 file changed, 221 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm/boot/dts/qcom/qcom-msm8226-samsung-s3ve3g.dts b/arch/arm/boot/dts/qcom/qcom-msm8226-samsung-s3ve3g.dts
+index 288cacd5d..4509c3acd 100644
+--- a/arch/arm/boot/dts/qcom/qcom-msm8226-samsung-s3ve3g.dts
++++ b/arch/arm/boot/dts/qcom/qcom-msm8226-samsung-s3ve3g.dts
+@@ -3,7 +3,15 @@
+  * Copyright (c) 2020, The Linux Foundation. All rights reserved.
+  */
+ 
++/dts-v1/;
++
++#include <dt-bindings/gpio/gpio.h>
++#include <dt-bindings/input/input.h>
++#include <dt-bindings/interrupt-controller/irq.h>
+ #include "qcom-msm8226.dtsi"
++#include "pm8226.dtsi"
++
++/delete-node/ &smem_region;
+ 
+ / {
+ 	model = "Samsung Galaxy S III Neo";
+@@ -11,14 +19,226 @@ / {
+ 	chassis-type = "handset";
+ 
+ 	aliases {
++		display0 = &framebuffer0;
++		mmc0 = &sdhc_1; /* SDC1 eMMC slot */
++		mmc1 = &sdhc_2; /* SDC2 SD card slot */
+ 		serial0 = &blsp1_uart3;
+ 	};
+ 
+ 	chosen {
+-		stdout-path = "serial0:115200n8";
++		#address-cells = <1>;
++		#size-cells = <1>;
++		ranges;
++
++		stdout-path = "display0";
++
++		/*
++		 * Continuous splash set up by the bootloader: MDP RGB_0 pipe,
++		 * 720x1280, 3 bytes per pixel.
++		 */
++		framebuffer0: framebuffer@3200000 {
++			compatible = "simple-framebuffer";
++			reg = <0x03200000 0x800000>;
++			memory-region = <&cont_splash_region>;
++
++			width = <720>;
++			height = <1280>;
++			stride = <(720 * 3)>;
++			format = "r8g8b8";
++		};
++	};
++
++	gpio-keys {
++		compatible = "gpio-keys";
++
++		pinctrl-0 = <&gpio_keys_default>;
++		pinctrl-names = "default";
++
++		label = "GPIO Buttons";
++
++		button-volume-up {
++			label = "Volume Up";
++			gpios = <&tlmm 106 GPIO_ACTIVE_LOW>;
++			linux,code = <KEY_VOLUMEUP>;
++			debounce-interval = <15>;
++		};
++
++		button-volume-down {
++			label = "Volume Down";
++			gpios = <&tlmm 107 GPIO_ACTIVE_LOW>;
++			linux,code = <KEY_VOLUMEDOWN>;
++			debounce-interval = <15>;
++		};
++
++		button-home {
++			label = "Home Key";
++			gpios = <&tlmm 108 GPIO_ACTIVE_LOW>;
++			linux,code = <KEY_HOMEPAGE>;
++			debounce-interval = <15>;
++		};
++	};
++
++	i2c-muic {
++		compatible = "i2c-gpio";
++		sda-gpios = <&tlmm 4 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
++		scl-gpios = <&tlmm 5 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
++		i2c-gpio,delay-us = <2>;
++
++		pinctrl-0 = <&muic_i2c_default>;
++		pinctrl-names = "default";
++
++		#address-cells = <1>;
++		#size-cells = <0>;
++
++		muic: extcon@25 {
++			compatible = "siliconmitus,sm5502-muic";
++			reg = <0x25>;
++
++			interrupts-extended = <&tlmm 52 IRQ_TYPE_EDGE_FALLING>;
++
++			pinctrl-0 = <&muic_int_default>;
++			pinctrl-names = "default";
++		};
++	};
++
++	reserved-memory {
++		cont_splash_region: cont-splash@3200000 {
++			reg = <0x03200000 0x800000>;
++			no-map;
++		};
++
++		smem_region: smem@fa00000 {
++			reg = <0x0fa00000 0x100000>;
++			no-map;
++		};
+ 	};
+ };
+ 
+ &blsp1_uart3 {
+ 	status = "okay";
+ };
++
++&rpm_requests {
++	regulators {
++		compatible = "qcom,rpm-pm8226-regulators";
++
++		/* Panel vdda (DSI PHY) */
++		pm8226_l4: l4 {
++			regulator-min-microvolt = <1200000>;
++			regulator-max-microvolt = <1200000>;
++		};
++
++		pm8226_l6: l6 {
++			regulator-min-microvolt = <1800000>;
++			regulator-max-microvolt = <1800000>;
++			regulator-allow-set-load;
++			regulator-always-on;
++		};
++
++		/* Panel vddio */
++		pm8226_l8: l8 {
++			regulator-min-microvolt = <1800000>;
++			regulator-max-microvolt = <1800000>;
++		};
++
++		pm8226_l10: l10 {
++			regulator-min-microvolt = <1800000>;
++			regulator-max-microvolt = <1800000>;
++		};
++
++		/* Panel vdd: 3.3 V on this board, unlike the other msm8226 Samsungs */
++		pm8226_l15: l15 {
++			regulator-min-microvolt = <3300000>;
++			regulator-max-microvolt = <3300000>;
++		};
++
++		pm8226_l17: l17 {
++			regulator-min-microvolt = <2950000>;
++			regulator-max-microvolt = <2950000>;
++
++			regulator-system-load = <200000>;
++			regulator-allow-set-load;
++			regulator-always-on;
++		};
++
++		pm8226_l18: l18 {
++			regulator-min-microvolt = <2950000>;
++			regulator-max-microvolt = <2950000>;
++		};
++
++		pm8226_l20: l20 {
++			regulator-min-microvolt = <3075000>;
++			regulator-max-microvolt = <3075000>;
++		};
++
++		pm8226_l21: l21 {
++			regulator-min-microvolt = <1800000>;
++			regulator-max-microvolt = <2950000>;
++			regulator-allow-set-load;
++		};
++	};
++};
++
++&sdhc_1 {
++	vmmc-supply = <&pm8226_l17>;
++	vqmmc-supply = <&pm8226_l6>;
++
++	bus-width = <8>;
++	non-removable;
++
++	status = "okay";
++};
++
++&sdhc_2 {
++	vmmc-supply = <&pm8226_l18>;
++	vqmmc-supply = <&pm8226_l21>;
++
++	bus-width = <4>;
++	cd-gpios = <&tlmm 38 GPIO_ACTIVE_LOW>;
++
++	pinctrl-0 = <&sdhc2_default_state &sdhc2_cd_default>;
++	pinctrl-names = "default";
++
++	status = "okay";
++};
++
++&tlmm {
++	gpio_keys_default: gpio-keys-default-state {
++		pins = "gpio106", "gpio107", "gpio108";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-pull-up;
++	};
++
++	muic_i2c_default: muic-i2c-default-state {
++		pins = "gpio4", "gpio5";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-disable;
++	};
++
++	muic_int_default: muic-int-default-state {
++		pins = "gpio52";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-disable;
++	};
++
++	sdhc2_cd_default: sdhc2-cd-default-state {
++		pins = "gpio38";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-disable;
++	};
++};
++
++&usb {
++	extcon = <&muic>, <&muic>;
++	status = "okay";
++};
++
++&usb_hs_phy {
++	extcon = <&muic>;
++	v1p8-supply = <&pm8226_l10>;
++	v3p3-supply = <&pm8226_l20>;
++};

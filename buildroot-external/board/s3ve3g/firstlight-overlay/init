@@ -1,0 +1,62 @@
+#!/bin/sh
+# First-light /init: runs from the initramfs only. It mounts no storage and writes to no block
+# device. It reports on the screen (/dev/tty0), in the kernel log (/dev/kmsg, also kept by lk2nd's
+# ramoops), and to the host over USB: ACM serial (ttyGS0, a shell) and NCM network at 10.0.42.1
+# with telnetd. The hardware watchdog reboots the phone if the kernel hangs, and panic=10 on the
+# cmdline does the same after a panic: the next boot lands in lk2nd fastboot.
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+
+mount -t devtmpfs devtmpfs /dev 2>/dev/null
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mkdir -p /dev/pts /tmp
+mount -t devpts devpts /dev/pts
+mount -t tmpfs tmpfs /tmp
+hostname s3ve3g
+ip link set lo up
+
+# Pet the watchdog from a separate process: it only stops if the kernel itself stops scheduling.
+[ -e /dev/watchdog ] && watchdog -T 20 -t 5 /dev/watchdog
+
+say() {
+	echo "$*" > /dev/tty0
+	echo "firstlight: $*" > /dev/kmsg
+}
+
+banner() {
+	echo "=========================================="
+	echo "  s3ve3g first light"
+	echo "=========================================="
+	uname -a
+	grep MemTotal /proc/meminfo
+	echo "fb0: $(cat /sys/class/graphics/fb0/name 2>/dev/null) $(cat /sys/class/graphics/fb0/virtual_size 2>/dev/null)"
+	echo "watchdog: $([ -e /dev/watchdog ] && echo pinged || echo absent)"
+	echo "cmdline: $(cat /proc/cmdline)"
+}
+
+banner | while IFS= read -r l; do say "$l"; done
+
+# USB in the background: the UDC may take a few seconds to appear.
+(
+	if /usr/sbin/usb-gadget.sh > /tmp/usb-gadget.log 2>&1; then
+		telnetd -l /bin/sh
+	fi
+	say "$(tail -1 /tmp/usb-gadget.log)"
+	# ttyGS0: banner and dmesg once per session, then a shell. Writes block until the host opens
+	# the port, so this runs apart from PID 1's loop.
+	while [ -e /dev/ttyGS0 ]; do
+		{ banner; echo "--- dmesg ---"; dmesg; echo "--- shell ---"; } > /dev/ttyGS0 2>&1
+		setsid sh -c 'exec /bin/sh -i <>/dev/ttyGS0 >&0 2>&0'
+		sleep 1
+	done
+) &
+
+# The screen line ticks every 5 s; the kernel log gets one line a minute so ramoops stays readable.
+n=0
+while true; do
+	line="alive: $(date '+%Y-%m-%d %H:%M:%S') uptime $(cut -d' ' -f1 /proc/uptime)s"
+	echo "$line" > /dev/tty0
+	[ $((n % 12)) -eq 0 ] && echo "firstlight: $line" > /dev/kmsg
+	n=$((n + 1))
+	sleep 5
+done
