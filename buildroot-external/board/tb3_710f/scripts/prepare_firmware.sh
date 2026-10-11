@@ -16,4 +16,7 @@ mkdir -p "$OUT/silead"
 for f in ROMv2_patch_1_0_hdr.bin ROMv2_patch_1_1_hdr.bin WIFI_RAM_CODE_8127 WMT_SOC.cfg; do
 	install -m 0644 "$STOCK/$f" "$OUT/$f"
 done
+# FM receiver DSP patch and coefficients; only the v1 pair has content in the stock image.
+mkdir -p "$OUT/mediatek"
+install -m 0644 "$STOCK/mt6627/mt6627_fm_v1_patch.bin" "$STOCK/mt6627/mt6627_fm_v1_coeff.bin" "$OUT/mediatek/"
 echo "firmware ready in $OUT"
