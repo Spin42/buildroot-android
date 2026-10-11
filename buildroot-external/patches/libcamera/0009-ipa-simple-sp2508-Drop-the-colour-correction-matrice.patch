@@ -1,0 +1,68 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Sun, 11 Oct 2026 10:56:38 +0200
+Subject: [PATCH] ipa: simple: sp2508: Drop the colour correction matrices
+
+The matrices derived from the stock tuning give a strong blue cast with
+the software ISP; without them the output is neutral.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ src/ipa/simple/data/sp2508.yaml | 37 ++-------------------------------
+ 1 file changed, 2 insertions(+), 35 deletions(-)
+
+diff --git a/src/ipa/simple/data/sp2508.yaml b/src/ipa/simple/data/sp2508.yaml
+index 4cf4deb..d2c9a10 100644
+--- a/src/ipa/simple/data/sp2508.yaml
++++ b/src/ipa/simple/data/sp2508.yaml
+@@ -5,7 +5,8 @@
+ #
+ # The simple IPA of v0.5.0 has no lens shading, no gamma and no AGC tuning
+ # keys: BlackLevel, Awb (grey world), Lut (gamma 0.5) and Agc use their
+-# built-in behaviour.
++# built-in behaviour. No colour correction matrix is applied: the stock
++# matrices give a strong blue cast with the v0.5.0 processing order.
+ %YAML 1.1
+ ---
+ version: 1
+@@ -14,40 +15,6 @@ algorithms:
+   - BlackLevel:
+       blackLevel: 0
+   - Awb:
+-  # Stock dynamic CCM (polynomial of the white balance gains) evaluated at
+-  # the stock AWB light sources. The simple IPA of v0.5.0 applies the AWB
+-  # gains after the CCM (diag(gains) * ccm), so each matrix is
+-  # diag(1/g) * CCM * diag(g) with g the light source gains: the result
+-  # equals CCM * diag(g) at that light. The ct keys are the colour
+-  # temperatures the simple IPA estimates from those gains, not the
+-  # physical ones given in the comments.
+-  - Ccm:
+-      ccms:
+-        # Horizon (2300 K): R/G 0.697, B/G 1.453
+-        - ct: 2637
+-          ccm: [  1.0078,  0.6505, -0.9615,
+-                 -0.3565,  2.1680, -0.9536,
+-                 -0.2790, -0.9651,  2.9844 ]
+-        # A (2850 K): R/G 0.817, B/G 1.373
+-        - ct: 3479
+-          ccm: [  1.0078,  0.5453, -0.7620,
+-                 -0.4147,  2.1680, -0.9065,
+-                 -0.3415, -1.0155,  2.9688 ]
+-        # TL84 (4100 K): R/G 1.146, B/G 1.266
+-        - ct: 5467
+-          ccm: [  2.3867, -1.0698, -0.1768,
+-                 -0.5508,  1.7617, -0.3560,
+-                 -0.3149, -0.9290,  2.5234 ]
+-        # DNP (5100 K): R/G 1.088, B/G 1.141
+-        - ct: 6425
+-          ccm: [  1.7461, -0.4847, -0.2294,
+-                 -0.4590,  1.8828, -0.5258,
+-                 -0.3465, -1.0753,  2.5898 ]
+-        # D65 (6500 K): R/G 1.330, B/G 0.950
+-        - ct: 13651
+-          ccm: [  2.4805, -1.1100, -0.0028,
+-                 -0.4677,  1.6133, -0.2486,
+-                 -0.2352, -1.1268,  2.2383 ]
+   - Lut:
+   - Agc:
+ ...
