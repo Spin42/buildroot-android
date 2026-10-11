@@ -59,6 +59,13 @@
 #define CONSYS_FM_I2S_RX	0x80101054
 #define CONSYS_FM_I2S_RX_ON	0x00003f35
 #define CONSYS_FM_I2S_RX_PATH	GENMASK(14, 13)
+/*
+ * CONSYS pin mode of the I2S towards the AFE; WMT sets it for audio
+ * interface state 2 ("BT PCM off, FM I2S", mtk_wcn_soc_aif_ctrl())
+ */
+#define CONSYS_AUDIO_PINMUX	0x80050078
+#define CONSYS_AUDIO_PINMUX_MASK	GENMASK(27, 16)
+#define CONSYS_AUDIO_PINMUX_FM_I2S	0x01110000
 /* CONSYS clock control of the A-die */
 #define CONSYS_TOP_CK_CTRL	0x80101030
 #define CONSYS_TOP_CK_EN_ADIE	BIT(1)
@@ -909,6 +916,71 @@ int mt6627_get_signal(struct mtk_fm *fm, int *rssi_dbm, bool *stereo)
 		return ret;
 	*rssi_dbm = mt6627_rssi_raw(val) * 6 / 16;
 	*stereo = val & FM_RSSI_STEREO;
+	return 0;
+}
+
+/*
+ * Checks that the CONSYS pins carry the FM I2S and sets them through the FM
+ * host interface if the WMT pin control did not.
+ */
+int mt6627_i2s_pinmux(struct mtk_fm *fm)
+{
+	u32 val;
+	int ret;
+
+	ret = mt6627_host_read(fm, CONSYS_AUDIO_PINMUX, &val);
+	if (ret)
+		return ret;
+	if ((val & CONSYS_AUDIO_PINMUX_MASK) == CONSYS_AUDIO_PINMUX_FM_I2S)
+		return 0;
+
+	dev_warn(fm->dev, "CONSYS audio pins 0x%08x, setting FM I2S mode\n", val);
+	return mt6627_host_write(fm, CONSYS_AUDIO_PINMUX,
+				 (val & ~CONSYS_AUDIO_PINMUX_MASK) |
+				 CONSYS_AUDIO_PINMUX_FM_I2S);
+}
+
+/* Writes the whole FM I2S output setup again (FM core, CONSYS, pins). */
+int mt6627_i2s_apply(struct mtk_fm *fm)
+{
+	int ret;
+
+	ret = mt6627_write(fm, FM_I2S_TX_CFG, FM_I2S_TX_ON);
+	if (!ret)
+		ret = mt6627_host_write(fm, CONSYS_FM_I2S_RX,
+					CONSYS_FM_I2S_RX_ON);
+	if (!ret)
+		ret = mt6627_i2s_pinmux(fm);
+	return ret;
+}
+
+/* Prints the registers of the FM I2S output into @buf. */
+int mt6627_i2s_dump(struct mtk_fm *fm, char *buf, size_t size)
+{
+	u32 rx, pins, ck;
+	u16 tx, mute, vol;
+	int ret;
+
+	ret = mt6627_read(fm, FM_I2S_TX_CFG, &tx);
+	if (!ret)
+		ret = mt6627_read(fm, FM_AUDIO_MUTE, &mute);
+	if (!ret)
+		ret = mt6627_read(fm, FM_VOLUME, &vol);
+	if (!ret)
+		ret = mt6627_host_read(fm, CONSYS_FM_I2S_RX, &rx);
+	if (!ret)
+		ret = mt6627_host_read(fm, CONSYS_AUDIO_PINMUX, &pins);
+	if (!ret)
+		ret = mt6627_host_read(fm, CONSYS_TOP_CK_CTRL, &ck);
+	if (ret)
+		return ret;
+
+	snprintf(buf, size,
+		 "fm 0x9b (I2S TX) = 0x%04x\nfm 0x9c (mute) = 0x%04x\n"
+		 "fm 0x7d (volume) = 0x%04x\nhost 0x%08x (I2S RX) = 0x%08x\n"
+		 "host 0x%08x (pins) = 0x%08x\nhost 0x%08x (A-die clock) = 0x%08x\n",
+		 tx, mute, vol, CONSYS_FM_I2S_RX, rx, CONSYS_AUDIO_PINMUX, pins,
+		 CONSYS_TOP_CK_CTRL, ck);
 	return 0;
 }
 

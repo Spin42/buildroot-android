@@ -139,7 +139,7 @@ struct mtk_fm {
 	wait_queue_head_t rds_wait;
 
 	struct dentry *debugfs;
-	char dbg_result[64];
+	char dbg_result[384];
 };
 
 /* fm_link.c: STP transport and event parser */
@@ -168,6 +168,9 @@ int mt6627_set_volume(struct mtk_fm *fm, u8 vol);
 int mt6627_set_mono(struct mtk_fm *fm, bool mono);
 int mt6627_set_deemphasis(struct mtk_fm *fm, bool us75);
 int mt6627_get_signal(struct mtk_fm *fm, int *rssi_dbm, bool *stereo);
+int mt6627_i2s_pinmux(struct mtk_fm *fm);
+int mt6627_i2s_apply(struct mtk_fm *fm);
+int mt6627_i2s_dump(struct mtk_fm *fm, char *buf, size_t size);
 int mt6627_search_begin(struct mtk_fm *fm);
 int mt6627_search_end(struct mtk_fm *fm);
 int mt6627_probe_channel(struct mtk_fm *fm, u16 freq, bool *valid);
