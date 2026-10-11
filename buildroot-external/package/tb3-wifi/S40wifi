@@ -18,6 +18,11 @@ stop() {
 	[ -f "$DHCP_PID" ] && kill "$(cat "$DHCP_PID")" && rm -f "$DHCP_PID"
 	[ -f "$WPA_PID" ] && kill "$(cat "$WPA_PID")" && rm -f "$WPA_PID"
 	ip link set wlan0 down 2>/dev/null
+}
+
+# Unloading the WMT core can hang, so it is not part of stop (which also runs at shutdown).
+unload() {
+	stop
 	modprobe -r wlan_mt mtk_stp_wmt_soc mtk_btif mt8127_consys
 }
 
@@ -29,7 +34,8 @@ reload() {
 case "$1" in
 	start) start ;;
 	stop) stop ;;
-	restart) stop; start ;;
+	restart) stop; sleep 1; start ;;
 	reload) reload ;;
-	*) echo "Usage: $0 {start|stop|restart|reload}"; exit 1 ;;
+	unload) unload ;;
+	*) echo "Usage: $0 {start|stop|restart|reload|unload}"; exit 1 ;;
 esac
