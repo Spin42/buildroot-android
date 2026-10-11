@@ -206,7 +206,8 @@ tuner and RDS (every tablet command killed after a few seconds) and saves the lo
 What to look for if it fails: `op 0xNN timed out` names the first command the firmware did not answer;
 `unexpected FM core id` means FSPI reads work but the A-die is not clocked; a seek that never finds a station
 with good reception points at the thresholds (watch the `rssi/pamd/...` debug lines of the soft-mute tune).
-If the PCM device delivers silence: check `AFE_I2S_CON` (expect 0x8000000d while capturing), the CONSYS pin mux
+If the PCM device delivers silence: check `AFE_I2S_CON` (expect 0x8000000d while capturing: slave, the FM core
+clocks the I2S at 32 kHz) and `AFE_ASRC_CON0` bit 0 (without it the slave input delivers only zeros; it reads back 0), the CONSYS pin mux
 (`echo 'hr 80050078' > .../reg`), FM 0x9b (0xf9ab) and host 0x80101054 (0x3f35).
 
 ## Known gaps and risks
