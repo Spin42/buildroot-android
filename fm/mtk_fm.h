@@ -65,6 +65,8 @@
 #define FM_FREQ_TO_V4L2(f)	((u32)(f) * 160)
 
 #define FM_VOLUME_MAX		15
+/* about -10 dB: full scale clips on loud broadcasts */
+#define FM_VOLUME_DEFAULT	10
 
 #define FM_RDS_FIFO_SIZE	512
 

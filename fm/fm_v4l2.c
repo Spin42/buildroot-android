@@ -651,7 +651,7 @@ static int mtk_fm_probe(struct platform_device *pdev)
 
 	fm->dev = dev;
 	fm->freq = FM_FREQ_DEFAULT;
-	fm->volume = FM_VOLUME_MAX;
+	fm->volume = FM_VOLUME_DEFAULT;
 	mutex_init(&fm->lock);
 	spin_lock_init(&fm->rds_lock);
 	init_waitqueue_head(&fm->rds_wait);
@@ -670,7 +670,7 @@ static int mtk_fm_probe(struct platform_device *pdev)
 	fm->ctrl_mute = v4l2_ctrl_new_std(&fm->ctrls, &mtk_fm_ctrl_ops,
 					  V4L2_CID_AUDIO_MUTE, 0, 1, 1, 0);
 	v4l2_ctrl_new_std(&fm->ctrls, &mtk_fm_ctrl_ops, V4L2_CID_AUDIO_VOLUME,
-			  0, FM_VOLUME_MAX, 1, FM_VOLUME_MAX);
+			  0, FM_VOLUME_MAX, 1, FM_VOLUME_DEFAULT);
 	v4l2_ctrl_new_std_menu(&fm->ctrls, &mtk_fm_ctrl_ops,
 			       V4L2_CID_TUNE_DEEMPHASIS,
 			       V4L2_DEEMPHASIS_75_uS,
