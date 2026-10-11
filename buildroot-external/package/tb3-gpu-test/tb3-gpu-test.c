@@ -1,18 +1,15 @@
 // SPDX-License-Identifier: MIT
 /*
- * Offscreen GPU check: renders a red triangle on a blue background through
- * GBM + EGL + GLES2 on a DRM render node and verifies the pixels.
- * Usage: tb3-gpu-test [/dev/dri/renderD128]
+ * Offscreen GPU check: renders a red triangle on a blue background into a
+ * framebuffer object through EGL (surfaceless platform) and GLES2, and
+ * verifies the pixels.
  */
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <GLES2/gl2.h>
-#include <fcntl.h>
-#include <gbm.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
-#include <unistd.h>
 
 #define W 64
 #define H 64
@@ -41,47 +38,44 @@ static GLuint shader(GLenum type, const char *src)
 	return s;
 }
 
-int main(int argc, char **argv)
+int main(void)
 {
-	const char *node = argc > 1 ? argv[1] : "/dev/dri/renderD128";
 	static const GLfloat tri[] = { -0.8f, -0.8f, 0.8f, -0.8f, 0.0f, 0.8f };
-	EGLint cfg_attr[] = { EGL_SURFACE_TYPE, EGL_PBUFFER_BIT, EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8,
-			      EGL_BLUE_SIZE, 8, EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT, EGL_NONE };
-	EGLint pb_attr[] = { EGL_WIDTH, W, EGL_HEIGHT, H, EGL_NONE };
 	EGLint ctx_attr[] = { EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE };
 	PFNEGLGETPLATFORMDISPLAYEXTPROC get_display;
 	unsigned char px[W * H * 4];
-	struct gbm_device *gbm;
 	struct timespec t0, t1;
 	EGLDisplay dpy;
-	EGLConfig cfg;
-	EGLSurface surf;
 	EGLContext ctx;
-	GLuint prog;
-	EGLint n;
-	int fd, i, centre, corner;
+	GLuint prog, fbo, rb;
+	int i, centre, corner;
 
-	fd = open(node, O_RDWR);
-	if (fd < 0) {
-		perror(node);
-		return 1;
-	}
-	gbm = gbm_create_device(fd);
 	get_display = (PFNEGLGETPLATFORMDISPLAYEXTPROC)eglGetProcAddress("eglGetPlatformDisplayEXT");
-	dpy = get_display(EGL_PLATFORM_GBM_KHR, gbm, NULL);
-	if (!eglInitialize(dpy, NULL, NULL) || !eglChooseConfig(dpy, cfg_attr, &cfg, 1, &n) || n < 1) {
+	dpy = get_display(EGL_PLATFORM_SURFACELESS_MESA, EGL_DEFAULT_DISPLAY, NULL);
+	if (!eglInitialize(dpy, NULL, NULL)) {
 		fprintf(stderr, "EGL init failed: 0x%x\n", eglGetError());
 		return 1;
 	}
 	eglBindAPI(EGL_OPENGL_ES_API);
-	surf = eglCreatePbufferSurface(dpy, cfg, pb_attr);
-	ctx = eglCreateContext(dpy, cfg, EGL_NO_CONTEXT, ctx_attr);
-	if (!eglMakeCurrent(dpy, surf, surf, ctx)) {
+	ctx = eglCreateContext(dpy, EGL_NO_CONFIG_KHR, EGL_NO_CONTEXT, ctx_attr);
+	if (!eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, ctx)) {
 		fprintf(stderr, "eglMakeCurrent failed: 0x%x\n", eglGetError());
 		return 1;
 	}
 	printf("GL_VENDOR   %s\nGL_RENDERER %s\nGL_VERSION  %s\n", glGetString(GL_VENDOR),
 	       glGetString(GL_RENDERER), glGetString(GL_VERSION));
+
+	glGenRenderbuffers(1, &rb);
+	glBindRenderbuffer(GL_RENDERBUFFER, rb);
+	glRenderbufferStorage(GL_RENDERBUFFER, GL_RGB565, W, H);
+	glGenFramebuffers(1, &fbo);
+	glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, rb);
+	if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+		fprintf(stderr, "framebuffer incomplete\n");
+		return 1;
+	}
+	glViewport(0, 0, W, H);
 
 	prog = glCreateProgram();
 	glAttachShader(prog, shader(GL_VERTEX_SHADER, vs_src));

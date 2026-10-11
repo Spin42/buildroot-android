@@ -11,7 +11,7 @@ TB3_GPU_TEST_DEPENDENCIES = mesa3d
 
 define TB3_GPU_TEST_BUILD_CMDS
 	$(TARGET_CC) $(TARGET_CFLAGS) $(TARGET_LDFLAGS) $(@D)/tb3-gpu-test.c -o $(@D)/tb3-gpu-test \
-		-lgbm -lEGL -lGLESv2
+		-lEGL -lGLESv2
 endef
 
 define TB3_GPU_TEST_INSTALL_TARGET_CMDS
