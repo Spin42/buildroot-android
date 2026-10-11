@@ -3,7 +3,7 @@
 `cam/mtk_camsys*.c` is the V4L2 + media-controller driver for the camera path of the TB3-710F. It replaces the debugfs
 prototype (`mtk_cam_proto`, `cam-proto.md`, still built from the same directory; do not load both: they use the same
 register windows and interrupt). The register programming is the one validated with the prototype
-(`seninf-mipi.md`, `isp-capture.md`): CSI-2 `vsync` bit 13 set, RAW10 MIPI-packed, `IMGO_XSIZE` = bytes per line - 1,
+(`seninf-mipi.md`, `isp-capture.md`): CSI-2 `vsync` bit 13 set, RAW10 in MediaTek packing, `IMGO_XSIZE` = bytes per line - 1,
 FBC off, IMGO base address written before the view finder starts.
 
 Build: `make` in the repository root produces `cam/mtk_camsys.ko`, `sensors/sp2508.ko`, `sensors/sp0a20.ko` (and the
@@ -24,7 +24,7 @@ sp0a20 (front) --[1]--> pad 1 /
 | `mtk-seninf` | 0 sink | rear sensor (CSI0) | fixed `SBGGR10_1X10` 1616x1216 |
 | `mtk-seninf` | 1 sink | front sensor (CSI1) | fixed `UYVY8_1X16` 640x480 |
 | `mtk-seninf` | 2 source | towards the ISP | follows the enabled sink |
-| `mtk-camsys capture` | 0 sink | video node | `SBGGR10P` 1616x1216 or `UYVY` 640x480 |
+| `mtk-camsys capture` | 0 sink | video node | `MTISP_SBGGR10` 1616x1216 or `UYVY` 640x480 |
 
 Only one sink link of `mtk-seninf` can be enabled at a time (both sensors share the MCLK and the SENINF1 input): to
 switch sensors disable the enabled link first, then enable the other. The first sensor that binds gets its link enabled
@@ -44,7 +44,7 @@ start. Formats (the size follows from the pixel format; `try_fmt`/`s_fmt` coerce
 
 | Pixel format | Size | bytesperline | sizeimage | Layout |
 |---|---|---|---|---|
-| `V4L2_PIX_FMT_SBGGR10P` (`pBAA`) | 1616x1216 | 2020 | 2 456 320 | MIPI RAW10: 4 pixels in 5 bytes, first pixel blue |
+| `V4L2_PIX_FMT_MTISP_SBGGR10` (`MBBA`) | 1616x1216 | 2020 | 2 456 320 | MediaTek RAW10: little-endian bitstream, 4 pixels in 5 bytes, first pixel blue |
 | `V4L2_PIX_FMT_UYVY` | 640x480 | 1280 | 614 400 | YUV 4:2:2 |
 
 The pitch rule of `isp-capture.md` is applied: RAW10 pitch is a multiple of 8 pixels times 5/4, YUV is 2 bytes per
@@ -181,9 +181,9 @@ media-ctl -l '"sp0a20 0-0021":0 -> "mtk-seninf":1 [0]'
 media-ctl -l '"sp2508 0-003c":0 -> "mtk-seninf":0 [1]'
 media-ctl -V '"sp2508 0-003c":0 [fmt:SBGGR10_1X10/1616x1216]'
 media-ctl -V '"mtk-seninf":0 [fmt:SBGGR10_1X10/1616x1216]'
-v4l2-ctl -d /dev/video0 --set-fmt-video=width=1616,height=1216,pixelformat=pBAA
+v4l2-ctl -d /dev/video0 --set-fmt-video=width=1616,height=1216,pixelformat=MBBA
 v4l2-ctl -d /dev/video0 --stream-mmap=4 --stream-count=30 --stream-to=/tmp/rear.raw
-yavta -f SBGGR10P -s 1616x1216 -n 4 -c10 -F/tmp/rear-#.bin /dev/video0     # alternative
+yavta -f MBBA -s 1616x1216 -n 4 -c10 -F/tmp/rear-#.bin /dev/video0     # alternative
 # colour bars from the sensor: v4l2-ctl -d /dev/v4l-subdev<N> --set-ctrl test_pattern=1
 ```
 
@@ -201,13 +201,17 @@ ffmpeg -f rawvideo -pix_fmt uyvy422 -s 640x480 -i /tmp/front.raw -frames:v 1 fro
 
 Checks: `v4l2-ctl -d /dev/video0 --list-formats-ext`, `v4l2-compliance -d /dev/video0 -s` (needs the link set up first),
 the reported fps from `--stream-mmap` (about 21 fps rear, about 30 fps front), and `cat /proc/interrupts | grep camera`.
-Unpack a RAW10 frame on the host (4 MSB bytes then one byte holding the four 2-bit LSB pairs, pixel 0 in the low bits):
+Unpack a RAW10 frame on the host. Each line is a little-endian bitstream: pixel i occupies bits [10i, 10i + 10), LSB
+first, so every 5 bytes hold 4 pixels (this is not the MIPI CSI-2 layout of `SBGGR10P`):
 
 ```python
 import numpy as np
-b = np.fromfile("/tmp/rear.raw", np.uint8)[:2020 * 1216].reshape(1216, 404, 5)
-lsb = b[:, :, 4:5] >> (2 * np.arange(4)) & 3
-raw = (b[:, :, :4].astype(np.uint16) << 2 | lsb).reshape(1216, 1616)   # 1616 pixels per line
+b = np.fromfile("/tmp/rear.raw", np.uint8)[:2020 * 1216].reshape(1216, 404, 5).astype(np.uint16)
+p0 = b[..., 0] | (b[..., 1] & 0x03) << 8
+p1 = b[..., 1] >> 2 | (b[..., 2] & 0x0f) << 6
+p2 = b[..., 2] >> 4 | (b[..., 3] & 0x3f) << 4
+p3 = b[..., 3] >> 6 | b[..., 4] << 2
+raw = np.stack([p0, p1, p2, p3], -1).reshape(1216, 1616)   # 1616 pixels per line
 ```
 
 ## Known limitations and untested points

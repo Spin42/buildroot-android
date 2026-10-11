@@ -16,7 +16,7 @@ Layout:
   `tools/mtk_tuning_extract.py` (`docs/tuning.md`)
 - `tools/raw2rgb.py`: host processor for SP2508 RAW10 frames using the stock tuning
 - `ipa/simple/sp2508.yaml`, `libcamera-patches/`: libcamera v0.5.0 software ISP tuning, SP2508 sensor helper and
-  properties
+  properties, MediaTek ISP packed Bayer input (`MTISP_SBGGR10`)
 
 Starting points (local): the stock kernel source in `~/Projects/lenovo_tab3_7/vendor-kernel/szazs89-tb3`, the stock
 `libcamdrv.so` in `~/Projects/lenovo_tab3_7/dump/bootloader_analysis/system_extract/lib/`, the hardware notes in

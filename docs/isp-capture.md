@@ -357,6 +357,14 @@ multiple of 8 pixels (10 bytes), for BAYER12 to a multiple of 4 (6 bytes), BAYER
 of 2 bytes; no larger alignment check exists in the stock code [C]. PB = "bytes per 4 pixels" is an interpretation of
 the constants 4/5/6/8 that makes the formulas yield byte counts for packed RAW8/10/12 and 16-bit YUV [I].
 
+Packed RAW layout (BAYER10 verified on hardware, 8 and 12 by analogy [I]): each line is a continuous little-endian
+bitstream, pixel i occupying bits [i * bpp, (i + 1) * bpp), LSB first. For RAW10, per 5 bytes b0..b4:
+`p0 = b0 | (b1 & 3) << 8`, `p1 = b1 >> 2 | (b2 & 0xf) << 6`, `p2 = b2 >> 4 | (b3 & 0x3f) << 4`, `p3 = b3 >> 6 | b4 << 2`.
+This is not the MIPI CSI-2 RAW10 layout (four MSB bytes then a byte of LSB pairs): unpacking a frame that way gives an
+inter-channel correlation of 0.06 against 0.99 with the bitstream unpacking. The pack codes select 8/10/12-bit packed
+output only; the ISP has neither MIPI-packed nor 16-bit unpacked RAW output. V4L2 calls this layout
+`V4L2_PIX_FMT_MTISP_S*` (the MT8183 ISP pass 1 uses the same packing).
+
 ### 6.2 Base address and buffer ring
 
 The vendor never writes IMGO_BASE_ADDR from userspace. The buffers are enqueued to the kernel ring

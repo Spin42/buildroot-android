@@ -292,12 +292,15 @@ world, the shading table follows the light source nearest to the measured gains.
 
 ### libcamera v0.5.0 (simple pipeline, software ISP)
 
-Apply `libcamera-patches/000[1-3]*.patch` on top of v0.5.0 plus the MT8127 simple-pipeline commit:
+Apply `libcamera-patches/000[1-7]*.patch` in order on top of v0.5.0 plus the MT8127 simple-pipeline commit:
 
 1. `CameraSensorHelperSp2508`: gain = code / 16, so AGC works in real gain units (1x-9x).
 2. `camera_sensor_properties` entry `sp2508`: test patterns (off, colour bars), delays 2/2/2/2.
 3. `src/ipa/simple/data/sp2508.yaml` (same content as `ipa/simple/sp2508.yaml`), installed as
    `share/libcamera/ipa/simple/sp2508.yaml` and picked by sensor model name.
+4. to 7. The MediaTek ISP packed Bayer formats (`SBGGR10_MTISP` and the other orders, 10 and 12 bits), mapped to
+   the kernel `V4L2_PIX_FMT_MTISP_*` fourccs, and their software ISP input: each line is unpacked to 16 bits per
+   pixel while copied to the line buffers, then debayered and measured like unpacked RAW10/RAW12.
 
 The tuning file sets the black level (16 at 10 bits) and five CCMs. The simple IPA of v0.5.0 computes
 `diag(awb gains) * ccm`, i.e. it applies the white balance gains after the matrix, while the stock (and the
