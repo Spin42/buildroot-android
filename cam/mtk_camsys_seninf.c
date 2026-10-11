@@ -10,6 +10,8 @@
 #include <linux/minmax.h>
 #include <media/v4l2-subdev.h>
 
+#include <media/videobuf2-v4l2.h>
+
 #include "mtk_camsys.h"
 
 #define CSI2_SETTLE		14
@@ -36,8 +38,8 @@ const struct mtk_camsys_port_cfg mtk_camsys_port_cfgs[MTK_CAMSYS_NUM_PORTS] = {
 	[MTK_CAMSYS_PORT_FRONT] = {
 		.mbus_code = MEDIA_BUS_FMT_UYVY8_1X16,
 		.pixelformat = V4L2_PIX_FMT_UYVY,
-		.width = 640,
-		.height = 480,
+		.width = 632,
+		.height = 474,
 		.yuv = true,
 		.csi_port = 1,
 		.tg_pad = 4,
@@ -346,6 +348,9 @@ void mtk_camsys_csi2_set_active(struct mtk_camsys *cam, int port)
 				 csi2_pad_cfg(cam, MTK_CSI2_PAD_SRC));
 		v4l2_subdev_unlock_state(state);
 	}
+
+	if (port >= 0 && !vb2_is_busy(&cam->queue))
+		mtk_camsys_video_set_default_format(cam);
 }
 
 static int csi2_link_setup(struct media_entity *entity, const struct media_pad *local,

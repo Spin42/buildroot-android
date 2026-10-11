@@ -63,8 +63,8 @@ static int mtk_camsys_bound(struct v4l2_async_notifier *nf, struct v4l2_subdev *
 	if (pad < 0)
 		return pad;
 
-	/* The first sensor that shows up feeds the ISP; the other link starts disabled. */
-	if (cam->active_port < 0)
+	/* The rear sensor feeds the ISP by default; the front link is enabled at completion only without it. */
+	if (port == MTK_CAMSYS_PORT_REAR && cam->active_port < 0)
 		flags = MEDIA_LNK_FL_ENABLED;
 
 	ret = media_create_pad_link(&sd->entity, pad, &cam->csi2.entity, port, flags);
@@ -96,6 +96,18 @@ static int mtk_camsys_complete(struct v4l2_async_notifier *nf)
 	ret = v4l2_device_register_subdev_nodes(&cam->v4l2_dev);
 	if (ret)
 		return ret;
+
+	if (cam->active_port < 0 && cam->ports[MTK_CAMSYS_PORT_FRONT].sensor) {
+		struct v4l2_subdev *sensor = cam->ports[MTK_CAMSYS_PORT_FRONT].sensor;
+		struct media_link *link = media_entity_find_link(&sensor->entity.pads[0],
+								 &cam->csi2_pads[MTK_CAMSYS_PORT_FRONT]);
+
+		if (link) {
+			ret = media_entity_setup_link(link, MEDIA_LNK_FL_ENABLED);
+			if (ret)
+				return ret;
+		}
+	}
 
 	if (!vb2_is_busy(&cam->queue))
 		mtk_camsys_video_set_default_format(cam);
