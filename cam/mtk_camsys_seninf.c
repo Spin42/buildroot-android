@@ -23,6 +23,8 @@ const struct mtk_camsys_port_cfg mtk_camsys_port_cfgs[MTK_CAMSYS_NUM_PORTS] = {
 		.pixelformat = V4L2_PIX_FMT_MTISP_SBGGR10,
 		.width = 1616,
 		.height = 1216,
+		.sensor_width = 1616,
+		.sensor_height = 1216,
 		.yuv = false,
 		.csi_port = 0,
 		.tg_pad = 0,
@@ -37,16 +39,18 @@ const struct mtk_camsys_port_cfg mtk_camsys_port_cfgs[MTK_CAMSYS_NUM_PORTS] = {
 	},
 	[MTK_CAMSYS_PORT_FRONT] = {
 		.mbus_code = MEDIA_BUS_FMT_UYVY8_1X16,
-		.pixelformat = V4L2_PIX_FMT_UYVY,
+		.pixelformat = V4L2_PIX_FMT_YUYV,	/* the TG grab from sample 0 swaps the byte pairs */
 		.width = 632,
 		.height = 474,
+		.sensor_width = 640,
+		.sensor_height = 480,
 		.yuv = true,
 		.csi_port = 1,
 		.tg_pad = 4,
 		.tg_src = 8,
 		.tg_fmt = 3,
 		.pixid = 0,
-		.vf_delay = 1,
+		.vf_delay = 0,		/* a delay of 1 keeps the continuous TG from starting a frame */
 		.ecc_order = 1,
 		.vsync_pol = 1,
 		.sync_a = 1,
@@ -204,10 +208,11 @@ static struct mtk_camsys *sd_to_cam(struct v4l2_subdev *sd)
 	return container_of(sd, struct mtk_camsys, csi2);
 }
 
-static void csi2_fill_format(struct v4l2_mbus_framefmt *fmt, const struct mtk_camsys_port_cfg *cfg)
+/* Sink pads carry the sensor frame, the source pad the window the TG grabs from it. */
+static void csi2_fill_format(struct v4l2_mbus_framefmt *fmt, const struct mtk_camsys_port_cfg *cfg, bool sink)
 {
-	fmt->width = cfg->width;
-	fmt->height = cfg->height;
+	fmt->width = sink ? cfg->sensor_width : cfg->width;
+	fmt->height = sink ? cfg->sensor_height : cfg->height;
 	fmt->code = cfg->mbus_code;
 	fmt->field = V4L2_FIELD_NONE;
 	if (cfg->yuv) {
@@ -236,7 +241,8 @@ static int csi2_init_state(struct v4l2_subdev *sd, struct v4l2_subdev_state *sta
 	unsigned int i;
 
 	for (i = 0; i < MTK_CSI2_NUM_PADS; i++)
-		csi2_fill_format(v4l2_subdev_state_get_format(state, i), csi2_pad_cfg(cam, i));
+		csi2_fill_format(v4l2_subdev_state_get_format(state, i), csi2_pad_cfg(cam, i),
+				 i != MTK_CSI2_PAD_SRC);
 	return 0;
 }
 
@@ -245,7 +251,7 @@ static int csi2_set_fmt(struct v4l2_subdev *sd, struct v4l2_subdev_state *state,
 	struct mtk_camsys *cam = sd_to_cam(sd);
 
 	/* The formats are fixed by the sensors: the request is ignored and the current format returned. */
-	csi2_fill_format(&fmt->format, csi2_pad_cfg(cam, fmt->pad));
+	csi2_fill_format(&fmt->format, csi2_pad_cfg(cam, fmt->pad), fmt->pad != MTK_CSI2_PAD_SRC);
 	*v4l2_subdev_state_get_format(state, fmt->pad) = fmt->format;
 	return 0;
 }
@@ -269,10 +275,15 @@ static int csi2_enum_frame_size(struct v4l2_subdev *sd, struct v4l2_subdev_state
 	cfg = csi2_pad_cfg(sd_to_cam(sd), fse->pad);
 	if (fse->code != cfg->mbus_code)
 		return -EINVAL;
-	fse->min_width = cfg->width;
-	fse->max_width = cfg->width;
-	fse->min_height = cfg->height;
-	fse->max_height = cfg->height;
+	if (fse->pad == MTK_CSI2_PAD_SRC) {
+		fse->min_width = cfg->width;
+		fse->min_height = cfg->height;
+	} else {
+		fse->min_width = cfg->sensor_width;
+		fse->min_height = cfg->sensor_height;
+	}
+	fse->max_width = fse->min_width;
+	fse->max_height = fse->min_height;
 	return 0;
 }
 
@@ -345,7 +356,7 @@ void mtk_camsys_csi2_set_active(struct mtk_camsys *cam, int port)
 	state = v4l2_subdev_lock_and_get_active_state(&cam->csi2);
 	if (state) {
 		csi2_fill_format(v4l2_subdev_state_get_format(state, MTK_CSI2_PAD_SRC),
-				 csi2_pad_cfg(cam, MTK_CSI2_PAD_SRC));
+				 csi2_pad_cfg(cam, MTK_CSI2_PAD_SRC), false);
 		v4l2_subdev_unlock_state(state);
 	}
 

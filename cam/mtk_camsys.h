@@ -42,7 +42,8 @@ enum mtk_camsys_port_id {
 struct mtk_camsys_port_cfg {
 	u32 mbus_code;
 	u32 pixelformat;
-	u16 width, height;
+	u16 width, height;		/* captured frame: the TG grab window */
+	u16 sensor_width, sensor_height;	/* frame the sensor sends */
 	bool yuv;
 	u8 csi_port;		/* MIPI RX block the sensor is wired to */
 	u8 tg_pad, tg_src, tg_fmt;
