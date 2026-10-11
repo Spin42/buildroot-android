@@ -1,0 +1,75 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Sun, 11 Oct 2026 09:38:30 +0200
+Subject: [PATCH 6/7] libcamera: bayer_format: Add MediaTek ISP packing
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ include/libcamera/internal/bayer_format.h |  1 +
+ src/libcamera/bayer_format.cpp            | 20 ++++++++++++++++++++
+ 2 files changed, 21 insertions(+)
+
+diff --git a/include/libcamera/internal/bayer_format.h b/include/libcamera/internal/bayer_format.h
+index 5c14bb5..3374f51 100644
+--- a/include/libcamera/internal/bayer_format.h
++++ b/include/libcamera/internal/bayer_format.h
+@@ -36,6 +36,7 @@ public:
+ 		IPU3 = 2,
+ 		PISP1 = 3,
+ 		PISP2 = 4,
++		MTISP = 5,
+ 	};
+ 
+ 	constexpr BayerFormat()
+diff --git a/src/libcamera/bayer_format.cpp b/src/libcamera/bayer_format.cpp
+index 3dab91f..a93f6b2 100644
+--- a/src/libcamera/bayer_format.cpp
++++ b/src/libcamera/bayer_format.cpp
+@@ -65,6 +65,8 @@ namespace libcamera {
+  * \brief Format uses PISP mode 1 compression
+  * \var BayerFormat::Packing::PISP2
+  * \brief Format uses PISP mode 2 compression
++ * \var BayerFormat::Packing::MTISP
++ * \brief Format uses MediaTek ISP packing (little-endian bitstream)
+  */
+ 
+ namespace {
+@@ -128,6 +130,14 @@ const std::map<BayerFormat, Formats, BayerFormatComparator> bayerToFormat{
+ 		{ formats::SGRBG10_IPU3, V4L2PixelFormat(V4L2_PIX_FMT_IPU3_SGRBG10) } },
+ 	{ { BayerFormat::RGGB, 10, BayerFormat::Packing::IPU3 },
+ 		{ formats::SRGGB10_IPU3, V4L2PixelFormat(V4L2_PIX_FMT_IPU3_SRGGB10) } },
++	{ { BayerFormat::BGGR, 10, BayerFormat::Packing::MTISP },
++		{ formats::SBGGR10_MTISP, V4L2PixelFormat(V4L2_PIX_FMT_MTISP_SBGGR10) } },
++	{ { BayerFormat::GBRG, 10, BayerFormat::Packing::MTISP },
++		{ formats::SGBRG10_MTISP, V4L2PixelFormat(V4L2_PIX_FMT_MTISP_SGBRG10) } },
++	{ { BayerFormat::GRBG, 10, BayerFormat::Packing::MTISP },
++		{ formats::SGRBG10_MTISP, V4L2PixelFormat(V4L2_PIX_FMT_MTISP_SGRBG10) } },
++	{ { BayerFormat::RGGB, 10, BayerFormat::Packing::MTISP },
++		{ formats::SRGGB10_MTISP, V4L2PixelFormat(V4L2_PIX_FMT_MTISP_SRGGB10) } },
+ 	{ { BayerFormat::BGGR, 12, BayerFormat::Packing::None },
+ 		{ formats::SBGGR12, V4L2PixelFormat(V4L2_PIX_FMT_SBGGR12) } },
+ 	{ { BayerFormat::GBRG, 12, BayerFormat::Packing::None },
+@@ -144,6 +154,14 @@ const std::map<BayerFormat, Formats, BayerFormatComparator> bayerToFormat{
+ 		{ formats::SGRBG12_CSI2P, V4L2PixelFormat(V4L2_PIX_FMT_SGRBG12P) } },
+ 	{ { BayerFormat::RGGB, 12, BayerFormat::Packing::CSI2 },
+ 		{ formats::SRGGB12_CSI2P, V4L2PixelFormat(V4L2_PIX_FMT_SRGGB12P) } },
++	{ { BayerFormat::BGGR, 12, BayerFormat::Packing::MTISP },
++		{ formats::SBGGR12_MTISP, V4L2PixelFormat(V4L2_PIX_FMT_MTISP_SBGGR12) } },
++	{ { BayerFormat::GBRG, 12, BayerFormat::Packing::MTISP },
++		{ formats::SGBRG12_MTISP, V4L2PixelFormat(V4L2_PIX_FMT_MTISP_SGBRG12) } },
++	{ { BayerFormat::GRBG, 12, BayerFormat::Packing::MTISP },
++		{ formats::SGRBG12_MTISP, V4L2PixelFormat(V4L2_PIX_FMT_MTISP_SGRBG12) } },
++	{ { BayerFormat::RGGB, 12, BayerFormat::Packing::MTISP },
++		{ formats::SRGGB12_MTISP, V4L2PixelFormat(V4L2_PIX_FMT_MTISP_SRGGB12) } },
+ 	{ { BayerFormat::BGGR, 14, BayerFormat::Packing::None },
+ 		{ formats::SBGGR14, V4L2PixelFormat(V4L2_PIX_FMT_SBGGR14) } },
+ 	{ { BayerFormat::GBRG, 14, BayerFormat::Packing::None },
+@@ -327,6 +345,8 @@ std::ostream &operator<<(std::ostream &out, const BayerFormat &f)
+ 		out << "-PISP1";
+ 	else if (f.packing == BayerFormat::Packing::PISP2)
+ 		out << "-PISP2";
++	else if (f.packing == BayerFormat::Packing::MTISP)
++		out << "-MTISP";
+ 
+ 	return out;
+ }
