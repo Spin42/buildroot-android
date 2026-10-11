@@ -20,7 +20,7 @@
 const struct mtk_camsys_port_cfg mtk_camsys_port_cfgs[MTK_CAMSYS_NUM_PORTS] = {
 	[MTK_CAMSYS_PORT_REAR] = {
 		.mbus_code = MEDIA_BUS_FMT_SBGGR10_1X10,
-		.pixelformat = V4L2_PIX_FMT_SBGGR10P,
+		.pixelformat = V4L2_PIX_FMT_MTISP_SBGGR10,
 		.width = 1616,
 		.height = 1216,
 		.yuv = false,

@@ -16,7 +16,7 @@
 
 u32 mtk_camsys_bytesperline(const struct mtk_camsys_port_cfg *cfg)
 {
-	/* RAW10 packs 4 pixels in 5 bytes and the pitch is a multiple of 8 pixels; YUV 4:2:2 takes 2 bytes. */
+	/* MediaTek RAW10 packs 4 pixels in 5 bytes and the pitch is a multiple of 8 pixels; YUV 4:2:2 takes 2 bytes. */
 	return cfg->yuv ? cfg->width * 2 : roundup(cfg->width, 8) * 5 / 4;
 }
 

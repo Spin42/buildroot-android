@@ -21,6 +21,11 @@
 
 #include "cam_regs.h"
 
+/* MediaTek ISP packed Bayer, for kernels whose headers predate the format. */
+#ifndef V4L2_PIX_FMT_MTISP_SBGGR10
+#define V4L2_PIX_FMT_MTISP_SBGGR10	v4l2_fourcc('M', 'B', 'B', 'A')
+#endif
+
 #define MTK_CAMSYS_NAME		"mtk-camsys"
 
 enum mtk_camsys_port_id {
