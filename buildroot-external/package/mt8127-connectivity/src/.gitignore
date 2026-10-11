@@ -1,0 +1,11 @@
+# firmware blobs from the stock system, not redistributable
+/fw/
+*.o
+*.ko
+*.mod*
+.*.cmd
+Module.symvers
+modules.order
+*.o.d
+*.cmd
+.*.cmd

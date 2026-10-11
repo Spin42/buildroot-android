@@ -1,0 +1,14 @@
+# WMT core, STP and the BTIF link (the hardware glue is in ../consys, the BTIF driver in ../btif)
+ccflags-y += -I$(src)/linux/include -I$(src)/linux/pri/include -I$(src)/core/include -I$(src)/include \
+	     -I$(src)/../btif/inc -I$(src)/../consys/include -I$(src)/compat -I$(src)/../compat \
+	     -DWMT_PLAT_ALPS -DWMT_IDC_SUPPORT=0 \
+	     -Wno-missing-prototypes -Wno-missing-declarations -Wno-old-style-declaration -Wno-undef
+
+obj-m += mtk_stp_wmt_soc.o
+mtk_stp_wmt_soc-y := core/wmt_core.o core/wmt_ctrl.o core/wmt_func.o core/wmt_ic_soc.o core/wmt_lib.o \
+	core/wmt_conf.o core/stp_core.o core/psm_core.o core/btm_core.o \
+	linux/pri/wmt_dev.o linux/pri/wmt_exp.o linux/pri/stp_btif.o linux/pri/stp_exp.o linux/pri/stp_dbg.o \
+	linux/pub/osal.o linux/pub/bgw_desense.o
+
+# Bring-up helper, see test/wmt_wifi_ctl.c
+obj-m += test/wmt_wifi_ctl.o

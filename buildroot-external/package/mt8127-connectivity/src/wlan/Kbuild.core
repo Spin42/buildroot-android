@@ -1,0 +1,8 @@
+wlan_mt-y += $(W)/common/dump.o $(W)/common/wlan_lib.o $(W)/common/wlan_oid.o
+wlan_mt-y += $(W)/nic/nic.o $(W)/nic/nic_tx.o $(W)/nic/nic_rx.o $(W)/nic/nic_pwr_mgt.o \
+	$(W)/nic/cmd_buf.o $(W)/nic/que_mgt.o $(W)/nic/nic_cmd_event.o
+wlan_mt-y += $(W)/mgmt/ais_fsm.o $(W)/mgmt/aaa_fsm.o $(W)/mgmt/assoc.o $(W)/mgmt/auth.o $(W)/mgmt/bss.o \
+	$(W)/mgmt/cnm.o $(W)/mgmt/cnm_timer.o $(W)/mgmt/cnm_mem.o $(W)/mgmt/hem_mbox.o $(W)/mgmt/mib.o \
+	$(W)/mgmt/privacy.o $(W)/mgmt/rate.o $(W)/mgmt/rlm.o $(W)/mgmt/rlm_domain.o $(W)/mgmt/rlm_obss.o \
+	$(W)/mgmt/rlm_protection.o $(W)/mgmt/rsn.o $(W)/mgmt/saa_fsm.o $(W)/mgmt/scan.o $(W)/mgmt/scan_fsm.o \
+	$(W)/mgmt/sec_fsm.o $(W)/mgmt/swcr.o $(W)/mgmt/roaming_fsm.o $(W)/mgmt/stats.o
