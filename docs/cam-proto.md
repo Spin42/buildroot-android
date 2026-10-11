@@ -123,8 +123,8 @@ reports `bytes_changed=.../... min max mean first=<hex>`. The buffer is pre-fill
 untouched buffer is detected (`-ENODATA`). Return codes: `-ETIMEDOUT` no frame done interrupt, `-EIO` TG1_ERR /
 IMGO_ERR / DMA_ERR in INT_STATUS, `-ENODATA` done but nothing written.
 
-`frame_info` gives `width`, `height`, `stride_bytes`, `size`. RAW10 is the MTK packed layout assumed by the
-stock geometry (4 pixels in 5 bytes, `stride_bytes = width * 5 / 4`, byte/bit order not verified). YUV422 is
+`frame_info` gives `width`, `height`, `stride_bytes`, `size`. RAW10 is the MTK packed layout of the
+stock geometry (4 pixels in 5 bytes, `stride_bytes = width * 5 / 4`, little-endian bitstream, see `isp-capture.md` 6.1). YUV422 is
 2 bytes per pixel, expected UYVY. Quick looks: `python3 -c` unpacking, or for YUV `ffmpeg -f rawvideo -pix_fmt
 uyvy422 -s 632x474 -i frame.bin out.png` (stride equals `2*width`).
 
@@ -183,7 +183,7 @@ Both sensors capture a complete frame to DRAM with the module as committed:
 | `csi2_vsync` | **1 is required**: with 0 the receiver sees frame packets (22 Hz VS1/SOF1) but no pixels, detected size stays 0 and no frame completes | **1 is required** (same symptom) |
 | Detected size (`SENINF1` +0x2c) | 1616 x 1216 (hi = pixels, lo = lines) | 1280 x 480 (hi = bytes per line, lo = lines: 640 x 480 UYVY) |
 | ISP interrupts | `INT_STATUS 0x1401` = VS1 + PASS1_DON + SOF1 | same |
-| Output | RAW10, standard MIPI packing (4 pixels in 5 bytes: 4 MSB bytes then one byte of 2 LSBs each), stride 2000 bytes for 1600 pixels | UYVY 8-bit, stride 1264 bytes for 632 pixels |
+| Output | RAW10, MediaTek packing (4 pixels in 5 bytes as a little-endian bitstream, pixel i in bits [10i, 10i + 10)), stride 2000 bytes for 1600 pixels | UYVY 8-bit, stride 1264 bytes for 632 pixels |
 | Result | `docs/samples/sp2508-*`: colour bars decode into proper bars, a real scene decodes into a recognisable image (noisy: no black level/gain/denoise) | `docs/samples/sp0a20-first-frame.jpg`: a room, orange cast (no white balance), brightened x4.5 |
 
 Confirmed by the hardware: the register recipes of docs/seninf-mipi.md and docs/isp-capture.md work without the stock

@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: GPL-2.0
 """Reference processor for SP2508 RAW10 frames using the stock tuning data.
 
-Input: one V4L2_PIX_FMT_SBGGR10P frame (1616x1216, 2020 bytes per line, MIPI
-RAW10: four MSB bytes then one byte holding the four 2-bit LSB pairs, pixel 0
-in the low bits). Further frames in the file are ignored unless --frame is
-given.
+Input: one V4L2_PIX_FMT_MTISP_SBGGR10 frame (1616x1216, 2020 bytes per line,
+MediaTek packed RAW10: each line is a little-endian bitstream, pixel i in bits
+[10i, 10i + 10), LSB first). Further frames in the file are ignored unless
+--frame is given.
 
 Pipeline (the order of the MediaTek ISP): crop to the 1600x1200 image area at
 (2, 2), black level, defect pixel clamp, lens shading (stock spline tables),
@@ -46,9 +46,12 @@ def unpack_raw10(path, frame):
     b = np.fromfile(path, np.uint8, count=size, offset=frame * size)
     if b.size != size:
         sys.exit('%s: short frame (%d of %d bytes)' % (path, b.size, size))
-    b = b.reshape(HEIGHT, STRIDE // 5, 5)
-    lsb = (b[:, :, 4:5] >> (2 * np.arange(4, dtype=np.uint8))) & 3
-    raw = (b[:, :, :4].astype(np.uint16) << 2) | lsb
+    b = b.reshape(HEIGHT, STRIDE // 5, 5).astype(np.uint16)
+    raw = np.empty((HEIGHT, STRIDE // 5, 4), np.uint16)
+    raw[:, :, 0] = b[:, :, 0] | (b[:, :, 1] & 0x03) << 8
+    raw[:, :, 1] = b[:, :, 1] >> 2 | (b[:, :, 2] & 0x0f) << 6
+    raw[:, :, 2] = b[:, :, 2] >> 4 | (b[:, :, 3] & 0x3f) << 4
+    raw[:, :, 3] = b[:, :, 3] >> 6 | b[:, :, 4] << 2
     return raw.reshape(HEIGHT, WIDTH)
 
 
