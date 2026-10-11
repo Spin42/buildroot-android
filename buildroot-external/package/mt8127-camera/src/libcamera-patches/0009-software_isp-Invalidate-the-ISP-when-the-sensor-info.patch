@@ -1,0 +1,28 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Sun, 11 Oct 2026 11:03:13 +0200
+Subject: [PATCH] software_isp: Invalidate the ISP when the sensor information
+ is missing
+
+Without the sensor information the IPA is not initialised, but the
+software ISP still reported itself valid. The simple pipeline then
+waits forever for metadata on every request, which stalls cameras that
+bypass the ISP, such as YUV sensors.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ src/libcamera/software_isp/software_isp.cpp | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/src/libcamera/software_isp/software_isp.cpp b/src/libcamera/software_isp/software_isp.cpp
+index 28e2a36..fc66222 100644
+--- a/src/libcamera/software_isp/software_isp.cpp
++++ b/src/libcamera/software_isp/software_isp.cpp
+@@ -137,6 +137,7 @@ SoftwareIsp::SoftwareIsp(PipelineHandler *pipe, const CameraSensor *sensor,
+ 	int ret = sensor->sensorInfo(&sensorInfo);
+ 	if (ret) {
+ 		LOG(SoftwareIsp, Error) << "Camera sensor information not available";
++		debayer_.reset();
+ 		return;
+ 	}
+ 
