@@ -6,18 +6,18 @@
 # so that the ADSP has access to firmware files, DSP libraries, ACDB data,
 # and sensor configuration when it boots.
 #
+# Board-specific configuration is read from /etc/hexagonfs.conf which is
+# provided by the board overlay.
+#
 
-HEXFS="/usr/share/qcom/sdm632/Fairphone/fp3"
+CONF="/etc/hexagonfs.conf"
 
-# Android partition mount points
-MNT_VENDOR="/mnt/vendor"
-MNT_PERSIST="/mnt/persist"
-MNT_DSP="/mnt/dsp"
+if [ ! -f "$CONF" ]; then
+	echo "S28hexagonfs: $CONF not found, skipping"
+	exit 0
+fi
 
-# Android partition devices (Fairphone 3 specific)
-DEV_VENDOR="/dev/mmcblk0p32"
-DEV_PERSIST="/dev/mmcblk0p34"
-DEV_DSP="/dev/mmcblk0p13"
+. "$CONF"
 
 populate_socinfo() {
 	local socdir="$HEXFS/socinfo"
@@ -32,9 +32,9 @@ populate_socinfo() {
 
 	# Mainline kernel doesn't expose hw_platform or platform_subtype
 	# via sysfs. The ADSP firmware may need these to determine sensor
-	# configuration. Fairphone 3 is an MTP-type platform (type 8).
+	# configuration.
 	if [ ! -f "$socdir/hw_platform" ]; then
-		echo "MTP" > "$socdir/hw_platform"
+		echo "${HW_PLATFORM:-MTP}" > "$socdir/hw_platform"
 	fi
 	if [ ! -f "$socdir/platform_subtype" ]; then
 		echo "Unknown" > "$socdir/platform_subtype"
@@ -45,11 +45,14 @@ populate_socinfo() {
 }
 
 populate_acdb() {
-	local src="$MNT_VENDOR/etc/acdbdata"
-	local dst="$HEXFS/acdb"
-	if [ -d "$src" ]; then
-		mkdir -p "$dst"
-		cp -a "$src"/* "$dst/" 2>/dev/null
+	# Skip if acdb files are already installed (e.g. by firmware package)
+	if [ -d "$HEXFS/acdb" ] && [ "$(ls -A "$HEXFS/acdb" 2>/dev/null)" ]; then
+		return
+	fi
+	# Fall back to runtime copy from vendor partition
+	if [ -n "$VENDOR_ROOT" ] && [ -d "$VENDOR_ROOT/etc/acdbdata" ]; then
+		mkdir -p "$HEXFS/acdb"
+		cp -a "$VENDOR_ROOT/etc/acdbdata"/* "$HEXFS/acdb/" 2>/dev/null
 	fi
 }
 
@@ -64,26 +67,23 @@ populate_dsp() {
 
 populate_sensors() {
 	local dst="$HEXFS/sensors"
+	mkdir -p "$dst/config" "$dst/registry"
 
-	# sensors/config/ — from vendor (or empty)
-	mkdir -p "$dst/config"
-	if [ -d "$MNT_VENDOR/etc/sensors" ]; then
-		# Copy sensor_def_qcomdev.conf into config dir if present
-		for f in "$MNT_VENDOR/etc/sensors"/*; do
-			[ -f "$f" ] && cp "$f" "$dst/config/" 2>/dev/null
-		done
+	# sensors/config/ — skip if already populated (e.g. by board overlay)
+	if [ ! "$(ls -A "$dst/config" 2>/dev/null)" ]; then
+		if [ -n "$VENDOR_ROOT" ] && [ -d "$VENDOR_ROOT/etc/sensors" ]; then
+			for f in "$VENDOR_ROOT/etc/sensors"/*; do
+				[ -f "$f" ] && cp "$f" "$dst/config/" 2>/dev/null
+			done
+		fi
 	fi
 
-	# sensors/registry/ — from persist
-	mkdir -p "$dst/registry"
+	# sensors/registry/ — from persist (always runtime)
 	if [ -d "$MNT_PERSIST/sensors" ]; then
 		cp -a "$MNT_PERSIST/sensors"/* "$dst/registry/" 2>/dev/null
 	fi
 
 	# sensors/sns_reg.conf — registry config file
-	# The ADSP reads this as /vendor/etc/sensors/sns_reg_config
-	# For SMGR-based firmware, this may need to be empty or contain
-	# specific configuration. Create it if it doesn't exist.
 	if [ ! -f "$dst/sns_reg.conf" ]; then
 		touch "$dst/sns_reg.conf"
 	fi
@@ -93,8 +93,16 @@ start() {
 	printf 'Populating HexagonFS: '
 
 	# Mount Android partitions (read-only)
-	mkdir -p "$MNT_VENDOR" "$MNT_PERSIST" "$MNT_DSP"
-	mount -o ro "$DEV_VENDOR" "$MNT_VENDOR" 2>/dev/null
+	mkdir -p "$MNT_PERSIST" "$MNT_DSP"
+
+	if [ -n "$DEV_VENDOR" ]; then
+		mkdir -p "$MNT_VENDOR"
+		mount -o ro "$DEV_VENDOR" "$MNT_VENDOR" 2>/dev/null
+	fi
+	if [ -n "$DEV_SYSTEM" ]; then
+		mkdir -p "$MNT_SYSTEM"
+		mount -o ro "$DEV_SYSTEM" "$MNT_SYSTEM" 2>/dev/null
+	fi
 	mount -t ext4 -o ro "$DEV_PERSIST" "$MNT_PERSIST" 2>/dev/null
 	mount -o ro "$DEV_DSP" "$MNT_DSP" 2>/dev/null
 
@@ -111,10 +119,13 @@ start() {
 
 stop() {
 	printf 'Cleaning up HexagonFS: '
-	rm -rf "$HEXFS"
+	# Only remove runtime-populated dirs; firmware-installed files
+	# (acdb, sensors/config) are part of the rootfs and should stay.
+	rm -rf "$HEXFS/socinfo" "$HEXFS/dsp" "$HEXFS/sensors/registry"
 	umount "$MNT_DSP" 2>/dev/null
 	umount "$MNT_PERSIST" 2>/dev/null
-	umount "$MNT_VENDOR" 2>/dev/null
+	[ -n "$MNT_VENDOR" ] && umount "$MNT_VENDOR" 2>/dev/null
+	[ -n "$MNT_SYSTEM" ] && umount "$MNT_SYSTEM" 2>/dev/null
 	echo "OK"
 }
 
