@@ -10,15 +10,53 @@ board DTS extended in `board/s3ve3g/linux-patches`.
 ```
 PBL -> sbl1 -> tz/rpm -> Samsung aboot (download mode, never written)
     -> BOOT[0 .. 512 KiB) = lk2nd (QCDT image with this phone's msm-id, SEANDROIDENFORCE)
-         -> "fastboot boot boot.img"  (RAM only)
+         -> /extlinux/extlinux.conf on userdata  (the persistent system, default)
+         -> "fastboot boot boot.img"  (RAM only, from the lk2nd menu)
          -> BOOT[512 KiB ..) boot.img  ("fastboot flash boot" in lk2nd, 9.5 MiB max)
 ```
+
+Samsung aboot runs first on every boot and decides from the keys and the restart reason whether
+to load lk2nd at all. lk2nd then boots the first ext2 filesystem with `/extlinux/extlinux.conf`
+(userdata), unless Volume Down is held.
 
 `boot.img` is an Android v0 image: `zImage` with `qcom-msm8226-samsung-s3ve3g.dtb` appended, the
 initramfs, page size 2048, base 0, kernel 0x8000, ramdisk 0x2000000, tags 0x1e00000. lk2nd takes
 the single appended DTB (it has no `qcom,msm-id`), patches it (memory, cmdline, ramoops) and clears
 its magic so the kernel uses the patched copy. The image needs no QCDT and no Samsung footer: only
 the stock aboot checks those, and it loads lk2nd, not this image.
+
+### Restart reasons
+
+Linux leaves the reason in IMEM at `0xfe80565c` (`syscon-reboot-mode`, `reboot-mode <mode>`).
+Samsung aboot reads the word and clears it on every boot:
+
+| `reboot-mode` | Magic | Samsung aboot does |
+|---|---|---|
+| `download`, `bootloader` | `0x12345671`, `0x77665500` | download mode (Odin, USB `04e8:685d`) |
+| `recovery` | `0x77665502` | boots the `recovery` partition, and keeps doing so (sticky, stored in `param`) |
+| `normal` | `0x12345678` | normal boot (lk2nd), and clears a sticky recovery boot |
+| none / anything else | | normal boot (lk2nd) |
+
+Because aboot clears the word before lk2nd runs, lk2nd never sees `bootloader`: lk2nd fastboot
+is reachable only with Volume Down at the Samsung logo. Avoid `reboot-mode recovery`: the
+recovery partition holds TWRP, and aboot returns to it until a `normal` reboot.
+
+**Why `reboot=warm`.** The kernel's default restart is a PMIC hard reset, which clears IMEM, so
+aboot never saw the magic. `reboot=warm` (on the extlinux and boot.img command lines) makes the
+restart a warm reset that keeps IMEM. `/sys/kernel/reboot/mode` shows `warm` on a running system.
+
+### Keys
+
+| Keys | Result |
+|---|---|
+| Volume Down held from power-on (Volume Down + Power) | Samsung download mode warning; Volume Up enters Odin (`04e8:685d`), Volume Down cancels and reboots |
+| Power, release at the Samsung logo, then hold Volume Down | lk2nd menu and fastboot (`18d1:d00d`) |
+| Power alone | aboot -> lk2nd -> extlinux on userdata |
+| Volume Up from power-on | aboot boots the `recovery` partition |
+
+Never hold both volume keys while lk2nd starts: lk2nd's source then reboots into Qualcomm
+emergency download (`05c6:9008`; untested on this phone). Nothing is written in that state;
+pulling the battery clears it. A forced restart is Power held about 10 s, or a battery pull.
 
 ## Configurations
 
@@ -72,7 +110,7 @@ pmaports `b48d67b`) saved with `savedefconfig` after building it with gcc and th
 | `INPUT_EVDEV=y`, `INPUT_PM8941_PWRKEY=y` | keys usable from an initramfs |
 | `DEBUG_INFO_NONE=y` | no DWARF/BTF: faster builds, no host pahole |
 | `EXT2_FS` off, so `EXT4_USE_FOR_EXT2=y` | the persistent root is ext2 (lk2nd reads nothing else); the built-in ext4 driver mounts it as `ext2` and refuses ext4-only features on it |
-| `SYSCON_REBOOT_MODE=y` | `reboot-mode bootloader` writes `0x77665500` to IMEM `0xfe80565c`, so lk2nd stays in fastboot; built in so it works without loading modules |
+| `SYSCON_REBOOT_MODE=y` | `reboot-mode <mode>` writes the restart reason to IMEM `0xfe80565c` for Samsung aboot (see Boot chain); built in so it works without loading modules |
 
 Modules stay on, as in pmaports. First light loads none, so everything it uses is built in, and
 `scripts/firstlight_post_build.sh` drops `/lib/modules` from its initramfs. Turning `MODULES` off
@@ -181,23 +219,53 @@ ssh: the same authorized keys and the same fixed host key as the rescue image
 ssh -o UserKnownHostsFile=<output>/../rescue-ssh/known_hosts root@10.0.42.1
 ```
 
-### Flashing userdata
+### Updating the system
 
-`board/s3ve3g/scripts/reflash.sh` writes the image through lk2nd's fastboot. It runs read-only
-checks (image type and `SHA256SUMS`, the serial alone in fastboot, `lk2nd:version`,
-`lk2nd:compatible` = `samsung,s3ve3g`, the image fits `partition-size:userdata`) and prints the
-command; `--execute` writes, reboots and waits for the gadget and ssh:
+`board/s3ve3g/scripts/reflash.sh` writes a new image to `userdata` and nothing else. It is a dry
+run by default (read-only checks, then the plan); `--execute` runs the plan and reports PASS or
+FAIL.
+
+Default, `--mode odin` (Samsung download mode, heimdall, raw `images/rootfs.ext2`):
 
 ```
-board/s3ve3g/scripts/reflash.sh <serial> [images/userdata.simg]            # dry run
-board/s3ve3g/scripts/reflash.sh --execute <serial> [images/userdata.simg]  # write
-board/s3ve3g/scripts/reflash.sh --execute --via-ssh <serial>               # from the running system
+board/s3ve3g/scripts/reflash.sh <serial>                       # dry run
+board/s3ve3g/scripts/reflash.sh --execute <serial>             # write
+board/s3ve3g/scripts/reflash.sh --execute --image <rootfs.ext2> <serial>
 ```
 
-`--via-ssh` remounts the running system's root read-only and runs `reboot-mode bootloader`. By
-hand: power on, wait for the Samsung logo, hold Volume Down until the lk2nd menu shows.
-`userdata` keeps no backup (nothing on it is kept); the RAM rescue image
-(`fastboot boot boot.img`) stays the way back from a broken root filesystem.
+Checks: the image is raw ext2 whose features lk2nd reads (no ro_compat beyond `sparse_super` and
+`large_file`, no extents, journal or 64bit) and its sha256 is in `SHA256SUMS` next to it. If the
+running system answers ssh on 10.0.42.1 (host key from `rescue-ssh/known_hosts`, or
+`--known-hosts`), the script confirms the serial (device tree or gadget), its gadget on this
+host's USB, `/sys/kernel/reboot/mode` and that the image fits `userdata`. The plan:
+
+1. ssh: `sync; mount -o remount,ro /; echo warm > /sys/kernel/reboot/mode; reboot-mode download`;
+2. wait for exactly one `04e8:685d`, `heimdall detect`;
+3. `heimdall flash --USERDATA images/rootfs.ext2`; heimdall reboots the phone;
+4. aboot -> lk2nd -> extlinux; wait for the gadget `1d6b:0104` with the serial, then ssh.
+
+If the phone already shows download mode, step 1 is skipped (download mode reports no serial:
+only that phone may be in it). `heimdall print-pit` (read-only) also leaves download mode and
+reboots into Linux. The script never uses `--repartition`, `--pit` or an AP tar. `--boot <img>`
+adds BOOT to the same heimdall call with a separate warning: BOOT starts with lk2nd, so `<img>`
+must be a full lk2nd image; it is refused if it does not contain lk2nd.
+
+`--mode fastboot` writes through lk2nd's fastboot (sparse `images/userdata.simg` by default) when
+the phone is already in lk2nd via Volume Down at the logo: it checks the serial alone in fastboot,
+`lk2nd:version`, `lk2nd:compatible` = `samsung,s3ve3g`, `partition-size:userdata`, then runs
+`fastboot flash userdata` and `fastboot reboot`.
+
+`userdata` keeps no backup (nothing on it is kept).
+
+### Recovery from a bad image
+
+aboot and lk2nd are not touched by a userdata update, so both ways back stay available:
+
+- **Download mode:** Volume Down + Power until the phone restarts into the download warning, Volume
+  Up, then `reflash.sh --execute --image <known good rootfs.ext2> <serial>` (the ssh step is skipped).
+- **lk2nd:** Power, hold Volume Down at the Samsung logo, then
+  `fastboot -s <serial> boot <rescue>/images/boot.img` boots the RAM rescue system, which mounts
+  nothing; from there inspect or `e2fsck` userdata, or reflash with `--mode fastboot`.
 
 The filesystem is 512 MiB in an 11.70 GiB partition. Growing it is a deliberate step
 (`resize2fs` from rescue with the root unmounted), not something the image does at boot.
