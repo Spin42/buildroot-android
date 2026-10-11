@@ -248,11 +248,20 @@ static int csi2_init_state(struct v4l2_subdev *sd, struct v4l2_subdev_state *sta
 
 static int csi2_set_fmt(struct v4l2_subdev *sd, struct v4l2_subdev_state *state, struct v4l2_subdev_format *fmt)
 {
-	struct mtk_camsys *cam = sd_to_cam(sd);
+	/*
+	 * The formats are fixed by the sensors: the request is ignored. Setting a sink pad propagates the window the
+	 * TG grabs from that sensor to the source pad of the same state, so TRY configurations stay consistent with
+	 * the sensor they were made for. The source pad keeps the format of the last sink pad set.
+	 */
+	if (fmt->pad == MTK_CSI2_PAD_SRC) {
+		fmt->format = *v4l2_subdev_state_get_format(state, MTK_CSI2_PAD_SRC);
+		return 0;
+	}
 
-	/* The formats are fixed by the sensors: the request is ignored and the current format returned. */
-	csi2_fill_format(&fmt->format, csi2_pad_cfg(cam, fmt->pad), fmt->pad != MTK_CSI2_PAD_SRC);
+	csi2_fill_format(&fmt->format, &mtk_camsys_port_cfgs[fmt->pad], true);
 	*v4l2_subdev_state_get_format(state, fmt->pad) = fmt->format;
+	csi2_fill_format(v4l2_subdev_state_get_format(state, MTK_CSI2_PAD_SRC), &mtk_camsys_port_cfgs[fmt->pad],
+			 false);
 	return 0;
 }
 
@@ -293,8 +302,13 @@ static int csi2_link_validate(struct v4l2_subdev *sd, struct media_link *link,
 {
 	if (source_fmt->format.code != sink_fmt->format.code ||
 	    source_fmt->format.width != sink_fmt->format.width ||
-	    source_fmt->format.height != sink_fmt->format.height)
+	    source_fmt->format.height != sink_fmt->format.height) {
+		dev_warn(sd->dev, "%s: sensor format %#x %ux%u does not match the receiver input %#x %ux%u\n",
+			 link->source->entity->name, source_fmt->format.code, source_fmt->format.width,
+			 source_fmt->format.height, sink_fmt->format.code, sink_fmt->format.width,
+			 sink_fmt->format.height);
 		return -EPIPE;
+	}
 	return 0;
 }
 

@@ -101,7 +101,10 @@ struct mtk_camsys {
 	/* buffer rotation, protected by qlock (taken in the interrupt handler) */
 	spinlock_t qlock;
 	struct list_head queued;
-	struct mtk_camsys_buf *cur;
+	struct mtk_camsys_buf *cur;	/* buffer the ISP writes, NULL while it writes the scratch buffer */
+	void *scratch;			/* takes the frames that arrive with no buffer queued */
+	dma_addr_t scratch_dma;
+	size_t scratch_size;
 	bool streaming;
 	u32 sequence;
 	u32 drops;

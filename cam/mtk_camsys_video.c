@@ -2,9 +2,10 @@
 /*
  * Capture video node: vb2-dma-contig queue, format handling and the buffer rotation done at the frame-done
  * interrupt. The ISP writes the frame into the current buffer; when the frame ends the next queued buffer is
- * programmed and the finished one is returned. With nothing queued the current buffer is kept and overwritten by
- * the next frame, and the drop is counted.
+ * programmed and the finished one is returned. With nothing queued the ISP writes into a scratch buffer, so every
+ * queued buffer completes, and the frames written there are counted as drops.
  */
+#include <linux/dma-mapping.h>
 #include <linux/ktime.h>
 #include <linux/minmax.h>
 #include <media/v4l2-ioctl.h>
@@ -136,9 +137,16 @@ static int start_streaming(struct vb2_queue *q, unsigned int count)
 	}
 	cfg = &mtk_camsys_port_cfgs[cam->active_port];
 
+	cam->scratch_size = cam->fmt.sizeimage;
+	cam->scratch = dma_alloc_coherent(cam->dev, cam->scratch_size, &cam->scratch_dma, GFP_KERNEL);
+	if (!cam->scratch) {
+		ret = -ENOMEM;
+		goto err_buffers;
+	}
+
 	ret = mtk_camsys_power_get(cam);
 	if (ret)
-		goto err_buffers;
+		goto err_scratch;
 
 	ret = video_device_pipeline_start(&cam->vdev, &cam->pipe);
 	if (ret)
@@ -167,6 +175,9 @@ err_pipe:
 	video_device_pipeline_stop(&cam->vdev);
 err_pm:
 	mtk_camsys_power_put(cam);
+err_scratch:
+	dma_free_coherent(cam->dev, cam->scratch_size, cam->scratch, cam->scratch_dma);
+	cam->scratch = NULL;
 err_buffers:
 	return_buffers(cam, VB2_BUF_STATE_QUEUED);
 	return ret;
@@ -189,6 +200,8 @@ static void stop_streaming(struct vb2_queue *q)
 	dev_dbg(cam->dev, "stopped after %u frames, %u dropped, %u hardware errors\n", cam->sequence, cam->drops,
 		cam->hw_errors);
 	return_buffers(cam, VB2_BUF_STATE_ERROR);
+	dma_free_coherent(cam->dev, cam->scratch_size, cam->scratch, cam->scratch_dma);
+	cam->scratch = NULL;
 }
 
 static const struct vb2_ops queue_ops = {
@@ -205,27 +218,30 @@ static const struct vb2_ops queue_ops = {
  */
 void mtk_camsys_video_frame_done(struct mtk_camsys *cam, u32 status)
 {
-	struct mtk_camsys_buf *done, *next;
+	struct mtk_camsys_buf *done, *next = NULL;
 	enum vb2_buffer_state state;
 	u32 seq;
 
 	spin_lock(&cam->qlock);
-	if (!cam->streaming || !cam->cur)
+	if (!cam->streaming)
 		goto out;
 
 	seq = cam->sequence++;
-	if (list_empty(&cam->queued)) {
-		/* No buffer to hand over to: the next frame overwrites the current one. */
+	done = cam->cur;
+	if (!list_empty(&cam->queued)) {
+		next = list_first_entry(&cam->queued, struct mtk_camsys_buf, list);
+		list_del(&next->list);
+	}
+	cam->cur = next;
+	mtk_camsys_isp_set_base(cam, next ? vb2_dma_contig_plane_dma_addr(&next->vb.vb2_buf, 0) :
+					    cam->scratch_dma);
+
+	if (!done) {
+		/* The frame went to the scratch buffer. */
 		cam->drops++;
 		cam->err_bits = 0;
 		goto out;
 	}
-
-	done = cam->cur;
-	next = list_first_entry(&cam->queued, struct mtk_camsys_buf, list);
-	list_del(&next->list);
-	cam->cur = next;
-	mtk_camsys_isp_set_base(cam, vb2_dma_contig_plane_dma_addr(&next->vb.vb2_buf, 0));
 
 	state = VB2_BUF_STATE_DONE;
 	if (cam->err_bits) {
@@ -295,8 +311,10 @@ static int vidioc_s_fmt(struct file *file, void *priv, struct v4l2_format *f)
 {
 	struct mtk_camsys *cam = video_drvdata(file);
 
-	if (vb2_is_busy(&cam->queue))
+	if (vb2_is_busy(&cam->queue)) {
+		dev_warn(cam->dev, "format change refused while buffers are allocated\n");
 		return -EBUSY;
+	}
 	vidioc_try_fmt(file, priv, f);
 	cam->fmt = f->fmt.pix;
 	return 0;
@@ -360,8 +378,12 @@ static int video_link_validate(struct media_link *link)
 
 	cfg = cfg_by_mbus_code(fmt.format.code);
 	if (!cfg || cfg->pixelformat != cam->fmt.pixelformat || fmt.format.width != cam->fmt.width ||
-	    fmt.format.height != cam->fmt.height)
+	    fmt.format.height != cam->fmt.height) {
+		dev_warn(cam->dev, "capture format %p4cc %ux%u does not match the receiver output %#x %ux%u\n",
+			 &cam->fmt.pixelformat, cam->fmt.width, cam->fmt.height, fmt.format.code, fmt.format.width,
+			 fmt.format.height);
 		return -EPIPE;
+	}
 	return 0;
 }
 
