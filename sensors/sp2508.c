@@ -83,7 +83,11 @@
 #define SP2508_VBLANK_MAX		(0xff - SP2508_VBLANK_OFFSET)
 
 #define SP2508_EXPOSURE_MIN		7
-#define SP2508_EXPOSURE_MARGIN		5
+/*
+ * The sensor lengthens the frame by itself when the exposure exceeds it, so the exposure range does not depend
+ * on VBLANK. The maximum is the longest preview exposure of the stock AE tables (about 190 ms).
+ */
+#define SP2508_EXPOSURE_MAX		4956
 #define SP2508_EXPOSURE_DEFAULT		777
 
 /* Analogue gain code: 0x10 is 1x, the code is in units of 1/16. */
@@ -319,18 +323,6 @@ static int sp2508_s_ctrl(struct v4l2_ctrl *ctrl)
 	struct device *dev = sp2508->sd.dev;
 	int ret = 0;
 
-	if (ctrl->id == V4L2_CID_VBLANK) {
-		s64 exp_max = SP2508_HEIGHT + ctrl->val - SP2508_EXPOSURE_MARGIN;
-
-		ret = __v4l2_ctrl_modify_range(sp2508->exposure,
-					       sp2508->exposure->minimum,
-					       exp_max, sp2508->exposure->step,
-					       min_t(s64, sp2508->exposure->default_value,
-						     exp_max));
-		if (ret)
-			return ret;
-	}
-
 	if (!pm_runtime_get_if_in_use(dev))
 		return 0;
 
@@ -377,9 +369,7 @@ static int sp2508_init_controls(struct sp2508 *sp2508)
 
 	sp2508->exposure = v4l2_ctrl_new_std(hdl, &sp2508_ctrl_ops,
 					     V4L2_CID_EXPOSURE,
-					     SP2508_EXPOSURE_MIN,
-					     SP2508_HEIGHT + SP2508_VBLANK_DEFAULT -
-					     SP2508_EXPOSURE_MARGIN, 1,
+					     SP2508_EXPOSURE_MIN, SP2508_EXPOSURE_MAX, 1,
 					     SP2508_EXPOSURE_DEFAULT);
 
 	v4l2_ctrl_new_std(hdl, &sp2508_ctrl_ops, V4L2_CID_ANALOGUE_GAIN,
