@@ -104,6 +104,41 @@ static void consys_bt_rx_drop(struct consys_bt *bt)
 }
 
 /* Reassemble H:4 packets from the STP BT byte stream. */
+/*
+ * The firmware rejects Read Local Extended Features with a status outside the HCI specification although it
+ * advertises the command, which aborts the controller initialisation. Such a reply is replaced with a successful one
+ * reporting no extended features (page 1 zeroed, maximum page 1).
+ */
+static struct sk_buff *consys_bt_fix_event(struct sk_buff *skb)
+{
+	struct hci_ev_cmd_complete *cc;
+	struct hci_event_hdr *hdr;
+	struct sk_buff *fixed;
+	u8 *p;
+
+	if (hci_skb_pkt_type(skb) != HCI_EVENT_PKT || skb->len < HCI_EVENT_HDR_SIZE + sizeof(*cc) + 1)
+		return skb;
+	hdr = (struct hci_event_hdr *)skb->data;
+	cc = (struct hci_ev_cmd_complete *)(skb->data + HCI_EVENT_HDR_SIZE);
+	if (hdr->evt != HCI_EV_CMD_COMPLETE || le16_to_cpu(cc->opcode) != HCI_OP_READ_LOCAL_EXT_FEATURES ||
+	    !skb->data[HCI_EVENT_HDR_SIZE + sizeof(*cc)])
+		return skb;
+
+	fixed = bt_skb_alloc(HCI_EVENT_HDR_SIZE + sizeof(*cc) + 11, GFP_KERNEL);
+	if (!fixed)
+		return skb;
+	hci_skb_pkt_type(fixed) = HCI_EVENT_PKT;
+	p = skb_put_zero(fixed, HCI_EVENT_HDR_SIZE + sizeof(*cc) + 11);
+	p[0] = HCI_EV_CMD_COMPLETE;
+	p[1] = sizeof(*cc) + 11;
+	memcpy(p + HCI_EVENT_HDR_SIZE, cc, sizeof(*cc));
+	p[HCI_EVENT_HDR_SIZE + sizeof(*cc)] = 0;		/* status */
+	p[HCI_EVENT_HDR_SIZE + sizeof(*cc) + 1] = 1;	/* page */
+	p[HCI_EVENT_HDR_SIZE + sizeof(*cc) + 2] = 1;	/* maximum page */
+	kfree_skb(skb);
+	return fixed;
+}
+
 static void consys_bt_recv(struct consys_bt *bt, const u8 *data, unsigned int count)
 {
 	struct hci_dev *hdev = bt->hdev;
@@ -160,7 +195,7 @@ static void consys_bt_recv(struct consys_bt *bt, const u8 *data, unsigned int co
 
 		bt->rx_skb = NULL;
 		hdev->stat.byte_rx += skb->len;
-		hci_recv_frame(hdev, skb);
+		hci_recv_frame(hdev, consys_bt_fix_event(skb));
 	}
 }
 
