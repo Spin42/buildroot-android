@@ -207,7 +207,8 @@ What to look for if it fails: `op 0xNN timed out` names the first command the fi
 `unexpected FM core id` means FSPI reads work but the A-die is not clocked; a seek that never finds a station
 with good reception points at the thresholds (watch the `rssi/pamd/...` debug lines of the soft-mute tune).
 If the PCM device delivers silence: check `AFE_I2S_CON` (expect 0x8000000d while capturing: slave, the FM core
-clocks the I2S at 32 kHz) and `AFE_ASRC_CON0` bit 0 (without it the slave input delivers only zeros; it reads back 0), the CONSYS pin mux
+clocks the I2S at 32 kHz) `AFE_ASRC_CON0` bit 0 (without it the slave input delivers only zeros; it reads back 0) and `AFE_DAC_CON1[11:8]`
+(the I2S input rate, 8 = 32 kHz; at the reset value 0 every sample is repeated four times and sounds metallic), the CONSYS pin mux
 (`echo 'hr 80050078' > .../reg`), FM 0x9b (0xf9ab) and host 0x80101054 (0x3f35).
 
 ## Known gaps and risks
