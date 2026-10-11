@@ -116,6 +116,9 @@ static int mtk_fm_power_on(struct mtk_fm *fm)
 	if (ret)
 		dev_warn(fm->dev, "CONSYS audio interface setup failed: %d\n",
 			 ret);
+	ret = mt6627_i2s_pinmux(fm);
+	if (ret)
+		dev_warn(fm->dev, "CONSYS audio pin check failed: %d\n", ret);
 
 	fm->powered = true;
 
@@ -542,13 +545,19 @@ static const struct v4l2_ioctl_ops mtk_fm_ioctl_ops = {
 	.vidioc_unsubscribe_event = v4l2_event_unsubscribe,
 };
 
-/* --- debugfs: raw register access for bring-up --- */
+/*
+ * --- debugfs: register access for bring-up ---
+ * r/w <fm addr> [val], tr/tw (A-die top), hr/hw (CONSYS host), hex values;
+ * i2s: dump the I2S output setup; i2s_on: write it again;
+ * aif [state]: WMT audio interface control (default 2, FM I2S).
+ * Reading the file returns the result of the last dump or read.
+ */
 
 static ssize_t mtk_fm_dbg_write(struct file *file, const char __user *ubuf,
 				size_t count, loff_t *ppos)
 {
 	struct mtk_fm *fm = file->private_data;
-	char buf[64], op[4];
+	char buf[64], op[8];
 	u32 addr, val = 0, rd32;
 	u16 rd16;
 	int n, ret;
@@ -559,8 +568,8 @@ static ssize_t mtk_fm_dbg_write(struct file *file, const char __user *ubuf,
 		return -EFAULT;
 	buf[count] = 0;
 
-	n = sscanf(buf, "%3s %x %x", op, &addr, &val);
-	if (n < 2)
+	n = sscanf(buf, "%7s %x %x", op, &addr, &val);
+	if (n < 1)
 		return -EINVAL;
 
 	mutex_lock(&fm->lock);
@@ -569,7 +578,20 @@ static ssize_t mtk_fm_dbg_write(struct file *file, const char __user *ubuf,
 		goto out;
 	}
 
-	if (!strcmp(op, "r")) {
+	if (!strcmp(op, "i2s")) {
+		ret = mt6627_i2s_dump(fm, fm->dbg_result,
+				      sizeof(fm->dbg_result));
+	} else if (!strcmp(op, "i2s_on")) {
+		ret = mt6627_i2s_apply(fm);
+	} else if (!strcmp(op, "aif")) {
+		ret = mtk_wcn_cmb_stub_aif_ctrl(n > 1 ? addr : CMB_STUB_AIF_2,
+						CMB_STUB_AIF_CTRL_EN);
+		snprintf(fm->dbg_result, sizeof(fm->dbg_result),
+			 "aif_ctrl -> %d\n", ret);
+		ret = 0;
+	} else if (n < 2) {
+		ret = -EINVAL;
+	} else if (!strcmp(op, "r")) {
 		ret = mt6627_read(fm, addr, &rd16);
 		if (!ret)
 			snprintf(fm->dbg_result, sizeof(fm->dbg_result),
