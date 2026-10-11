@@ -34,7 +34,7 @@ new file mode 100644
 index 0000000..8a36bc6
 --- /dev/null
 +++ b/src/ipa/simple/data/sp2508.yaml
-@@ -0,0 +1,54 @@
+@@ -0,0 +1,53 @@
 +# SPDX-License-Identifier: CC0-1.0
 +#
 +# libcamera v0.5.0 software ISP tuning for the SuperPix SP2508 of the Lenovo
@@ -47,10 +47,9 @@ index 0000000..8a36bc6
 +---
 +version: 1
 +algorithms:
-+  # 16 codes at 10 bits, the fixed flare offset of the stock AE (64 at 12
-+  # bits). The value is in 16-bit units.
++  # The sensor subtracts its black level itself: the darkest pixels read 0.
 +  - BlackLevel:
-+      blackLevel: 1024
++      blackLevel: 0
 +  - Awb:
 +  # Stock dynamic CCM (polynomial of the white balance gains) evaluated at
 +  # the stock AWB light sources. The simple IPA of v0.5.0 applies the AWB

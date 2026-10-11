@@ -11,10 +11,9 @@
 ---
 version: 1
 algorithms:
-  # 16 codes at 10 bits, the fixed flare offset of the stock AE (64 at 12
-  # bits). The value is in 16-bit units.
+  # The sensor subtracts its black level itself: the darkest pixels read 0.
   - BlackLevel:
-      blackLevel: 1024
+      blackLevel: 0
   - Awb:
   # Stock dynamic CCM (polynomial of the white balance gains) evaluated at
   # the stock AWB light sources. The simple IPA of v0.5.0 applies the AWB
