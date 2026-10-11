@@ -253,11 +253,21 @@ static int vidioc_querycap(struct file *file, void *priv, struct v4l2_capability
 	return 0;
 }
 
+/* With a media bus code, only the pixel format produced from that code is listed. */
 static int vidioc_enum_fmt(struct file *file, void *priv, struct v4l2_fmtdesc *f)
 {
-	if (f->index >= MTK_CAMSYS_NUM_PORTS)
-		return -EINVAL;
-	f->pixelformat = mtk_camsys_port_cfgs[f->index].pixelformat;
+	const struct mtk_camsys_port_cfg *cfg;
+
+	if (f->mbus_code) {
+		cfg = cfg_by_mbus_code(f->mbus_code);
+		if (!cfg || f->index)
+			return -EINVAL;
+	} else {
+		if (f->index >= MTK_CAMSYS_NUM_PORTS)
+			return -EINVAL;
+		cfg = &mtk_camsys_port_cfgs[f->index];
+	}
+	f->pixelformat = cfg->pixelformat;
 	return 0;
 }
 
@@ -393,7 +403,7 @@ int mtk_camsys_video_register(struct mtk_camsys *cam)
 	vdev->lock = &cam->video_lock;
 	vdev->queue = q;
 	vdev->release = video_device_release_empty;
-	vdev->device_caps = V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_STREAMING;
+	vdev->device_caps = V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_STREAMING | V4L2_CAP_IO_MC;
 	vdev->entity.ops = &video_entity_ops;
 	video_set_drvdata(vdev, cam);
 
