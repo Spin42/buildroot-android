@@ -10,6 +10,7 @@ unmodified import, so `git diff <first commit>` shows every change.
 | `wmt/` | `drivers/misc/mediatek/connectivity/conn_soc/common` | WMT core, STP, platform glue |
 | `btif/` | `drivers/misc/mediatek/btif` | BTIF (the UART-like link to the CONSYS MCU) |
 | `wlan/` | `drivers/misc/mediatek/connectivity/conn_soc/drv_wlan` | gen2 WiFi driver |
+| `bt/` | new, replaces `common/linux/pub/stp_chrdev_bt.c` | Bluetooth HCI driver on the STP BT channel |
 | `fw/` | stock `/system/etc/firmware` | firmware blobs, not redistributable, git-ignored |
 
 Milestones: 1 power CONSYS and read the chip id (done, see `docs/bringup-notes.md`), 2 BTIF/STP, 3 patch download,

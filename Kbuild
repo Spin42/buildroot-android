@@ -1,1 +1,1 @@
-obj-m += wmt/ btif/ consys/ wlan/
+obj-m += wmt/ btif/ consys/ wlan/ bt/
