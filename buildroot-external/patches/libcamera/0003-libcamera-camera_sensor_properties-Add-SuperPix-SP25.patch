@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Sun, 11 Oct 2026 09:13:14 +0200
+Subject: [PATCH 2/3] libcamera: camera_sensor_properties: Add SuperPix SP2508
+
+Exposure and analogue gain are latched together by the sensor update
+register, so both take effect after the same number of frames. The
+vendor 3A applies them in the same frame (AEShutDelayFrame and
+AESensorGainDelayFrame are both 0, AEISPGainDelayFrame is 1). The unit
+cell size is not documented.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ src/libcamera/sensor/camera_sensor_properties.cpp | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/src/libcamera/sensor/camera_sensor_properties.cpp b/src/libcamera/sensor/camera_sensor_properties.cpp
+index e2f518f..3541bfd 100644
+--- a/src/libcamera/sensor/camera_sensor_properties.cpp
++++ b/src/libcamera/sensor/camera_sensor_properties.cpp
+@@ -456,6 +456,18 @@ const CameraSensorProperties *CameraSensorProperties::get(const std::string &sen
+ 			},
+ 			.sensorDelays = { },
+ 		} },
++		{ "sp2508", {
++			.testPatternModes = {
++				{ controls::draft::TestPatternModeOff, 0 },
++				{ controls::draft::TestPatternModeColorBars, 1 },
++			},
++			.sensorDelays = {
++				.exposureDelay = 2,
++				.gainDelay = 2,
++				.vblankDelay = 2,
++				.hblankDelay = 2
++			},
++		} },
+ 	};
+ 
+ 	const auto it = sensorProps.find(sensor);
