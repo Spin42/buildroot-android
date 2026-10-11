@@ -1,0 +1,4 @@
+# Bluetooth HCI driver on the STP BT channel of the WMT core
+ccflags-y += -I$(src)/../wmt/include -I$(src)/../wmt/linux/include -I$(src)/../compat
+
+obj-m += mtk_consys_bt.o
