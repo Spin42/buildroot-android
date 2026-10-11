@@ -652,6 +652,8 @@ static int mtk_fm_probe(struct platform_device *pdev)
 	fm->dev = dev;
 	fm->freq = FM_FREQ_DEFAULT;
 	fm->volume = FM_VOLUME_DEFAULT;
+	/* the speaker is mono and stereo decoding crackles on weak signals */
+	fm->mono = true;
 	mutex_init(&fm->lock);
 	spin_lock_init(&fm->rds_lock);
 	init_waitqueue_head(&fm->rds_wait);
