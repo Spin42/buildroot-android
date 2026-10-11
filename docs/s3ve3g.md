@@ -25,6 +25,7 @@ the stock aboot checks those, and it loads lk2nd, not this image.
 | defconfig | What it is |
 |---|---|
 | `s3ve3g_firstlight_defconfig` | kernel + a busybox initramfs: banner and clock on the framebuffer console, USB serial + network report to the host, watchdog; mounts no storage and writes to no block device |
+| `s3ve3g_rescue_defconfig` | first light + ssh, kmod with a subset of the modules, and inventory tools (util-linux, e2fsprogs, f2fs-tools, dosfstools, mmc-utils, i2c-tools, evtest, ethtool, strace, htop, dtc); still RAM-only |
 
 Build out of tree:
 
@@ -91,3 +92,37 @@ pd_ignore_unused panic=10 lk2nd.pass-ramoops`. The simple-framebuffer node lists
 | keys: Vol Up 106, Vol Down 107, Home 108 | downstream DT, same as ms013g |
 | SM5502 MUIC on i2c-gpio (SDA 4, SCL 5), 0x25, IRQ GPIO 52; USB extcon | downstream `msm8226-sm5502.dtsi`, wiring of `qcom-msm8226-samsung-matisse-common.dtsi` |
 | L15 3.3 V | downstream: the panel `vdd` (ms013g uses 2.8 V) |
+
+## Rescue
+
+Same kernel, DTB, command line and boot.img packing as first light; the initramfs is xz-compressed
+(`BR2_TARGET_ROOTFS_CPIO_XZ`) to fit lk2nd's 9.5 MiB `boot`. `/init`
+(`board/s3ve3g/rescue-overlay/init`) mounts no storage and writes to no block device.
+
+- Screen and `/dev/kmsg`: banner, then `rescue alive: <date> uptime <s>` every 5 s.
+- USB: gadget `1d6b:0104`, product `s3ve3g-rescue`, serial `31cf1659`, ACM (`ttyGS0`: banner,
+  `dmesg`, root shell) + NCM (`usb0`, phone `10.0.42.1/24`; `unudhcpd` gives the host `10.0.42.2`).
+- `dropbear` on port 22: root with the build host's keys or password `root`; `telnetd` on port 23
+  without a password as a fallback. Logs in `/run/rescue/`.
+- Watchdog pinger and `panic=10`, as in first light.
+
+The build (`scripts/rescue_post_build.sh`) takes root's `authorized_keys` from `~/.ssh/*.pub` (or
+`$S3VE3G_RESCUE_AUTHORIZED_KEYS`; with no key at all it generates `id_ed25519` in the ssh directory)
+and gives the image a fixed ed25519 host key, generated once in `<output>/../rescue-ssh/`
+(`$S3VE3G_RESCUE_SSH_DIR`), converted to dropbear's format by `scripts/dropbear-hostkey.py`. The
+same directory holds a `known_hosts` line for 10.0.42.1:
+
+```
+ssh -o UserKnownHostsFile=<output>/../rescue-ssh/known_hosts root@10.0.42.1
+```
+
+Kernel modules: all of them do not fit, so `board/s3ve3g/rescue-modules.txt` lists the ones kept
+(touchscreens, sensors, charger, LEDs, remoteprocs, f2fs, squashfs, and `msm` for deliberate tests)
+with their dependencies, uncompressed so xz packs them together. Nothing loads by itself: run
+`modprobe <name>`, or `modules-coldplug` to load what matches the hardware and keep loading on
+hotplug (mdev runs `/usr/sbin/modalias-load`). `rescue.modules=auto` on the kernel command line does
+the same at boot. `/etc/modprobe.d/s3ve3g-display.conf` blacklists `msm` and the panel and bridge
+drivers, so alias loading never takes the display from simpledrm; `modprobe msm` by name still
+loads it. Firmware goes to `/lib/firmware` (empty for now); the kernel loads it without a helper.
+
+`lsusb` is busybox's: usbutils needs eudev and its hwdb, several MiB that do not fit.

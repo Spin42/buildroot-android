@@ -1,0 +1,62 @@
+# Kernel modules kept in the rescue initramfs (file names without .ko); their dependencies are
+# kept too. The rest of the =m modules do not fit in lk2nd's 9.5 MiB boot partition.
+# Chosen for hardware inventory: drivers of parts this phone has or may have, and filesystems
+# found on its eMMC. Nothing here loads unless asked (modules-coldplug or modprobe).
+
+# Display: shipped for deliberate tests only, blacklisted in /etc/modprobe.d
+msm
+
+# Touchscreens, keys, haptics
+atmel_mxt_ts
+mms114
+zinitix
+rmi_i2c
+tm2-touchkey
+pmic8xxx-pwrkey
+pm8xxx-vibrator
+regulator-haptic
+pwm-vibra
+drv260x
+
+# Sensors (IIO) and PMIC ADCs
+ak8975
+bmc150-accel-i2c
+bmp280-i2c
+inv-mpu6050-i2c
+kxsd9-i2c
+st_accel_i2c
+tsl2772
+tmp108
+qcom-spmi-vadc
+qcom-spmi-iadc
+
+# Battery, charger, LEDs
+bq24190_charger
+bq27xxx_battery_i2c
+smb347-charger
+leds-qcom-lpg
+ledtrig-heartbeat
+ledtrig-timer
+ledtrig-pattern
+
+# SoC
+qcom-rng
+qcom_stats
+rpm_master_stats
+syscon-reboot-mode
+i2c-qcom-cci
+pwm-clk
+icc-smd-rpm
+cpufreq-dt
+
+# Remote processors and their transports (firmware comes later, in /lib/firmware)
+qcom_wcnss_pil
+qcom_q6v5_mss
+qcom_q6v5_pas
+qcom_bam_dmux
+qrtr-smd
+rpmsg_wwan_ctrl
+
+# Filesystems of the eMMC partitions (read them with mount -o ro)
+f2fs
+squashfs

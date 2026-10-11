@@ -8,7 +8,12 @@ set -e
 
 BOARD_DIR="${BR2_EXTERNAL_ANDROID_PATH}/board/s3ve3g"
 DTB="${BINARIES_DIR}/qcom-msm8226-samsung-s3ve3g.dtb"
-RAMDISK="${BINARIES_DIR}/rootfs.cpio.gz"
+# The kernel unpacks either: gzip for first light, xz (smaller, slower) for the rescue system.
+if grep -q '^BR2_TARGET_ROOTFS_CPIO_XZ=y' "${BR2_CONFIG}"; then
+	RAMDISK="${BINARIES_DIR}/rootfs.cpio.xz"
+else
+	RAMDISK="${BINARIES_DIR}/rootfs.cpio.gz"
+fi
 OUT="${BINARIES_DIR}/boot.img"
 # lk2nd's "boot" partition: the 10 MiB BOOT minus the 512 KiB lk2nd occupies
 MAX_SIZE=$((0x980000))

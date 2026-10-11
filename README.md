@@ -5,7 +5,7 @@ This repository supports the following devices so far:
 - Fairphone 2
 - Nexus 7 (grouper E1565)
 - Lenovo Tab3 7 Essential (TB3-710F, MediaTek MT8127)
-- Samsung Galaxy S III Neo (GT-I9301I, s3ve3g, Qualcomm MSM8228): first light only
+- Samsung Galaxy S III Neo (GT-I9301I, s3ve3g, Qualcomm MSM8228): first light and a rescue initramfs
 
 ## Fairphone 2
 
@@ -72,8 +72,8 @@ Once a system is running, `board/tb3_710f/scripts/reflash.sh` does the whole cyc
 
 ## Samsung Galaxy S III Neo (GT-I9301I, s3ve3g)
 
-The stock Samsung aboot chainloads lk2nd from the BOOT partition (built with an s3ve3g entry); every image is RAM-booted from lk2nd's fastboot. Only the first-light image exists so far. Details in [docs/s3ve3g.md](./docs/s3ve3g.md).
+The stock Samsung aboot chainloads lk2nd from the BOOT partition (built with an s3ve3g entry); every image is RAM-booted from lk2nd's fastboot. Two RAM-only images exist so far: `s3ve3g_firstlight_defconfig` and `s3ve3g_rescue_defconfig` (ssh at 10.0.42.1). Details in [docs/s3ve3g.md](./docs/s3ve3g.md).
 
-1. Run `cd buildroot && make BR2_EXTERNAL=../buildroot-external/ s3ve3g_firstlight_defconfig`
+1. Run `cd buildroot && make BR2_EXTERNAL=../buildroot-external/ s3ve3g_rescue_defconfig` (or `s3ve3g_firstlight_defconfig`)
 2. Run `make`
 3. Start the phone into lk2nd's fastboot menu and run `fastboot -s <serial> boot output/images/boot.img`
