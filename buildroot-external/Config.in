@@ -25,6 +25,7 @@ source "$BR2_EXTERNAL_ANDROID_PATH/package/mt8127-consys/Config.in"
 source "$BR2_EXTERNAL_ANDROID_PATH/package/mt8127-wmt/Config.in"
 source "$BR2_EXTERNAL_ANDROID_PATH/package/mt8127-wlan/Config.in"
 source "$BR2_EXTERNAL_ANDROID_PATH/package/mt8127-bt/Config.in"
+source "$BR2_EXTERNAL_ANDROID_PATH/package/mt8127-fm/Config.in"
 source "$BR2_EXTERNAL_ANDROID_PATH/package/mt8127-camera/Config.in"
 source "$BR2_EXTERNAL_ANDROID_PATH/package/tb3-wifi/Config.in"
 endmenu
