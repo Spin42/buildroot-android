@@ -1,0 +1,16 @@
+#!/bin/sh
+# Status banner of the persistent system, printed on tty0, ttyGS0 and /dev/kmsg.
+root=$(awk '$2 == "/" && $1 != "rootfs" { print $1, $3, substr($4, 1, 2) }' /proc/mounts | tail -1)
+echo "=========================================="
+echo "  s3ve3g persistent"
+echo "=========================================="
+uname -a
+grep MemTotal /proc/meminfo
+echo "root: $root ($(df -h / | awk 'NR == 2 { print $3 " used, " $4 " free" }'))"
+echo "fb0: $(cat /sys/class/graphics/fb0/name 2>/dev/null) $(cat /sys/class/graphics/fb0/virtual_size 2>/dev/null)"
+echo "watchdog: $(pidof watchdog >/dev/null && echo pinged || echo off)"
+echo "modules: $(grep -c . /lib/modules/$(uname -r)/modules.dep 2>/dev/null) available, autoload $([ -e /run/s3ve3g/modautoload ] && echo on || echo off)"
+echo "pstore: $(ls /sys/fs/pstore 2>/dev/null | tr '\n' ' ')"
+echo "cmdline: $(cat /proc/cmdline)"
+echo "usb: $(tail -1 /run/s3ve3g/usb-gadget.log 2>/dev/null)"
+echo "ssh root@10.0.42.1 (key, or password root); telnet 10.0.42.1"

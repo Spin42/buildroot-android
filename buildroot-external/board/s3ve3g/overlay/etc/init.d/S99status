@@ -1,0 +1,19 @@
+#!/bin/sh
+# Banner and "alive" line on the screen and in the kernel log (/usr/sbin/s3ve3g-status).
+PIDFILE=/run/s3ve3g-status.pid
+
+case "$1" in
+start)
+	start-stop-daemon -S -q -b -m -p $PIDFILE -x /usr/sbin/s3ve3g-status
+	;;
+stop)
+	start-stop-daemon -K -q -p $PIDFILE
+	;;
+restart|reload)
+	"$0" stop
+	"$0" start
+	;;
+*)
+	echo "Usage: $0 {start|stop|restart}"
+	exit 1
+esac

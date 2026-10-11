@@ -1,0 +1,24 @@
+#!/bin/sh
+# Screen and kernel-log reporter: the banner on tty0 and /dev/kmsg, the USB result once the
+# gadget script finishes, then an "alive" line on tty0 every 5 s (in /dev/kmsg every 10 min, so
+# lk2nd's ramoops keeps the boot log readable).
+say() {
+	echo "$*" > /dev/tty0
+	echo "s3ve3g: $*" > /dev/kmsg
+}
+
+/usr/sbin/s3ve3g-banner | while IFS= read -r l; do say "$l"; done
+
+usb_reported=0
+n=0
+while true; do
+	if [ $usb_reported = 0 ] && grep -q '^usb-gadget: ' /run/s3ve3g/usb-gadget.log 2>/dev/null; then
+		say "$(tail -1 /run/s3ve3g/usb-gadget.log)"
+		usb_reported=1
+	fi
+	line="s3ve3g alive: $(date '+%Y-%m-%d %H:%M:%S') uptime $(cut -d' ' -f1 /proc/uptime)s"
+	echo "$line" > /dev/tty0
+	[ $((n % 120)) -eq 0 ] && echo "s3ve3g: $line" > /dev/kmsg
+	n=$((n + 1))
+	sleep 5
+done

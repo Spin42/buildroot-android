@@ -26,6 +26,7 @@ the stock aboot checks those, and it loads lk2nd, not this image.
 |---|---|
 | `s3ve3g_firstlight_defconfig` | kernel + a busybox initramfs: banner and clock on the framebuffer console, USB serial + network report to the host, watchdog; mounts no storage and writes to no block device |
 | `s3ve3g_rescue_defconfig` | first light + ssh, kmod with a subset of the modules, and inventory tools (util-linux, e2fsprogs, f2fs-tools, dosfstools, mmc-utils, i2c-tools, evtest, ethtool, strace, htop, dtc); still RAM-only |
+| `s3ve3g_defconfig` | the persistent system: one ext2 image for `userdata` holding `/extlinux/extlinux.conf`, the kernel, the DTB and the root filesystem; BusyBox init, the rescue tools, every kernel module |
 
 Build out of tree:
 
@@ -70,6 +71,8 @@ pmaports `b48d67b`) saved with `savedefconfig` after building it with gcc and th
 | `EXTCON_SM5502=y`, `I2C_GPIO=y` | the MUIC on bit-banged I2C tells the USB controller about the cable |
 | `INPUT_EVDEV=y`, `INPUT_PM8941_PWRKEY=y` | keys usable from an initramfs |
 | `DEBUG_INFO_NONE=y` | no DWARF/BTF: faster builds, no host pahole |
+| `EXT2_FS` off, so `EXT4_USE_FOR_EXT2=y` | the persistent root is ext2 (lk2nd reads nothing else); the built-in ext4 driver mounts it as `ext2` and refuses ext4-only features on it |
+| `SYSCON_REBOOT_MODE=y` | `reboot-mode bootloader` writes `0x77665500` to IMEM `0xfe80565c`, so lk2nd stays in fastboot; built in so it works without loading modules |
 
 Modules stay on, as in pmaports. First light loads none, so everything it uses is built in, and
 `scripts/firstlight_post_build.sh` drops `/lib/modules` from its initramfs. Turning `MODULES` off
@@ -126,3 +129,57 @@ drivers, so alias loading never takes the display from simpledrm; `modprobe msm`
 loads it. Firmware goes to `/lib/firmware` (empty for now); the kernel loads it without a helper.
 
 `lsusb` is busybox's: usbutils needs eudev and its hwdb, several MiB that do not fit.
+
+## Persistent system
+
+`s3ve3g_defconfig` builds one ext2 filesystem image (`images/rootfs.ext2`, 512 MiB, and its sparse
+form `images/userdata.simg`) that goes to `userdata` (`mmcblk0p26`, 11.70 GiB). lk2nd scans every
+partition of 16 MiB or more for an ext2 filesystem with `/extlinux/extlinux.conf` and boots its
+default label before falling back to its `boot` partition:
+
+```
+default s3ve3g
+label s3ve3g
+	linux /boot/zImage
+	fdt /boot/qcom-msm8226-samsung-s3ve3g.dtb
+	append console=tty0 loglevel=8 clk_ignore_unused pd_ignore_unused panic=10 lk2nd.pass-ramoops root=PARTLABEL=userdata rootfstype=ext2 rootwait ro
+```
+
+- **Real ext2.** lk2nd's LK ext2 driver refuses any read-only-compatible feature other than
+  `sparse_super` and `large_file`, and maps file blocks through indirect blocks only. The image is
+  ext2 rev 1 made with `-O ^64bit,^has_journal,^extent,^flex_bg,^huge_file,^dir_nlink,^extra_isize,^metadata_csum,^uninit_bg`;
+  `scripts/create_userdata_image.sh` fails the build if `dumpe2fs` shows any feature outside
+  `ext_attr resize_inode dir_index filetype sparse_super large_file`, if `e2fsck -fn` complains, or if
+  the extlinux files are missing.
+- **The kernel and DTB are separate files** (`BR2_LINUX_KERNEL_INSTALL_TARGET`): lk2nd's extlinux
+  boot requires `fdt`/`fdtdir`, loads the DTB itself and patches memory, command line and ramoops
+  into it. The appended-DTB `zImage-dtb` is only for `boot.img`.
+- **Root by GPT name.** The GPT names are lower case (`PARTNAME=userdata` in sysfs) and the kernel
+  compares `PARTLABEL=` case-sensitively. If it ever fails, `root=/dev/mmcblk0p26` is the same
+  partition (numbering is identical to Android, see the port dossier).
+- **Read-only, checked, then read-write.** ext2 has no journal. The kernel mounts root `ro`;
+  `/usr/sbin/rootfs-check` (from `/etc/inittab`) runs `e2fsck -p`, reboots if it repaired the
+  mounted root, leaves root read-only if errors remain, otherwise remounts it read-write.
+  `/etc/e2fsck.conf` sets `broken_system_clock`, since the clock may be unset at boot.
+  `/tmp` and `/run` are tmpfs (`/etc/fstab`); `reboot` and `poweroff` go through BusyBox init,
+  which stops the services and remounts root read-only.
+
+Services (`/etc/init.d`, in order): watchdog pinger (`S05watchdog`, `-T 20 -t 5`), `mdev` as the
+hotplug helper (`S10mdev`; module autoload off unless `s3ve3g.modules=auto` is on the command line
+or `/etc/s3ve3g/modules-autoload` exists, then `modules-coldplug` loads what matches the hardware,
+with `msm` and the panels blacklisted as in rescue), the USB gadget (`S45usb-gadget`: `1d6b:0104`,
+product `s3ve3g`, serial `31cf1659`, ACM + NCM, `10.0.42.1`, `unudhcpd` gives the host `10.0.42.2`,
+`telnetd` bound to `10.0.42.1:23` without a password), `dropbear` (`S50dropbear`), and the status
+reporter (`S99status`: the "s3ve3g persistent" banner on `tty0` and `/dev/kmsg`, then an alive
+line every 5 s). init respawns `/usr/sbin/ttygs0-console`: banner, `dmesg`, then a root shell on
+`ttyGS0`. Logs go to `/run/s3ve3g/` and syslog (`/var/log/messages`).
+
+ssh: the same authorized keys and the same fixed host key as the rescue image
+(`scripts/post_build.sh` reads `<output>/../rescue-ssh/`), so the `known_hosts` there fits both:
+
+```
+ssh -o UserKnownHostsFile=<output>/../rescue-ssh/known_hosts root@10.0.42.1
+```
+
+The filesystem is 512 MiB in an 11.70 GiB partition. Growing it is a deliberate step
+(`resize2fs` from rescue with the root unmounted), not something the image does at boot.
