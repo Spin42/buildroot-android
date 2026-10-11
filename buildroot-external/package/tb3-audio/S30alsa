@@ -11,10 +11,10 @@ case "$1" in
 			usleep 100000
 			i=$((i + 1))
 		done
-		[ -f "$STATE" ] && alsactl -f "$STATE" restore
+		[ -f "$STATE" ] && alsactl --no-ucm -f "$STATE" restore
 		;;
 	stop)
-		alsactl -f "$STATE" store
+		alsactl --no-ucm -f "$STATE" store
 		;;
 	*)
 		echo "Usage: $0 {start|stop}"
