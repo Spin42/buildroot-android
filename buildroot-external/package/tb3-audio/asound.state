@@ -1,0 +1,174 @@
+state.TB3710F {
+	control.1 {
+		iface MIXER
+		name 'Headphone Playback Volume'
+		value.0 4
+		value.1 4
+		comment {
+			access 'read write'
+			type INTEGER
+			count 2
+			range '0 - 7'
+			dbmin -500
+			dbmax 900
+			dbvalue.0 300
+			dbvalue.1 300
+		}
+	}
+	control.2 {
+		iface MIXER
+		name 'Left PGA Capture Volume'
+		value 3
+		comment {
+			access 'read write'
+			type INTEGER
+			count 1
+			range '0 - 5'
+			dbmin -600
+			dbmax 2400
+			dbvalue.0 1200
+		}
+	}
+	control.3 {
+		iface MIXER
+		name 'Right PGA Capture Volume'
+		value 3
+		comment {
+			access 'read write'
+			type INTEGER
+			count 1
+			range '0 - 5'
+			dbmin -600
+			dbmax 2400
+			dbvalue.0 1200
+		}
+	}
+	control.4 {
+		iface CARD
+		name 'Headphone Jack'
+		value false
+		comment {
+			access read
+			type BOOLEAN
+			count 1
+		}
+	}
+	control.5 {
+		iface CARD
+		name 'Speaker Jack'
+		value false
+		comment {
+			access read
+			type BOOLEAN
+			count 1
+		}
+	}
+	control.6 {
+		iface MIXER
+		name 'Speaker Switch'
+		value true
+		comment {
+			access 'read write'
+			type BOOLEAN
+			count 1
+		}
+	}
+	control.7 {
+		iface MIXER
+		name 'Headphone Switch'
+		value true
+		comment {
+			access 'read write'
+			type BOOLEAN
+			count 1
+		}
+	}
+	control.8 {
+		iface MIXER
+		name 'Int Mic Switch'
+		value true
+		comment {
+			access 'read write'
+			type BOOLEAN
+			count 1
+		}
+	}
+	control.9 {
+		iface MIXER
+		name 'Headset Mic Switch'
+		value true
+		comment {
+			access 'read write'
+			type BOOLEAN
+			count 1
+		}
+	}
+	control.10 {
+		iface MIXER
+		name 'O03 I05 Switch'
+		value true
+		comment {
+			access 'read write'
+			type BOOLEAN
+			count 1
+		}
+	}
+	control.11 {
+		iface MIXER
+		name 'O04 I06 Switch'
+		value true
+		comment {
+			access 'read write'
+			type BOOLEAN
+			count 1
+		}
+	}
+	control.12 {
+		iface MIXER
+		name 'O09 I03 Switch'
+		value true
+		comment {
+			access 'read write'
+			type BOOLEAN
+			count 1
+		}
+	}
+	control.13 {
+		iface MIXER
+		name 'O10 I04 Switch'
+		value true
+		comment {
+			access 'read write'
+			type BOOLEAN
+			count 1
+		}
+	}
+	control.14 {
+		iface MIXER
+		name 'Left PGA Mux'
+		value MIC1
+		comment {
+			access 'read write'
+			type ENUMERATED
+			count 1
+			item.0 MIC1
+			item.1 MIC2
+			item.2 MIC3
+			item.3 Open
+		}
+	}
+	control.15 {
+		iface MIXER
+		name 'Right PGA Mux'
+		value MIC1
+		comment {
+			access 'read write'
+			type ENUMERATED
+			count 1
+			item.0 MIC1
+			item.1 MIC2
+			item.2 MIC3
+			item.3 Open
+		}
+	}
+}

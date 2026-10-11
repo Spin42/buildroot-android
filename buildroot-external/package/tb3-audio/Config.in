@@ -1,0 +1,8 @@
+config BR2_PACKAGE_TB3_AUDIO
+	bool "tb3-audio"
+	depends on BR2_PACKAGE_ALSA_UTILS_ALSACTL
+	help
+	  Mixer defaults for the TB3-710F sound card (speaker and
+	  internal microphone routed, headphone gain -5 dB + 8 dB) and an
+	  init script that restores them at boot and saves them at
+	  shutdown.
