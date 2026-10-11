@@ -181,5 +181,23 @@ ssh: the same authorized keys and the same fixed host key as the rescue image
 ssh -o UserKnownHostsFile=<output>/../rescue-ssh/known_hosts root@10.0.42.1
 ```
 
+### Flashing userdata
+
+`board/s3ve3g/scripts/reflash.sh` writes the image through lk2nd's fastboot. It runs read-only
+checks (image type and `SHA256SUMS`, the serial alone in fastboot, `lk2nd:version`,
+`lk2nd:compatible` = `samsung,s3ve3g`, the image fits `partition-size:userdata`) and prints the
+command; `--execute` writes, reboots and waits for the gadget and ssh:
+
+```
+board/s3ve3g/scripts/reflash.sh <serial> [images/userdata.simg]            # dry run
+board/s3ve3g/scripts/reflash.sh --execute <serial> [images/userdata.simg]  # write
+board/s3ve3g/scripts/reflash.sh --execute --via-ssh <serial>               # from the running system
+```
+
+`--via-ssh` remounts the running system's root read-only and runs `reboot-mode bootloader`. By
+hand: power on, wait for the Samsung logo, hold Volume Down until the lk2nd menu shows.
+`userdata` keeps no backup (nothing on it is kept); the RAM rescue image
+(`fastboot boot boot.img`) stays the way back from a broken root filesystem.
+
 The filesystem is 512 MiB in an 11.70 GiB partition. Growing it is a deliberate step
 (`resize2fs` from rescue with the root unmounted), not something the image does at boot.
