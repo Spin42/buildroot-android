@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config VIDEO_MT8127_CAMSYS
+	tristate "MediaTek MT8127 camera subsystem"
+	depends on VIDEO_DEV && OF && ARCH_MEDIATEK && COMMON_CLK
+	select MEDIA_CONTROLLER
+	select VIDEO_V4L2_SUBDEV_API
+	select V4L2_FWNODE
+	select VIDEOBUF2_DMA_CONTIG
+	help
+	  V4L2 capture driver for the sensor interface and ISP pass 1 of the
+	  MediaTek MT8127: a CSI-2 receiver, one capture video node and the
+	  24 MHz sensor master clock. The SP2508 and SP0A20 sensors are
+	  separate drivers.
+
+	  To compile this driver as a module, choose M here: the module will be
+	  called mtk_camsys.

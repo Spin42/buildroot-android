@@ -1,0 +1,1 @@
+wlan_mt-y += $(W)/os/linux/hif/ahb/arm.o $(W)/os/linux/hif/ahb/ahb.o $(W)/os/linux/hif/ahb/mt8127/ahb_pdma.o

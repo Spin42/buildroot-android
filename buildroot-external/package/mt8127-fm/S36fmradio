@@ -1,0 +1,8 @@
+#!/bin/sh
+# Load the MT8127 CONSYS FM radio driver: it registers its own device, so nothing loads it by modalias.
+
+case "$1" in
+	start) modprobe mtk_consys_fm ;;
+	stop) ;;
+	*) echo "Usage: $0 {start|stop}"; exit 1 ;;
+esac

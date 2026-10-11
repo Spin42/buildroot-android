@@ -1,0 +1,9 @@
+config BR2_PACKAGE_MT8127_CAMERA
+	bool "mt8127-camera"
+	depends on BR2_LINUX_KERNEL
+	select BR2_LINUX_NEEDS_MODULES
+	help
+	  V4L2 media-controller camera driver for the MT8127 (camsys:
+	  sensor interface, ISP pass 1 and the sensor clock) and the
+	  SP2508 / SP0A20 sensor drivers. Needs the media and videobuf2
+	  kernel options.

@@ -1,0 +1,10 @@
+config BR2_PACKAGE_TB3_WIFI
+	bool "tb3-wifi"
+	depends on BR2_PACKAGE_MT8127_WLAN
+	select BR2_PACKAGE_TB3_FIRMWARE
+	select BR2_PACKAGE_WPA_SUPPLICANT
+	select BR2_PACKAGE_WPA_SUPPLICANT_NL80211
+	help
+	  Brings the WiFi of the Lenovo TB3-710F up at boot: loads the
+	  CONSYS driver stack in dependency order and starts
+	  wpa_supplicant on wlan0 when /etc/wpa_supplicant.conf exists.

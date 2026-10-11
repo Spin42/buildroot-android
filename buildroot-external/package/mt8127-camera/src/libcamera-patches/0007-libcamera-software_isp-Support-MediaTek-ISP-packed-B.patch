@@ -1,0 +1,246 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Sun, 11 Oct 2026 09:41:10 +0200
+Subject: [PATCH 7/7] libcamera: software_isp: Support MediaTek ISP packed
+ Bayer input
+
+The 10- and 12-bit MTISP lines are unpacked to 16 bits per pixel while
+being copied to the line buffers, which lets the debayering and the
+statistics reuse the unpacked Bayer functions.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ src/libcamera/software_isp/debayer_cpu.cpp | 109 ++++++++++++++++++---
+ src/libcamera/software_isp/debayer_cpu.h   |   5 +
+ src/libcamera/software_isp/swstats_cpu.cpp |  17 ++++
+ 3 files changed, 115 insertions(+), 16 deletions(-)
+
+diff --git a/src/libcamera/software_isp/debayer_cpu.cpp b/src/libcamera/software_isp/debayer_cpu.cpp
+index 66f6038..47ca97e 100644
+--- a/src/libcamera/software_isp/debayer_cpu.cpp
++++ b/src/libcamera/software_isp/debayer_cpu.cpp
+@@ -51,6 +51,7 @@ DebayerCpu::DebayerCpu(std::unique_ptr<SwStatsCpu> stats)
+ 	 * future.
+ 	 */
+ 	enableInputMemcpy_ = true;
++	unpack_ = nullptr;
+ 
+ 	/* Initialize color lookup tables */
+ 	for (unsigned int i = 0; i < DebayerParams::kRGBLookupSize; i++) {
+@@ -291,6 +292,34 @@ void DebayerCpu::debayer10P_RGRG_BGR888(uint8_t *dst, const uint8_t *src[])
+ 	}
+ }
+ 
++namespace {
++
++/*
++ * MediaTek ISP packing: each line is a little-endian bitstream, pixel n
++ * occupying bits [n * bpp, (n + 1) * bpp). The unpack functions expand the
++ * given number of pixels to one 16-bit value per pixel. The pixel count must
++ * be a multiple of 4 for 10-bit and of 2 for 12-bit data.
++ */
++void unpackMtisp10(const uint8_t *src, uint16_t *dst, unsigned int pixels)
++{
++	for (unsigned int i = 0; i < pixels; i += 4, src += 5) {
++		dst[i] = src[0] | (src[1] & 0x03) << 8;
++		dst[i + 1] = src[1] >> 2 | (src[2] & 0x0f) << 6;
++		dst[i + 2] = src[2] >> 4 | (src[3] & 0x3f) << 4;
++		dst[i + 3] = src[3] >> 6 | src[4] << 2;
++	}
++}
++
++void unpackMtisp12(const uint8_t *src, uint16_t *dst, unsigned int pixels)
++{
++	for (unsigned int i = 0; i < pixels; i += 2, src += 3) {
++		dst[i] = src[0] | (src[1] & 0x0f) << 8;
++		dst[i + 1] = src[1] >> 4 | src[2] << 4;
++	}
++}
++
++} /* namespace */
++
+ static bool isStandardBayerOrder(BayerFormat::Order order)
+ {
+ 	return order == BayerFormat::BGGR || order == BayerFormat::GBRG ||
+@@ -337,6 +366,22 @@ int DebayerCpu::getInputConfig(PixelFormat inputFormat, DebayerInputConfig &conf
+ 		return 0;
+ 	}
+ 
++	if ((bayerFormat.bitDepth == 10 || bayerFormat.bitDepth == 12) &&
++	    bayerFormat.packing == BayerFormat::Packing::MTISP &&
++	    isStandardBayerOrder(bayerFormat.order)) {
++		config.bpp = bayerFormat.bitDepth;
++		/* Smallest pattern starting on a byte boundary */
++		config.patternSize.width = bayerFormat.bitDepth == 10 ? 4 : 2;
++		config.patternSize.height = 2;
++		config.outputFormats = std::vector<PixelFormat>({ formats::RGB888,
++								  formats::XRGB8888,
++								  formats::ARGB8888,
++								  formats::BGR888,
++								  formats::XBGR8888,
++								  formats::ABGR8888 });
++		return 0;
++	}
++
+ 	LOG(Debayer, Info)
+ 		<< "Unsupported input format " << inputFormat.toString();
+ 	return -EINVAL;
+@@ -404,6 +449,7 @@ int DebayerCpu::setDebayerFunctions(PixelFormat inputFormat,
+ 
+ 	xShift_ = 0;
+ 	swapRedBlueGains_ = false;
++	unpack_ = nullptr;
+ 
+ 	auto invalidFmt = []() -> int {
+ 		LOG(Debayer, Error) << "Unsupported input output format combination";
+@@ -464,6 +510,24 @@ int DebayerCpu::setDebayerFunctions(PixelFormat inputFormat,
+ 		return 0;
+ 	}
+ 
++	/*
++	 * MediaTek ISP packed lines are unpacked to 16 bits per pixel when
++	 * copied to the line buffers, and debayered as unpacked data.
++	 */
++	if ((bayerFormat.bitDepth == 10 || bayerFormat.bitDepth == 12) &&
++	    bayerFormat.packing == BayerFormat::Packing::MTISP &&
++	    isStandardBayerOrder(bayerFormat.order)) {
++		if (bayerFormat.bitDepth == 10) {
++			SET_DEBAYER_METHODS(debayer10_BGBG_BGR888, debayer10_GRGR_BGR888)
++			unpack_ = unpackMtisp10;
++		} else {
++			SET_DEBAYER_METHODS(debayer12_BGBG_BGR888, debayer12_GRGR_BGR888)
++			unpack_ = unpackMtisp12;
++		}
++		setupStandardBayerOrder(bayerFormat.order);
++		return 0;
++	}
++
+ 	if (bayerFormat.bitDepth == 10 &&
+ 	    bayerFormat.packing == BayerFormat::Packing::CSI2) {
+ 		switch (bayerFormat.order) {
+@@ -545,11 +609,18 @@ int DebayerCpu::configure(const StreamConfiguration &inputCfg,
+ 	stats_->setWindow(Rectangle(window_.size()));
+ 
+ 	/* pad with patternSize.Width on both left and right side */
+-	lineBufferPadding_ = inputConfig_.patternSize.width * inputConfig_.bpp / 8;
+-	lineBufferLength_ = window_.width * inputConfig_.bpp / 8 +
+-			    2 * lineBufferPadding_;
++	inputPadding_ = inputConfig_.patternSize.width * inputConfig_.bpp / 8;
++	if (unpack_) {
++		lineBufferPixels_ = window_.width + 2 * inputConfig_.patternSize.width;
++		lineBufferPadding_ = inputConfig_.patternSize.width * sizeof(uint16_t);
++		lineBufferLength_ = lineBufferPixels_ * sizeof(uint16_t);
++	} else {
++		lineBufferPadding_ = inputPadding_;
++		lineBufferLength_ = window_.width * inputConfig_.bpp / 8 +
++				    2 * lineBufferPadding_;
++	}
+ 
+-	if (enableInputMemcpy_) {
++	if (enableInputMemcpy_ || unpack_) {
+ 		for (unsigned int i = 0; i <= inputConfig_.patternSize.height; i++)
+ 			lineBuffers_[i].resize(lineBufferLength_);
+ 	}
+@@ -598,19 +669,28 @@ DebayerCpu::strideAndFrameSize(const PixelFormat &outputFormat, const Size &size
+ 	return std::make_tuple(stride, stride * size.height);
+ }
+ 
++void DebayerCpu::copyLine(unsigned int index, const uint8_t *&linePointer)
++{
++	uint8_t *buffer = lineBuffers_[index].data();
++
++	if (unpack_)
++		unpack_(linePointer - inputPadding_,
++			reinterpret_cast<uint16_t *>(buffer), lineBufferPixels_);
++	else
++		memcpy(buffer, linePointer - lineBufferPadding_, lineBufferLength_);
++
++	linePointer = buffer + lineBufferPadding_;
++}
++
+ void DebayerCpu::setupInputMemcpy(const uint8_t *linePointers[])
+ {
+ 	const unsigned int patternHeight = inputConfig_.patternSize.height;
+ 
+-	if (!enableInputMemcpy_)
++	if (!enableInputMemcpy_ && !unpack_)
+ 		return;
+ 
+-	for (unsigned int i = 0; i < patternHeight; i++) {
+-		memcpy(lineBuffers_[i].data(),
+-		       linePointers[i + 1] - lineBufferPadding_,
+-		       lineBufferLength_);
+-		linePointers[i + 1] = lineBuffers_[i].data() + lineBufferPadding_;
+-	}
++	for (unsigned int i = 0; i < patternHeight; i++)
++		copyLine(i, linePointers[i + 1]);
+ 
+ 	/* Point lineBufferIndex_ to first unused lineBuffer */
+ 	lineBufferIndex_ = patternHeight;
+@@ -631,13 +711,10 @@ void DebayerCpu::memcpyNextLine(const uint8_t *linePointers[])
+ {
+ 	const unsigned int patternHeight = inputConfig_.patternSize.height;
+ 
+-	if (!enableInputMemcpy_)
++	if (!enableInputMemcpy_ && !unpack_)
+ 		return;
+ 
+-	memcpy(lineBuffers_[lineBufferIndex_].data(),
+-	       linePointers[patternHeight] - lineBufferPadding_,
+-	       lineBufferLength_);
+-	linePointers[patternHeight] = lineBuffers_[lineBufferIndex_].data() + lineBufferPadding_;
++	copyLine(lineBufferIndex_, linePointers[patternHeight]);
+ 
+ 	lineBufferIndex_ = (lineBufferIndex_ + 1) % (patternHeight + 1);
+ }
+diff --git a/src/libcamera/software_isp/debayer_cpu.h b/src/libcamera/software_isp/debayer_cpu.h
+index 926195e..4eac7d4 100644
+--- a/src/libcamera/software_isp/debayer_cpu.h
++++ b/src/libcamera/software_isp/debayer_cpu.h
+@@ -129,6 +129,7 @@ private:
+ 	int setDebayerFunctions(PixelFormat inputFormat,
+ 				PixelFormat outputFormat,
+ 				bool ccmEnabled);
++	void copyLine(unsigned int index, const uint8_t *&linePointer);
+ 	void setupInputMemcpy(const uint8_t *linePointers[]);
+ 	void shiftLinePointers(const uint8_t *linePointers[], const uint8_t *src);
+ 	void memcpyNextLine(const uint8_t *linePointers[]);
+@@ -157,6 +158,10 @@ private:
+ 	unsigned int lineBufferLength_;
+ 	unsigned int lineBufferPadding_;
+ 	unsigned int lineBufferIndex_;
++	/* Converts a packed input line to 16 bits per pixel, or nullptr */
++	void (*unpack_)(const uint8_t *src, uint16_t *dst, unsigned int pixels);
++	unsigned int lineBufferPixels_;
++	unsigned int inputPadding_;
+ 	unsigned int xShift_; /* Offset of 0/1 applied to window_.x */
+ 	bool enableInputMemcpy_;
+ 	bool swapRedBlueGains_;
+diff --git a/src/libcamera/software_isp/swstats_cpu.cpp b/src/libcamera/software_isp/swstats_cpu.cpp
+index c520c80..96dbccd 100644
+--- a/src/libcamera/software_isp/swstats_cpu.cpp
++++ b/src/libcamera/software_isp/swstats_cpu.cpp
+@@ -384,6 +384,23 @@ int SwStatsCpu::configure(const StreamConfiguration &inputCfg)
+ 		}
+ 	}
+ 
++	/*
++	 * DebayerCpu unpacks MediaTek ISP packed lines to 16 bits per pixel
++	 * before passing them to processLine0().
++	 */
++	if (bayerFormat.packing == BayerFormat::Packing::MTISP &&
++	    setupStandardBayerOrder(bayerFormat.order) == 0) {
++		switch (bayerFormat.bitDepth) {
++		case 10:
++			stats0_ = &SwStatsCpu::statsBGGR10Line0;
++			patternSize_.width = 4; /* 5 bytes per *4* pixels */
++			return 0;
++		case 12:
++			stats0_ = &SwStatsCpu::statsBGGR12Line0;
++			return 0;
++		}
++	}
++
+ 	if (bayerFormat.bitDepth == 10 &&
+ 	    bayerFormat.packing == BayerFormat::Packing::CSI2) {
+ 		patternSize_.height = 2;

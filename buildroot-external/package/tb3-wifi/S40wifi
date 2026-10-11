@@ -1,0 +1,41 @@
+#!/bin/sh
+# Load the MT8127 CONSYS WiFi stack, start wpa_supplicant on wlan0 and a background DHCP client.
+
+WPA_CONF=/etc/wpa_supplicant.conf
+WPA_PID=/var/run/wpa_supplicant-wlan0.pid
+DHCP_PID=/var/run/udhcpc-wlan0.pid
+
+start() {
+	# modprobe pulls in mt8127_consys, mtk_btif and mtk_stp_wmt_soc as dependencies
+	modprobe wlan_mt || return 1
+	[ -f "$WPA_CONF" ] || return 0
+	wpa_supplicant -B -Dnl80211 -iwlan0 -c "$WPA_CONF" -P "$WPA_PID"
+	# -b: keep trying in the background until an access point is joined
+	udhcpc -b -S -i wlan0 -p "$DHCP_PID" >/dev/null 2>&1
+}
+
+stop() {
+	[ -f "$DHCP_PID" ] && kill "$(cat "$DHCP_PID")" && rm -f "$DHCP_PID"
+	[ -f "$WPA_PID" ] && kill "$(cat "$WPA_PID")" && rm -f "$WPA_PID"
+	ip link set wlan0 down 2>/dev/null
+}
+
+# Unloading the WMT core can hang, so it is not part of stop (which also runs at shutdown).
+unload() {
+	stop
+	modprobe -r wlan_mt mtk_stp_wmt_soc mtk_btif mt8127_consys
+}
+
+# wpa_supplicant reads its configuration only at start or on request.
+reload() {
+	wpa_cli -i wlan0 reconfigure
+}
+
+case "$1" in
+	start) start ;;
+	stop) stop ;;
+	restart) stop; sleep 1; start ;;
+	reload) reload ;;
+	unload) unload ;;
+	*) echo "Usage: $0 {start|stop|restart|reload|unload}"; exit 1 ;;
+esac

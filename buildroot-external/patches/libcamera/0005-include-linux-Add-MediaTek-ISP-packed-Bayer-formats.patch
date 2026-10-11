@@ -1,0 +1,72 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Sun, 11 Oct 2026 09:37:48 +0200
+Subject: [PATCH 4/7] include: linux: Add MediaTek ISP packed Bayer formats
+
+The V4L2 fourccs follow the kernel patch adding the MTISP formats. The
+DRM modifier and its vendor ID are libcamera-local, like the MIPI and
+RPI ones.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ include/linux/drm_fourcc.h | 11 +++++++++++
+ include/linux/videodev2.h  | 17 +++++++++++++++++
+ 2 files changed, 28 insertions(+)
+
+diff --git a/include/linux/drm_fourcc.h b/include/linux/drm_fourcc.h
+index db67987..1f12703 100644
+--- a/include/linux/drm_fourcc.h
++++ b/include/linux/drm_fourcc.h
+@@ -491,6 +491,7 @@ extern "C" {
+ #define DRM_FORMAT_MOD_VENDOR_AMLOGIC 0x0a
+ #define DRM_FORMAT_MOD_VENDOR_MIPI 0x0b
+ #define DRM_FORMAT_MOD_VENDOR_RPI 0x0c
++#define DRM_FORMAT_MOD_VENDOR_MTISP 0x0d
+ 
+ /* add more to the end as needed */
+ 
+@@ -1692,6 +1693,16 @@ drm_fourcc_canonicalize_nvidia_format_mod(__u64 modifier)
+ #define PISP_FORMAT_MOD_COMPRESS_MODE1 fourcc_mod_code(RPI, 1)
+ #define PISP_FORMAT_MOD_COMPRESS_MODE2 fourcc_mod_code(RPI, 2)
+ 
++/*
++ * MediaTek ISP packed RAW formats
++ *
++ * Each line is a little-endian bitstream without padding between samples:
++ * sample n occupies bits [n * bpp, (n + 1) * bpp) of the line, least
++ * significant bit first. 10-bit samples take five bytes per four samples and
++ * 12-bit samples three bytes per two samples.
++ */
++#define MTISP_FORMAT_MOD_PACKED fourcc_mod_code(MTISP, 1)
++
+ #if defined(__cplusplus)
+ }
+ #endif
+diff --git a/include/linux/videodev2.h b/include/linux/videodev2.h
+index 317d063..92652aa 100644
+--- a/include/linux/videodev2.h
++++ b/include/linux/videodev2.h
+@@ -789,6 +789,23 @@ struct v4l2_pix_format {
+ #define V4L2_PIX_FMT_IPU3_SGRBG10	v4l2_fourcc('i', 'p', '3', 'G') /* IPU3 packed 10-bit GRBG bayer */
+ #define V4L2_PIX_FMT_IPU3_SRGGB10	v4l2_fourcc('i', 'p', '3', 'r') /* IPU3 packed 10-bit RGGB bayer */
+ 
++/*
++ * MediaTek ISP packed Bayer formats: each line is a little-endian bitstream,
++ * pixel n occupying bits [n * bpp, (n + 1) * bpp), LSB first.
++ */
++#define V4L2_PIX_FMT_MTISP_SBGGR8	v4l2_fourcc('M', 'B', 'B', '8') /* MediaTek packed 8-bit BGGR */
++#define V4L2_PIX_FMT_MTISP_SGBRG8	v4l2_fourcc('M', 'B', 'G', '8') /* MediaTek packed 8-bit GBRG */
++#define V4L2_PIX_FMT_MTISP_SGRBG8	v4l2_fourcc('M', 'B', 'g', '8') /* MediaTek packed 8-bit GRBG */
++#define V4L2_PIX_FMT_MTISP_SRGGB8	v4l2_fourcc('M', 'B', 'R', '8') /* MediaTek packed 8-bit RGGB */
++#define V4L2_PIX_FMT_MTISP_SBGGR10	v4l2_fourcc('M', 'B', 'B', 'A') /* MediaTek packed 10-bit BGGR */
++#define V4L2_PIX_FMT_MTISP_SGBRG10	v4l2_fourcc('M', 'B', 'G', 'A') /* MediaTek packed 10-bit GBRG */
++#define V4L2_PIX_FMT_MTISP_SGRBG10	v4l2_fourcc('M', 'B', 'g', 'A') /* MediaTek packed 10-bit GRBG */
++#define V4L2_PIX_FMT_MTISP_SRGGB10	v4l2_fourcc('M', 'B', 'R', 'A') /* MediaTek packed 10-bit RGGB */
++#define V4L2_PIX_FMT_MTISP_SBGGR12	v4l2_fourcc('M', 'B', 'B', 'C') /* MediaTek packed 12-bit BGGR */
++#define V4L2_PIX_FMT_MTISP_SGBRG12	v4l2_fourcc('M', 'B', 'G', 'C') /* MediaTek packed 12-bit GBRG */
++#define V4L2_PIX_FMT_MTISP_SGRBG12	v4l2_fourcc('M', 'B', 'g', 'C') /* MediaTek packed 12-bit GRBG */
++#define V4L2_PIX_FMT_MTISP_SRGGB12	v4l2_fourcc('M', 'B', 'R', 'C') /* MediaTek packed 12-bit RGGB */
++
+ /* Raspberry Pi PiSP compressed formats. */
+ #define V4L2_PIX_FMT_PISP_COMP1_RGGB	v4l2_fourcc('P', 'C', '1', 'R') /* PiSP 8-bit mode 1 compressed RGGB bayer */
+ #define V4L2_PIX_FMT_PISP_COMP1_GRBG	v4l2_fourcc('P', 'C', '1', 'G') /* PiSP 8-bit mode 1 compressed GRBG bayer */

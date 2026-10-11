@@ -1,0 +1,24 @@
+#!/bin/sh
+# Restore the ALSA mixer state of the TB3-710F sound card at boot and save it at shutdown.
+
+STATE=/var/lib/alsa/asound.state
+
+case "$1" in
+	start)
+		# The sound card is a module loaded by S05modules; wait for it to register.
+		i=0
+		while [ ! -e /dev/snd/controlC0 ] && [ $i -lt 50 ]; do
+			usleep 100000
+			i=$((i + 1))
+		done
+		[ -f "$STATE" ] && alsactl --no-ucm -f "$STATE" restore
+		;;
+	stop)
+		alsactl --no-ucm -f "$STATE" store
+		;;
+	*)
+		echo "Usage: $0 {start|stop}"
+		exit 1
+		;;
+esac
+exit 0

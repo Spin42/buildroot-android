@@ -1,0 +1,8 @@
+config BR2_PACKAGE_TB3_GPU_TEST
+	bool "tb3-gpu-test"
+	depends on BR2_PACKAGE_MESA3D_OPENGL_EGL
+	depends on BR2_PACKAGE_MESA3D_OPENGL_ES
+	help
+	  Offscreen GPU check for the TB3-710F: renders a triangle through
+	  EGL (surfaceless) and GLES2 on the lima render node and verifies the
+	  pixels.

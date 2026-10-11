@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0
+ccflags-y += -I$(src)/inc -I$(src)/hal_inc -I$(src)/mt8127/inc -I$(src)/compat
+
+obj-m += mtk_btif.o
+mtk_btif-y := mtk_btif_main.o mtk_btif_exp.o \
+	      mt8127/hal_btif.o mt8127/hal_btif_dma.o

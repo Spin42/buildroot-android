@@ -1,0 +1,8 @@
+#!/bin/sh
+# PID 1 of the rescue image: the root filesystem is this initramfs, userdata stays untouched.
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+umount /proc /sys 2>/dev/null
+exec /sbin/init

@@ -1,0 +1,8 @@
+config BR2_PACKAGE_MT8127_BTIF
+	bool "mt8127-btif"
+	depends on BR2_LINUX_KERNEL
+	select BR2_LINUX_NEEDS_MODULES
+	help
+	  Driver for the BTIF block of the MediaTek MT8127: the UART-like
+	  link between the application processor and the CONSYS connectivity
+	  subsystem. Provides the mtk_wcn_btif_* API used by the WMT core.

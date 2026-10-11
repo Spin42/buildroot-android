@@ -1,0 +1,14 @@
+#!/bin/sh
+# DHCP server for the USB gadget interface.
+case "$1" in
+	start)
+		mkdir -p /var/lib/misc
+		touch /var/lib/misc/udhcpd.leases
+		start-stop-daemon -S -q -b -x /usr/sbin/udhcpd -- -f /etc/udhcpd.conf
+		;;
+	stop)
+		start-stop-daemon -K -q -x /usr/sbin/udhcpd
+		;;
+	restart) "$0" stop; "$0" start ;;
+	*) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac

@@ -1,0 +1,6 @@
+config BR2_PACKAGE_TB3_BLUETOOTH
+	bool "tb3-bluetooth"
+	depends on BR2_PACKAGE_MT8127_BT
+	help
+	  Loads the TB3-710F Bluetooth driver at boot with a stable
+	  per-device address derived from the eMMC CID.

@@ -16,3 +16,6 @@
 log.txt
 /archive/
 /.opencode/
+
+# proprietary firmware collected by prepare_firmware.sh
+/buildroot-external/board/tb3_710f/firmware/

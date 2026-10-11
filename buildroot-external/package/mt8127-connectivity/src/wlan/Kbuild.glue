@@ -1,0 +1,2 @@
+wlan_mt-y += $(W)/os/linux/gl_init.o $(W)/os/linux/gl_kal.o $(W)/os/linux/gl_rst.o \
+	$(W)/os/linux/gl_cfg80211.o $(W)/os/linux/platform.o
