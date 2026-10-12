@@ -111,6 +111,8 @@ pmaports `b48d67b`) saved with `savedefconfig` after building it with gcc and th
 | `DEBUG_INFO_NONE=y` | no DWARF/BTF: faster builds, no host pahole |
 | `EXT2_FS` off, so `EXT4_USE_FOR_EXT2=y` | the persistent root is ext2 (lk2nd reads nothing else); the built-in ext4 driver mounts it as `ext2` and refuses ext4-only features on it |
 | `SYSCON_REBOOT_MODE=y` | `reboot-mode <mode>` writes the restart reason to IMEM `0xfe80565c` for Samsung aboot (see Boot chain); built in so it works without loading modules |
+| `CHARGER_QCOM_SMBB=y` | the PM8226 charger (patched, see Charging and fuel gauge); built in so the phone charges from the first second, with or without userspace |
+| `QCOM_SPMI_VADC=m`, `BATTERY_QCOM_BMS=m` | the battery ADC and the BMS1 fuel gauge (`linux-patches` 0017-0020); loaded by `S12battery` |
 
 Modules stay on, as in pmaports. First light loads none, so everything it uses is built in, and
 `scripts/firstlight_post_build.sh` drops `/lib/modules` from its initramfs. Turning `MODULES` off
@@ -118,7 +120,7 @@ instead would not shrink the kernel: Kconfig then turns every `=m` into `=y`, in
 which would take the display over from simpledrm without a panel driver.
 
 Kernel command line (`scripts/create_boot_image.sh`): `console=tty0 loglevel=8 clk_ignore_unused
-pd_ignore_unused panic=10 lk2nd.pass-ramoops`. The simple-framebuffer node lists no clocks, so the two
+pd_ignore_unused panic=10 reboot=warm qcom_smbb.trace=0 lk2nd.pass-ramoops`. The simple-framebuffer node lists no clocks, so the two
 `*_ignore_unused` keep the display clocks and power domain the bootloader left on.
 `lk2nd.pass-ramoops` makes lk2nd add a ramoops region; after a reboot into lk2nd,
 `fastboot oem ramoops console` then `fastboot get_staged console.txt` returns the previous kernel log.
@@ -135,6 +137,8 @@ pd_ignore_unused panic=10 lk2nd.pass-ramoops`. The simple-framebuffer node lists
 | L15 3.3 V | downstream: the panel `vdd` (ms013g uses 2.8 V) |
 | `pronto` + `iris` (the dtsi default `qcom,wcn3660a`), L3 `vddmx`, L6 `vddpx`, L10 XO, L16 PA, L24 RFA/dig, wlan pins GPIO 40-44 | regulator constraints and pins from the stock kernel; dual-band IRIS (802.11a/b/g/n, no 11ac) |
 | L8 (Pronto PLL), L10, L16, L24 always on, with the firmware's loads | as the vendor kernel and the other msm8226 Samsungs; switched on demand, the radio start stalled (8 s calibration upload) and the first scans locked the phone up |
+| `smbb`: 4.35 V, 1 A fast charge, 500 mA USB input, DC input off, `qcom,battery-presence-source = "id"` | downstream PMIC description (`qcom,bpd-detection = "bpd_id"`: the battery ID pin, not the thermistor) |
+| `pm8226_bms` (BMS1 at 0x4000) + `simple-battery` (2100 mAh, 3.4-4.35 V, OCV tables), 10 mOhm sense resistor | vendor BMS profile `samsung_2100mAH_data` and PMIC description |
 
 ## Rescue
 
@@ -182,7 +186,7 @@ default s3ve3g
 label s3ve3g
 	linux /boot/zImage
 	fdt /boot/qcom-msm8226-samsung-s3ve3g.dtb
-	append console=tty0 loglevel=8 clk_ignore_unused pd_ignore_unused panic=10 lk2nd.pass-ramoops root=PARTLABEL=userdata rootfstype=ext2 rootwait ro
+	append console=tty0 loglevel=8 clk_ignore_unused pd_ignore_unused panic=10 reboot=warm qcom_smbb.trace=0 lk2nd.pass-ramoops root=PARTLABEL=userdata rootfstype=ext2 rootwait ro
 ```
 
 - **Real ext2.** lk2nd's LK ext2 driver refuses any read-only-compatible feature other than
@@ -208,7 +212,8 @@ Services (`/etc/init.d`, in order): watchdog pinger (`S05watchdog`, `-T 20 -t 5`
 mount (`S08firmware`, see WiFi below), `mdev` as the
 hotplug helper (`S10mdev`; module autoload off unless `s3ve3g.modules=auto` is on the command line
 or `/etc/s3ve3g/modules-autoload` exists, then `modules-coldplug` loads what matches the hardware,
-with `msm` and the panels blacklisted as in rescue), the WCNSS drivers (`S30wcnss`), the USB gadget (`S45usb-gadget`: `1d6b:0104`,
+with `msm` and the panels blacklisted as in rescue), the fuel gauge (`S12battery`, see Charging and
+fuel gauge), the WCNSS drivers (`S30wcnss`), the USB gadget (`S45usb-gadget`: `1d6b:0104`,
 product `s3ve3g`, serial `31cf1659`, ACM + NCM, `10.0.42.1`, `unudhcpd` gives the host `10.0.42.2`,
 `telnetd` bound to `10.0.42.1:23` without a password) and `dropbear` (`S50dropbear`). init respawns `/usr/sbin/ttygs0-console`: banner, `dmesg`, then a root shell on
 `ttyGS0`. Logs go to `/run/s3ve3g/` and syslog (`/var/log/messages`).
@@ -263,6 +268,45 @@ udhcpc -i wlan0
 DXE interrupt logs at `KERN_DEBUG`, and with `loglevel=8` on the command line each line is drawn on
 the framebuffer console: during a scan that is enough to stall the system. If you need it, lower
 the console level first (`dmesg -n 5`) and read the log with `dmesg -w` over ssh.
+
+### Charging and fuel gauge
+
+The charger is the PM8226 SMBB block (`qcom_smbb`, built in), carrying the Fairphone 2 charger
+series plus fixes found on this phone (`linux-patches` 0007-0016, 0023, 0025-0029). It is the
+same kernel series the Nerves system runs. Power supplies in `/sys/class/power_supply/`:
+
+| Name | What |
+|---|---|
+| `smbb-usbin` | the USB input (`online`, `charge_control_limit` = input limit) |
+| `smbb-bif` | the battery interface: `status` (`Charging`, `Discharging`, `Full`), `charge_type` (`Fast`, `Trickle`), `present`, `health` |
+| `qcom-bms` | the fuel gauge: `capacity`, `voltage_now`, `current_now` (positive = charging), `voltage_ocv`, `charge_now`, `charge_counter`, `temp`, `charge_full_design` |
+
+- **The BATFET low-power trap.** `BATFET_CTRL4` low-power mode (bits 7:6 = `0x40`) is meant for
+  running on the battery alone, and it survives every reset short of a battery removal. Whatever set
+  it last (Android, or a power-off on battery) leaves it in force under the next charger, and the
+  phone then never charges. The driver clears it whenever an input is present, as the vendor driver
+  does, and sets it again only when no input remains. With a charger in, `dmesg` shows
+  `BATFET low-power mode off (batfet_ctrl4 40 -> 00)` once if it was set.
+- **The input floor.** When the USB input is there but not qualified (`CHG_GONE` latched after a
+  warm reboot), the driver resets the input arbiter, which re-qualifies at 100 mA. The limit then
+  goes back to the floor (500 mA here) as soon as the input qualifies: only a running charge cycle
+  ramps the limit, and at 100 mA, below the system load, no cycle would ever start.
+  `dmesg`: `input re-qualified after arbiter reset, input limit 500000 uA`.
+- **Battery presence by the ID pin** (`qcom,battery-presence-source = "id"`), as the vendor
+  configures this phone; the thermistor default gives a wrong answer here.
+- **The gauge** (`qcom_bms`) reads the open circuit voltage the BMS1 latches at power-on and when
+  the current stays low, and its coulomb counter since then. The state of charge comes from the
+  stock 2100 mAh profile (`samsung_2100mAH_data`: OCV tables per temperature, design capacity,
+  177 mOhm resistance) in the `simple-battery` node. `qcom_spmi_vadc` provides the battery voltage
+  and temperature. No FCC learning and no unusable-charge correction: `capacity` is a reasonable
+  estimate, not Android's number.
+- `qcom_smbb.trace=1` (command line, or `/sys/module/qcom_smbb/parameters/trace` at run time)
+  logs each supervisor decision with the status registers, on change and once a minute. It is a
+  diagnostic and is off on this system. The state is also in `/sys/kernel/debug/<device>/state`
+  when debugfs is mounted.
+
+Charging is limited to a 500 mA input for every cable; Samsung's software temperature policy is
+not implemented.
 
 ### Updating the system
 
