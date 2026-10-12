@@ -1,0 +1,165 @@
+From b50314eb3316da0a7e758de68c66d9b7fefc6a47 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Tue, 4 Aug 2026 10:08:44 +0200
+Subject: [PATCH 12/26] power: supply: qcom_smbb: stop re-arming a battery that
+ is already full
+
+The supervisor decided to re-arm whenever an input was present, the
+battery was in range, and no cycle was running.  A full battery meets
+all three: the hardware auto-recharge comparator is correctly holding the
+buck off, so no cycle runs, so the supervisor toggled CTRL_EN on every
+pass.  Measured on a Fairphone 2 with a pack at 4.34 V and the recharge
+threshold at 4.24 V: seven toggles in 140 seconds, and it would have
+continued for as long as the cable stayed in.
+
+That is not what the vendor driver does.  It re-arms once at end of
+charge and then waits for the comparator to ask for the next cycle.
+
+Read the hardware end-of-charge state and treat it as "nothing to do",
+and back off between re-arm attempts otherwise (tripling the interval up
+to five minutes, reset whenever the state changes or a cable arrives), so
+a charge path that genuinely needs prodding still recovers in minutes
+while nothing gets a CTRL_EN toggle every ten seconds indefinitely.
+
+Assisted-by: Claude:claude-fable-5
+---
+ drivers/power/supply/qcom_smbb.c | 46 +++++++++++++++++++++++++-------
+ 1 file changed, 36 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/power/supply/qcom_smbb.c b/drivers/power/supply/qcom_smbb.c
+index 7f7aa56ef6ec..f11a94a8e498 100644
+--- a/drivers/power/supply/qcom_smbb.c
++++ b/drivers/power/supply/qcom_smbb.c
+@@ -192,6 +192,7 @@ struct smbb_charger {
+ 	unsigned int iusb_learn_idx;	/* ceiling learned from a collapse */
+ 	unsigned int collapse_count;
+ 	bool collapse_pending;
++	unsigned int rearm_delay_ms;	/* backoff between re-arm attempts */
+ 	struct dentry *debugfs;
+ 
+ 	unsigned int attr[_ATTR_CNT];
+@@ -474,6 +475,7 @@ static void smbb_set_line_flag(struct smbb_charger *chg, int irq, int flag)
+  */
+ #define SMBB_ENGAGE_POLL_MS	10000
+ #define SMBB_REARM_SETTLE_MS	2000
++#define SMBB_REARM_MAX_MS	300000
+ 
+ static void smbb_clear_gates(struct smbb_charger *chg)
+ {
+@@ -512,7 +514,7 @@ static void smbb_clear_gates(struct smbb_charger *chg)
+  * not depend on the cached status word: see the RT_STS comment above.
+  */
+ static void smbb_hw_state(struct smbb_charger *chg, bool *input,
+-			  bool *charging, bool *bat_ready)
++			  bool *charging, bool *bat_ready, bool *done)
+ {
+ 	unsigned int chgr = 0, usb = 0, dc = 0, bat = 0;
+ 
+@@ -538,6 +540,7 @@ static void smbb_hw_state(struct smbb_charger *chg, bool *input,
+ 	*input = (usb & USB_RT_VALID) || (dc & DC_RT_VALID);
+ 	*charging = *input && (chgr & (CHG_RT_FAST_ON | CHG_RT_TRKL_ON));
+ 	*bat_ready = (bat & BAT_RT_PRESENT) && (bat & BAT_RT_TEMP_OK);
++	*done = chgr & CHG_RT_CHG_DONE;
+ }
+ 
+ /* 500 mA: what a USB host port is required to supply, and the vendor's
+@@ -561,10 +564,10 @@ static void smbb_engage_work(struct work_struct *work)
+ {
+ 	struct smbb_charger *chg = container_of(work, struct smbb_charger,
+ 						engage_work.work);
+-	bool input, charging, bat_ready;
++	bool input, charging, bat_ready, done;
+ 	unsigned int delay = SMBB_ENGAGE_POLL_MS;
+ 
+-	smbb_hw_state(chg, &input, &charging, &bat_ready);
++	smbb_hw_state(chg, &input, &charging, &bat_ready, &done);
+ 
+ 	if (!input) {
+ 		/*
+@@ -573,6 +576,7 @@ static void smbb_engage_work(struct work_struct *work)
+ 		 */
+ 		chg->iusb_learn_idx = chg->iusb_max_idx;
+ 		chg->collapse_pending = false;
++		chg->rearm_delay_ms = SMBB_ENGAGE_POLL_MS;
+ 		smbb_set_iusb(chg, chg->iusb_floor_idx);
+ 		chg->rearm_stage = 0;
+ 		if (chg->was_charging) {
+@@ -586,6 +590,8 @@ static void smbb_engage_work(struct work_struct *work)
+ 		dev_info(chg->dev, "charge cycle %s\n",
+ 			 charging ? "running" : "stopped");
+ 		chg->was_charging = charging;
++		/* a state change is a fresh opportunity: retry promptly again */
++		chg->rearm_delay_ms = SMBB_ENGAGE_POLL_MS;
+ 	}
+ 
+ 	smbb_clear_gates(chg);
+@@ -620,9 +626,27 @@ static void smbb_engage_work(struct work_struct *work)
+ 		chg->rearm_count++;
+ 		dev_dbg(chg->dev, "re-arm complete (%u total)\n",
+ 			chg->rearm_count);
++		/*
++		 * If that did not produce a cycle, back off before trying
++		 * again: a charge path that needs prodding recovers within
++		 * minutes, and nothing else deserves a CTRL_EN toggle every
++		 * ten seconds indefinitely.
++		 */
++		chg->rearm_delay_ms = min(chg->rearm_delay_ms * 3,
++					  SMBB_REARM_MAX_MS);
++		delay = chg->rearm_delay_ms;
+ 		break;
+ 	default:
+-		if (charging || !bat_ready) {
++		/*
++		 * Do not re-arm when the hardware reports the cycle complete:
++		 * the battery is full and the auto-recharge comparator will
++		 * start the next cycle by itself once it drains.  Re-arming
++		 * anyway would toggle CTRL_EN every pass for as long as a full
++		 * battery stays plugged in, which is neither useful nor what
++		 * the vendor does (it re-arms once at end of charge and then
++		 * waits on the comparator).
++		 */
++		if (charging || !bat_ready || done) {
+ 			/* running, or the battery is in no state to charge */
+ 			regmap_update_bits(chg->regmap,
+ 					   chg->addr + SMBB_CHG_CTRL,
+@@ -1135,7 +1159,7 @@ static const struct {
+ static int smbb_state_show(struct seq_file *s, void *data)
+ {
+ 	struct smbb_charger *chg = s->private;
+-	bool input, charging, bat_ready;
++	bool input, charging, bat_ready, done;
+ 	unsigned long status;
+ 	unsigned int val;
+ 	int i, rc;
+@@ -1153,17 +1177,18 @@ static int smbb_state_show(struct seq_file *s, void *data)
+ 	seq_printf(s, "  chg_trkl    %d\n", !!(status & STATUS_CHG_TRKL));
+ 	seq_printf(s, "  chg_done    %d\n", !!(status & STATUS_CHG_DONE));
+ 	seq_printf(s, "  chg_gone    %d\n", !!(status & STATUS_CHG_GONE));
+-	seq_printf(s, "supervisor    rearms=%u gate_clears=%u stage=%u\n",
+-		   chg->rearm_count, chg->gate_clear_count, chg->rearm_stage);
++	seq_printf(s, "supervisor    rearms=%u gate_clears=%u stage=%u backoff=%ums\n",
++		   chg->rearm_count, chg->gate_clear_count, chg->rearm_stage,
++		   chg->rearm_delay_ms);
+ 
+ 	/*
+ 	 * Hardware truth, for comparison with the cached bits above: a
+ 	 * mismatch means interrupt edges were missed or coalesced, which is
+ 	 * expected on this hardware and is why the supervisor reads these.
+ 	 */
+-	smbb_hw_state(chg, &input, &charging, &bat_ready);
+-	seq_printf(s, "hardware      input=%d charging=%d bat_ready=%d\n",
+-		   input, charging, bat_ready);
++	smbb_hw_state(chg, &input, &charging, &bat_ready, &done);
++	seq_printf(s, "hardware      input=%d charging=%d bat_ready=%d done=%d\n",
++		   input, charging, bat_ready, done);
+ 	seq_printf(s, "input limit   %u uA (floor %u, ceiling %u, learned %u, collapses %u)\n",
+ 		   smbb_imax_fn(chg->iusb_idx),
+ 		   smbb_imax_fn(chg->iusb_floor_idx),
+@@ -1429,6 +1454,7 @@ static int smbb_charger_probe(struct platform_device *pdev)
+ 				  chg->iusb_max_idx);
+ 	chg->iusb_learn_idx = chg->iusb_max_idx;
+ 	chg->iusb_idx = chg->iusb_max_idx + 1;	/* force the first write */
++	chg->rearm_delay_ms = SMBB_ENGAGE_POLL_MS;
+ 	smbb_set_iusb(chg, chg->iusb_floor_idx);
+ 
+ 	/*

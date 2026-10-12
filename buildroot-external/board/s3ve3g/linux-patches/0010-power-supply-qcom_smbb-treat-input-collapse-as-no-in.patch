@@ -1,0 +1,51 @@
+From 599bafe9ca43b75bda0d0a6d00a8335824ad987a Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Tue, 4 Aug 2026 09:37:39 +0200
+Subject: [PATCH 10/26] power: supply: qcom_smbb: treat input collapse as no
+ input
+
+Measuring an actual cable pull on a Fairphone 2 showed that the status
+registers do not deassert the way one would expect: USB_RT_VALID stayed
+set and the chgr fast-charge bit stayed set after the cable was out, and
+the only change was USB_RT_STS going 0x03 -> 0x07, i.e. CHG_GONE being
+raised, while the battery visibly took over the system load (VBAT fell
+from 4.22 V to 4.10 V within one sample and jumped back on replug).
+
+So CHG_GONE, not USB_RT_VALID, is what says the input is gone.  Fold it
+into the hardware read: with CHG_GONE asserted, report no input and
+therefore no charging.  Otherwise the supervisor concludes a cycle is
+already running and skips the re-arm it exists to perform - which is the
+failure it was added to fix.
+
+Assisted-by: Claude:claude-fable-5
+---
+ drivers/power/supply/qcom_smbb.c | 15 ++++++++++++++-
+ 1 file changed, 14 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/power/supply/qcom_smbb.c b/drivers/power/supply/qcom_smbb.c
+index 7bec35e5ca80..a00f033b637a 100644
+--- a/drivers/power/supply/qcom_smbb.c
++++ b/drivers/power/supply/qcom_smbb.c
+@@ -505,8 +505,21 @@ static void smbb_hw_state(struct smbb_charger *chg, bool *input,
+ 	if (!chg->dc_disabled)
+ 		regmap_read(chg->regmap, chg->addr + SMBB_DC_RT_STS, &dc);
+ 
++	/*
++	 * CHG_GONE is the signal that matters when a cable is pulled: this
++	 * hardware keeps USB_RT_VALID asserted and even leaves the
++	 * fast-charge bit set after the input is physically gone, and only
++	 * raises CHG_GONE.  Measured on a Fairphone 2: across an unplug the
++	 * only register change was USB_RT_STS 0x03 -> 0x07 while the battery
++	 * visibly took over the load.  Treating the stale bits as truth would
++	 * make the supervisor believe a cycle is running and skip the re-arm
++	 * it exists to perform.
++	 */
++	if (usb & USB_RT_CHG_GONE)
++		usb &= ~USB_RT_VALID;
++
+ 	*input = (usb & USB_RT_VALID) || (dc & DC_RT_VALID);
+-	*charging = chgr & (CHG_RT_FAST_ON | CHG_RT_TRKL_ON);
++	*charging = *input && (chgr & (CHG_RT_FAST_ON | CHG_RT_TRKL_ON));
+ 	*bat_ready = (bat & BAT_RT_PRESENT) && (bat & BAT_RT_TEMP_OK);
+ }
+ 

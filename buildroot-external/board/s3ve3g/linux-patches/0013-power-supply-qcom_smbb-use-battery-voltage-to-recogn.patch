@@ -1,0 +1,155 @@
+From 2768c6575485f0893808724aa2aba86483ae6db4 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Tue, 4 Aug 2026 10:15:13 +0200
+Subject: [PATCH 13/26] power: supply: qcom_smbb: use battery voltage to
+ recognise a full pack
+
+The supervisor cannot distinguish a charge path that stalled from a
+battery that is simply full: in both cases the hardware reports no
+running cycle, and it only reports end-of-charge for a cycle that itself
+completed - a pack charged before the last reboot leaves that latch
+clear.  Measured on a Fairphone 2 with a 4.34 V pack against a 4.24 V
+recharge threshold, the supervisor therefore kept retrying, and the
+backoff added in the previous change only bounded how often.
+
+Read the battery voltage where the board provides a channel for it, as
+the vendor driver does for the same decisions, and treat a pack at or
+above the recharge threshold as full: the auto-recharge comparator will
+ask for the next cycle when it drains.  Boards without the channel keep
+the previous behaviour.
+
+Wire the channel up for the Fairphone 2 and report the reading, the
+threshold and the resulting verdict in the debugfs state file.
+
+Assisted-by: Claude:claude-fable-5
+---
+ .../qcom/qcom-msm8974pro-fairphone-fp2.dts    |  9 ++++
+ drivers/power/supply/qcom_smbb.c              | 53 ++++++++++++++++++-
+ 2 files changed, 61 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm/boot/dts/qcom/qcom-msm8974pro-fairphone-fp2.dts b/arch/arm/boot/dts/qcom/qcom-msm8974pro-fairphone-fp2.dts
+index fe227fd3f908..e63a2b42eaf5 100644
+--- a/arch/arm/boot/dts/qcom/qcom-msm8974pro-fairphone-fp2.dts
++++ b/arch/arm/boot/dts/qcom/qcom-msm8974pro-fairphone-fp2.dts
+@@ -5,6 +5,7 @@
+ #include <dt-bindings/input/input.h>
+ #include <dt-bindings/leds/common.h>
+ #include <dt-bindings/pinctrl/qcom,pmic-gpio.h>
++#include <dt-bindings/iio/qcom,spmi-vadc.h>
+ 
+ / {
+ 	model = "Fairphone 2";
+@@ -409,6 +410,14 @@ &smbb {
+ 	qcom,auto-recharge-threshold-voltage = <4240000>;
+ 	qcom,minimum-input-voltage = <4450000>;
+ 
++	/*
++	 * Battery sense, so the charger can tell a full battery from a charge
++	 * path that stalled: the hardware reports neither a running cycle nor
++	 * end-of-charge while a full pack sits above the recharge threshold.
++	 */
++	io-channels = <&pm8941_vadc VADC_VBAT_SNS>;
++	io-channel-names = "vbat";
++
+ 	status = "okay";
+ };
+ 
+diff --git a/drivers/power/supply/qcom_smbb.c b/drivers/power/supply/qcom_smbb.c
+index f11a94a8e498..3c0f95db6e43 100644
+--- a/drivers/power/supply/qcom_smbb.c
++++ b/drivers/power/supply/qcom_smbb.c
+@@ -28,6 +28,7 @@
+ #include <linux/regmap.h>
+ #include <linux/slab.h>
+ #include <linux/extcon-provider.h>
++#include <linux/iio/consumer.h>
+ #include <linux/regulator/driver.h>
+ #include <linux/seq_file.h>
+ #include <linux/workqueue.h>
+@@ -193,6 +194,14 @@ struct smbb_charger {
+ 	unsigned int collapse_count;
+ 	bool collapse_pending;
+ 	unsigned int rearm_delay_ms;	/* backoff between re-arm attempts */
++
++	/*
++	 * Battery voltage, when the board provides it.  Without it the
++	 * supervisor cannot tell a charge path that needs prodding from a
++	 * battery that is simply full, because the hardware reports neither
++	 * a running cycle nor end-of-charge in that state.
++	 */
++	struct iio_channel *vbat_chan;
+ 	struct dentry *debugfs;
+ 
+ 	unsigned int attr[_ATTR_CNT];
+@@ -560,6 +569,26 @@ static void smbb_set_iusb(struct smbb_charger *chg, unsigned int idx)
+ 	dev_dbg(chg->dev, "input limit %u uA\n", smbb_imax_fn(idx));
+ }
+ 
++/*
++ * True when the battery sits at or above the auto-recharge threshold, i.e.
++ * the hardware is right to keep the buck off and nothing needs re-arming.
++ * Errs towards "not full" when no channel is available, preserving the
++ * previous behaviour on boards that do not wire one up.
++ */
++static bool smbb_battery_full(struct smbb_charger *chg)
++{
++	int uv, rc;
++
++	if (!chg->vbat_chan)
++		return false;
++
++	rc = iio_read_channel_processed(chg->vbat_chan, &uv);
++	if (rc < 0)
++		return false;
++
++	return uv >= chg->attr[ATTR_CHG_VDET];
++}
++
+ static void smbb_engage_work(struct work_struct *work)
+ {
+ 	struct smbb_charger *chg = container_of(work, struct smbb_charger,
+@@ -646,7 +675,7 @@ static void smbb_engage_work(struct work_struct *work)
+ 		 * the vendor does (it re-arms once at end of charge and then
+ 		 * waits on the comparator).
+ 		 */
+-		if (charging || !bat_ready || done) {
++		if (charging || !bat_ready || done || smbb_battery_full(chg)) {
+ 			/* running, or the battery is in no state to charge */
+ 			regmap_update_bits(chg->regmap,
+ 					   chg->addr + SMBB_CHG_CTRL,
+@@ -1189,6 +1218,16 @@ static int smbb_state_show(struct seq_file *s, void *data)
+ 	smbb_hw_state(chg, &input, &charging, &bat_ready, &done);
+ 	seq_printf(s, "hardware      input=%d charging=%d bat_ready=%d done=%d\n",
+ 		   input, charging, bat_ready, done);
++	if (chg->vbat_chan) {
++		int uv;
++
++		if (iio_read_channel_processed(chg->vbat_chan, &uv) >= 0)
++			seq_printf(s, "battery       %d uV (recharge below %u uV, full=%d)\n",
++				   uv, chg->attr[ATTR_CHG_VDET],
++				   uv >= chg->attr[ATTR_CHG_VDET]);
++	} else {
++		seq_puts(s, "battery       no voltage channel\n");
++	}
+ 	seq_printf(s, "input limit   %u uA (floor %u, ceiling %u, learned %u, collapses %u)\n",
+ 		   smbb_imax_fn(chg->iusb_idx),
+ 		   smbb_imax_fn(chg->iusb_floor_idx),
+@@ -1442,6 +1481,18 @@ static int smbb_charger_probe(struct platform_device *pdev)
+ 	 * table for why arming comparators here is unsafe.
+ 	 */
+ 
++	/*
++	 * Optional: a battery-voltage channel lets the supervisor recognise a
++	 * full battery instead of retrying against the recharge comparator.
++	 */
++	chg->vbat_chan = devm_iio_channel_get(&pdev->dev, "vbat");
++	if (IS_ERR(chg->vbat_chan)) {
++		if (PTR_ERR(chg->vbat_chan) == -EPROBE_DEFER)
++			return -EPROBE_DEFER;
++		dev_dbg(&pdev->dev, "no vbat channel: %pe\n", chg->vbat_chan);
++		chg->vbat_chan = NULL;
++	}
++
+ 	/*
+ 	 * Start the input limit at the floor and let the supervisor ramp it
+ 	 * up.  chg->attr[] holds the configured limit, which becomes the

@@ -1,0 +1,27 @@
+From 92471e2ca2841a57ac2ebd35ad09c92d0c00294c Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Mon, 12 Oct 2026 01:05:56 +0200
+Subject: [PATCH 24/26] ARM: dts: qcom: msm8226-samsung-s3ve3g: detect the
+ battery by its ID pin
+
+The vendor charger configuration selects the battery ID pin for
+presence detection, not the thermistor the driver defaults to.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ arch/arm/boot/dts/qcom/qcom-msm8226-samsung-s3ve3g.dts | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/arch/arm/boot/dts/qcom/qcom-msm8226-samsung-s3ve3g.dts b/arch/arm/boot/dts/qcom/qcom-msm8226-samsung-s3ve3g.dts
+index 12a5c7792c19..b3d183ffd79e 100644
+--- a/arch/arm/boot/dts/qcom/qcom-msm8226-samsung-s3ve3g.dts
++++ b/arch/arm/boot/dts/qcom/qcom-msm8226-samsung-s3ve3g.dts
+@@ -229,6 +229,8 @@ &smbb {
+ 	qcom,minimum-input-voltage = <4300000>;
+ 	usb-charge-current-limit = <500000>;
+ 	qcom,disable-dc;
++	/* Vendor qcom,bpd-detection = "bpd_id" */
++	qcom,battery-presence-source = "id";
+ 
+ 	status = "okay";
+ };

@@ -23,7 +23,7 @@ MAX_SIZE=$((0x980000))
 # lk2nd.pass-ramoops: lk2nd adds a ramoops region, read back with "fastboot oem ramoops".
 # panic=10: reboot 10 s after a panic; with nothing bootable after lk2nd, that lands in its fastboot.
 # reboot=warm: a hard reset loses IMEM, where reboot-mode leaves the magic for the Samsung aboot.
-CMDLINE="console=tty0 loglevel=8 clk_ignore_unused pd_ignore_unused panic=10 reboot=warm lk2nd.pass-ramoops"
+CMDLINE="console=tty0 loglevel=8 clk_ignore_unused pd_ignore_unused panic=10 reboot=warm qcom_smbb.trace=0 lk2nd.pass-ramoops"
 
 cat "${BINARIES_DIR}/zImage" "${DTB}" > "${BINARIES_DIR}/zImage-dtb"
 
