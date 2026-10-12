@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Marc Lainez <marc.lainez@gmail.com>
 Date: Mon, 12 Oct 2026 11:33:33 +0200
-Subject: [PATCH 4/4] board: lenovo: add TB3-710F
+Subject: [PATCH 7/7] board: lenovo: add TB3-710F
 
 U-Boot is packed as the kernel of an Android boot image in the boot
 partition, loaded by LK at 0x80008000. The console is the framebuffer
@@ -9,7 +9,12 @@ LK leaves running.
 
 Boot order: a Nerves disk image in userdata (its partition 1, the
 active FAT boot slot, mapped with blkmap), then a Buildroot ext4 root
-in userdata, then LK fastboot. Both use extlinux.conf.
+in userdata, then U-Boot fastboot. Both use extlinux.conf.
+
+Fastboot over the MUSB gadget can only flash and erase "boot" (the
+boot image region holding U-Boot) and "userdata" (up to the MTK BMT
+pool). Holding Volume-Down at start, or "fastboot reboot-bootloader",
+stays in fastboot; Volume-Up reboots into recovery.
 
 LK boots recovery when the MT6323 RTC PDN1 recovery bit is set. U-Boot
 sets it on entry and clears it right before starting Linux, so a hang
@@ -20,10 +25,10 @@ Assisted-by: Claude:claude-opus-5-5
  arch/arm/mach-mediatek/Kconfig     |   2 +
  board/lenovo/tb3-710f/MAINTAINERS  |   6 +
  board/lenovo/tb3-710f/Makefile     |   3 +
- board/lenovo/tb3-710f/tb3-710f.c   | 319 +++++++++++++++++++++++++++++
- board/lenovo/tb3-710f/tb3-710f.env |  45 ++++
- configs/mt8127_tb3_710f_defconfig  |  48 +++++
- 6 files changed, 423 insertions(+)
+ board/lenovo/tb3-710f/tb3-710f.c   | 448 +++++++++++++++++++++++++++++
+ board/lenovo/tb3-710f/tb3-710f.env |  63 ++++
+ configs/mt8127_tb3_710f_defconfig  |  63 ++++
+ 6 files changed, 585 insertions(+)
  create mode 100644 board/lenovo/tb3-710f/MAINTAINERS
  create mode 100644 board/lenovo/tb3-710f/Makefile
  create mode 100644 board/lenovo/tb3-710f/tb3-710f.c
@@ -73,10 +78,10 @@ index 00000000000..62ca34d0b34
 +obj-y += tb3-710f.o
 diff --git a/board/lenovo/tb3-710f/tb3-710f.c b/board/lenovo/tb3-710f/tb3-710f.c
 new file mode 100644
-index 00000000000..aa0affa6dff
+index 00000000000..dac4be0c2bb
 --- /dev/null
 +++ b/board/lenovo/tb3-710f/tb3-710f.c
-@@ -0,0 +1,319 @@
+@@ -0,0 +1,448 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Lenovo Tab3 7 Essential (TB3-710F) board support.
@@ -96,15 +101,29 @@ index 00000000000..aa0affa6dff
 + * the log of the U-Boot run that started Linux can be read with /dev/mem.
 + * LK clears that memory at boot: the log does not survive a reset.
 + *
++ * Keys at start: Volume-Down (or "fastboot reboot-bootloader") stays in
++ * U-Boot fastboot, Volume-Up reboots into recovery. The keys are on the
++ * keypad columns KCOL0 (Volume-Up, GPIO36) and KCOL1 (Volume-Down, GPIO37),
++ * which LK leaves in keypad mode with pull-ups: the pad input reads 0 while
++ * a key is held.
++ *
 + * The PMIC is reached through the PMIC wrapper (pwrap) WACS2 channel, which
 + * the preloader has already initialised.
 + */
 +
 +#include <command.h>
++#include <console.h>
++#include <env.h>
++#include <fastboot.h>
++#include <dm.h>
++#include <mmc.h>
++#include <usb.h>
++#include <asm/global_data.h>
 +#include <stdio_dev.h>
 +#include <init.h>
 +#include <time.h>
 +#include <asm/processor.h>
++#include <linux/delay.h>
 +#include <asm/io.h>
 +#include <asm/cache.h>
 +#include <asm/system.h>
@@ -151,6 +170,23 @@ index 00000000000..aa0affa6dff
 +};
 +
 +#define TB3_LOG_TEXT_MAX	(TB3_LOG_SIZE - sizeof(struct tb3_log))
++
++#define MT8127_GPIO_DIN2	0x10005520	/* GPIO32..47 input level */
++#define TB3_KEY_VOLUP		BIT(36 - 32)
++#define TB3_KEY_VOLDOWN		BIT(37 - 32)
++#define TB3_KEY_WINDOW_MS	2000
++
++/*
++ * "fastboot reboot-bootloader" flag: DRAM keeps it across the watchdog
++ * reset and LK does not touch this word, in the CONSYS area U-Boot does not
++ * otherwise use.
++ */
++#define TB3_REBOOT_FLAG		0xbc0ffff8
++#define TB3_REBOOT_FASTBOOT	0x55424642	/* "BFBU" */
++
++#define TB3_ATAGS_ADDR		0x80000100
++
++DECLARE_GLOBAL_DATA_PTR;
 +
 +enum tb3_bootmode {
 +	TB3_BOOT_NORMAL,
@@ -320,12 +356,77 @@ index 00000000000..aa0affa6dff
 +					DCACHE_WRITETHROUGH);
 +	tb3_stage(2);
 +
++	/* ATAGs for "fastboot boot" of an Android image without a DTB */
++	gd->bd->bi_boot_params = TB3_ATAGS_ADDR;
++
 +	return 0;
++}
++
++static u32 tb3_keys(void)
++{
++	u32 din = readl(MT8127_GPIO_DIN2);
++
++	return ~din & (TB3_KEY_VOLUP | TB3_KEY_VOLDOWN);
++}
++
++static bool tb3_take_reboot_flag(void)
++{
++	u32 *flag = (u32 *)TB3_REBOOT_FLAG;
++	bool set = *flag == TB3_REBOOT_FASTBOOT;
++
++	*flag = 0;
++	flush_dcache_range(ALIGN_DOWN(TB3_REBOOT_FLAG, ARCH_DMA_MINALIGN),
++			   ALIGN(TB3_REBOOT_FLAG + 4, ARCH_DMA_MINALIGN));
++
++	return set;
++}
++
++int fastboot_set_reboot_flag(enum fastboot_reboot_reason reason)
++{
++	u32 *flag = (u32 *)TB3_REBOOT_FLAG;
++
++	switch (reason) {
++	case FASTBOOT_REBOOT_REASON_BOOTLOADER:
++		*flag = TB3_REBOOT_FASTBOOT;
++		flush_dcache_range(ALIGN_DOWN(TB3_REBOOT_FLAG, ARCH_DMA_MINALIGN),
++				   ALIGN(TB3_REBOOT_FLAG + 4, ARCH_DMA_MINALIGN));
++		return 0;
++	case FASTBOOT_REBOOT_REASON_RECOVERY:
++		return tb3_set_bootmode(TB3_BOOT_RECOVERY, NULL);
++	case FASTBOOT_REBOOT_REASON_FASTBOOTD:
++		/* LK's own fastboot */
++		return tb3_set_bootmode(TB3_BOOT_FASTBOOT, NULL);
++	default:
++		return -EINVAL;
++	}
++}
++
++/* Probing the MUSB glue registers it as the gadget controller. */
++int board_usb_init(int index, enum usb_init_type init)
++{
++	struct udevice *dev;
++
++	return uclass_get_device(UCLASS_USB_GADGET_GENERIC, index, &dev);
++}
++
++/* serial# for fastboot, from the eMMC product serial number in the CID */
++static void tb3_set_serial(void)
++{
++	struct mmc *mmc = find_mmc_device(0);
++	char serial[20];
++
++	if (!mmc || mmc_init(mmc))
++		return;
++	snprintf(serial, sizeof(serial), "TB3UB%04x%04x",
++		 mmc->cid[2] & 0xffff, mmc->cid[3] >> 16);
++	env_set("serial#", serial);
 +}
 +
 +int board_late_init(void)
 +{
 +	u64 t0;
++	u32 keys;
++	ulong start;
 +	int i;
 +
 +	tb3_stage(4);
@@ -342,6 +443,39 @@ index 00000000000..aa0affa6dff
 +	else
 +		printf("Boot-once guard: armed (RTC PDN1 0x%04x, recovery on reset)\n",
 +		       guard_pdn1);
++
++	if (IS_ENABLED(CONFIG_CONSOLE_RECORD))
++		console_record_reset_enable();
++
++	tb3_set_serial();
++	env_set("fastboot.uboot-log", "fastboot oem console");
++
++	/* Give the user a window to press a key: LK hands over quickly. */
++	printf("Hold Volume-Down for fastboot, Volume-Up for recovery...\n");
++	start = get_timer(0);
++	do {
++		keys = tb3_keys();
++		if (keys)
++			break;
++		mdelay(20);
++	} while (get_timer(start) < TB3_KEY_WINDOW_MS);
++	env_set("fastboot.keys", keys & TB3_KEY_VOLDOWN ? "volume-down" :
++		keys & TB3_KEY_VOLUP ? "volume-up" : "none");
++
++	if (keys & TB3_KEY_VOLUP) {
++		printf("Volume-Up held: rebooting into recovery\n");
++		tb3_set_bootmode(TB3_BOOT_RECOVERY, NULL);
++		mdelay(1000);
++		do_reset(NULL, 0, 0, NULL);
++	}
++
++	if (tb3_take_reboot_flag()) {
++		env_set("tb3_mode", "fastboot");
++		env_set("fastboot.boot_path", "reboot-bootloader");
++	} else if (keys & TB3_KEY_VOLDOWN) {
++		env_set("tb3_mode", "fastboot");
++		env_set("fastboot.boot_path", "volume-down");
++	}
 +
 +	return 0;
 +}
@@ -398,10 +532,10 @@ index 00000000000..aa0affa6dff
 +	   "  - without argument, show the current mode");
 diff --git a/board/lenovo/tb3-710f/tb3-710f.env b/board/lenovo/tb3-710f/tb3-710f.env
 new file mode 100644
-index 00000000000..469b89bf4a4
+index 00000000000..76a39f5b545
 --- /dev/null
 +++ b/board/lenovo/tb3-710f/tb3-710f.env
-@@ -0,0 +1,45 @@
+@@ -0,0 +1,63 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +
 +stdin=nulldev
@@ -444,15 +578,33 @@ index 00000000000..469b89bf4a4
 +boot_buildroot=if test -e ${bootif} ${bootdevnum}:${bootpart} ${extlinux}; then
 +	echo == Booting Buildroot: ${extlinux} on ${bootif} ${bootdevnum}:${bootpart};
 +	sysboot ${bootif} ${bootdevnum}:${bootpart} any ${scriptaddr} ${extlinux}; fi
-+boot_failed=echo == Nothing to boot, rebooting into fastboot;
-+	sleep 5; bootmode fastboot; reset
-+bootcmd=run nerves_map; run boot_nerves; run boot_buildroot; run boot_failed
++boot_failed=echo == Nothing to boot;
++	setenv fastboot.boot_path nothing-bootable; run fastboot_mode; reset
++
++/*
++ * U-Boot fastboot over USB. Only "boot" (the Android boot image region,
++ * where this U-Boot lives) and "userdata" (up to the BMT pool) can be
++ * flashed or erased. The boot-once guard is off while waiting; it is set
++ * again when fastboot ends with "continue".
++ */
++board=tb3-710f-uboot
++fastboot_raw_partition_boot=0xec00 0x8000
++fastboot_raw_partition_userdata=0x465000 0xa21a00
++fastboot_mode=bootmode normal;
++	echo; echo ======== U-Boot fastboot mode (${fastboot.boot_path}) ========;
++	echo fastboot -s ${serial#} getvar product = ${board};
++	echo flash boot / userdata, boot, oem console, continue, reboot;
++	echo reboot-bootloader: here again, reboot-recovery: TWRP, reboot-fastboot: LK fastboot;
++	fastboot usb 0; bootmode recovery
++
++bootcmd=if test "${tb3_mode}" = fastboot; then run fastboot_mode; fi;
++	run nerves_map; run boot_nerves; run boot_buildroot; run boot_failed
 diff --git a/configs/mt8127_tb3_710f_defconfig b/configs/mt8127_tb3_710f_defconfig
 new file mode 100644
-index 00000000000..f83a8eb607e
+index 00000000000..66533d92972
 --- /dev/null
 +++ b/configs/mt8127_tb3_710f_defconfig
-@@ -0,0 +1,48 @@
+@@ -0,0 +1,63 @@
 +CONFIG_ARM=y
 +CONFIG_SKIP_LOWLEVEL_INIT=y
 +CONFIG_SYS_THUMB_BUILD=y
@@ -471,7 +623,9 @@ index 00000000000..f83a8eb607e
 +CONFIG_PRE_CON_BUF_ADDR=0x80f00000
 +CONFIG_PRE_CON_BUF_SZ=16384
 +# CONFIG_EFI_LOADER is not set
-+CONFIG_BOOTDELAY=1
++CONFIG_BOOTDELAY=0
++CONFIG_CONSOLE_RECORD=y
++CONFIG_CONSOLE_RECORD_OUT_SIZE=0x10000
 +CONFIG_PRE_CONSOLE_BUFFER=y
 +CONFIG_SYS_DEVICE_NULLDEV=y
 +CONFIG_BOARD_EARLY_INIT_F=y
@@ -491,11 +645,24 @@ index 00000000000..f83a8eb607e
 +CONFIG_NO_NET=y
 +CONFIG_BLKMAP=y
 +CONFIG_CLK=y
++CONFIG_USB_FUNCTION_FASTBOOT=y
++CONFIG_FASTBOOT_BUF_ADDR=0x88000000
++CONFIG_FASTBOOT_BUF_SIZE=0x30000000
++CONFIG_FASTBOOT_FLASH=y
++CONFIG_FASTBOOT_FLASH_MMC_DEV=0
++CONFIG_FASTBOOT_MMC_RAW_PARTITIONS_ONLY=y
++CONFIG_FASTBOOT_CMD_OEM_CONSOLE=y
 +CONFIG_MMC_MTK=y
 +# CONFIG_REQUIRE_SERIAL_CONSOLE is not set
 +CONFIG_DM_SERIAL=y
 +CONFIG_SYSRESET=y
 +CONFIG_SYSRESET_WATCHDOG=y
++CONFIG_USB=y
++CONFIG_USB_MUSB_GADGET=y
++CONFIG_USB_MUSB_MT85XX=y
++CONFIG_USB_GADGET=y
++CONFIG_USB_GADGET_VENDOR_NUM=0x18d1
++CONFIG_USB_GADGET_PRODUCT_NUM=0x4ee0
 +CONFIG_VIDEO=y
 +CONFIG_SYS_WHITE_ON_BLACK=y
 +CONFIG_VIDEO_SIMPLE=y
