@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Marc Lainez <marc.lainez@gmail.com>
 Date: Mon, 12 Oct 2026 11:33:33 +0200
-Subject: [PATCH 7/7] board: lenovo: add TB3-710F
+Subject: [PATCH 7/8] board: lenovo: add TB3-710F
 
 U-Boot is packed as the kernel of an Android boot image in the boot
 partition, loaded by LK at 0x80008000. The console is the framebuffer

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Marc Lainez <marc.lainez@gmail.com>
 Date: Mon, 12 Oct 2026 11:33:33 +0200
-Subject: [PATCH 1/7] mmc: mtk-sd: add MT8135 compatible
+Subject: [PATCH 1/8] mmc: mtk-sd: add MT8135 compatible
 
 MT8135-class controllers (also used in MT8127) have an 8-bit clock
 divider and none of the newer tuning, async FIFO or busy-check features,

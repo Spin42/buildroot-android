@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Marc Lainez <marc.lainez@gmail.com>
 Date: Mon, 12 Oct 2026 12:47:41 +0200
-Subject: [PATCH 3/7] usb: musb-new: mt85xx: add MT8127 support
+Subject: [PATCH 3/8] usb: musb-new: mt85xx: add MT8127 support
 
 The MT8127 has the same MUSB block with an 8 KiB FIFO RAM, as in Linux
 for MT2701. Its USB2 PHY sits at another address and needs the vendor

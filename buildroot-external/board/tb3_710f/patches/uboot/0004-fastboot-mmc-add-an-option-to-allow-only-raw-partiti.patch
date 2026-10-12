@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Marc Lainez <marc.lainez@gmail.com>
 Date: Mon, 12 Oct 2026 12:47:41 +0200
-Subject: [PATCH 4/7] fastboot: mmc: add an option to allow only raw partitions
+Subject: [PATCH 4/8] fastboot: mmc: add an option to allow only raw partitions
 
 On boards whose eMMC holds vendor data that must never be written, the
 partition table names, dev:part numbers and the MBR, GPT and zImage
