@@ -4,9 +4,12 @@ Date: Mon, 12 Oct 2026 11:33:33 +0200
 Subject: [PATCH 4/4] board: lenovo: add TB3-710F
 
 U-Boot is packed as the kernel of an Android boot image in the boot
-partition, loaded by LK at 0x80008000, and boots Linux from
-extlinux.conf on userdata. The console is the framebuffer LK leaves
-running.
+partition, loaded by LK at 0x80008000. The console is the framebuffer
+LK leaves running.
+
+Boot order: a Nerves disk image in userdata (its partition 1, the
+active FAT boot slot, mapped with blkmap), then a Buildroot ext4 root
+in userdata, then LK fastboot. Both use extlinux.conf.
 
 LK boots recovery when the MT6323 RTC PDN1 recovery bit is set. U-Boot
 sets it on entry and clears it right before starting Linux, so a hang
@@ -18,9 +21,9 @@ Assisted-by: Claude:claude-opus-5-5
  board/lenovo/tb3-710f/MAINTAINERS  |   6 +
  board/lenovo/tb3-710f/Makefile     |   3 +
  board/lenovo/tb3-710f/tb3-710f.c   | 319 +++++++++++++++++++++++++++++
- board/lenovo/tb3-710f/tb3-710f.env |  23 +++
- configs/mt8127_tb3_710f_defconfig  |  47 +++++
- 6 files changed, 400 insertions(+)
+ board/lenovo/tb3-710f/tb3-710f.env |  45 ++++
+ configs/mt8127_tb3_710f_defconfig  |  48 +++++
+ 6 files changed, 423 insertions(+)
  create mode 100644 board/lenovo/tb3-710f/MAINTAINERS
  create mode 100644 board/lenovo/tb3-710f/Makefile
  create mode 100644 board/lenovo/tb3-710f/tb3-710f.c
@@ -395,10 +398,10 @@ index 00000000000..aa0affa6dff
 +	   "  - without argument, show the current mode");
 diff --git a/board/lenovo/tb3-710f/tb3-710f.env b/board/lenovo/tb3-710f/tb3-710f.env
 new file mode 100644
-index 00000000000..57771e5be2d
+index 00000000000..469b89bf4a4
 --- /dev/null
 +++ b/board/lenovo/tb3-710f/tb3-710f.env
-@@ -0,0 +1,23 @@
+@@ -0,0 +1,45 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +
 +stdin=nulldev
@@ -414,20 +417,42 @@ index 00000000000..57771e5be2d
 +/* FDT and initrd are relocated below this, inside Linux lowmem */
 +bootm_size=0x10000000
 +
-+/* userdata (mmcblk0p7 in Linux) holds the root filesystem */
-+bootpart=0:7
++/*
++ * Boot order:
++ * 1. Nerves: userdata (mmcblk0p7) holds a disk image with its own MBR;
++ *    partition 1 is the active FAT boot slot with /extlinux/extlinux.conf.
++ *    fwup switches slots by rewriting that MBR, so no environment is saved.
++ * 2. Buildroot: an ext4 root on userdata with /boot/extlinux/extlinux.conf.
++ * 3. Neither: LK fastboot on the next boot.
++ * Never save the environment: it would land in userdata.
++ */
++bootif=mmc
++bootdevnum=0
++/* userdata start and the end of the Nerves layout (before the BMT pool), in 512-byte blocks */
++userdata_start=4608000
++nerves_blocks=10618880
++nerves_extlinux=/extlinux/extlinux.conf
++bootpart=7
 +extlinux=/boot/extlinux/extlinux.conf
 +
-+boot_extlinux=sysboot mmc ${bootpart} any ${scriptaddr} ${extlinux}
-+boot_failed=echo No bootable ${extlinux} on mmc ${bootpart}, rebooting into fastboot;
++nerves_map=blkmap create nerves && blkmap map nerves 0 ${nerves_blocks}
++	linear ${bootif} ${bootdevnum} ${userdata_start} &&
++	blkmap get nerves dev nerves_dev
++boot_nerves=if test -e blkmap ${nerves_dev}:1 ${nerves_extlinux}; then
++	echo == Booting Nerves: ${nerves_extlinux} in the userdata image, partition 1;
++	sysboot blkmap ${nerves_dev}:1 any ${scriptaddr} ${nerves_extlinux}; fi
++boot_buildroot=if test -e ${bootif} ${bootdevnum}:${bootpart} ${extlinux}; then
++	echo == Booting Buildroot: ${extlinux} on ${bootif} ${bootdevnum}:${bootpart};
++	sysboot ${bootif} ${bootdevnum}:${bootpart} any ${scriptaddr} ${extlinux}; fi
++boot_failed=echo == Nothing to boot, rebooting into fastboot;
 +	sleep 5; bootmode fastboot; reset
-+bootcmd=run boot_extlinux; run boot_failed
++bootcmd=run nerves_map; run boot_nerves; run boot_buildroot; run boot_failed
 diff --git a/configs/mt8127_tb3_710f_defconfig b/configs/mt8127_tb3_710f_defconfig
 new file mode 100644
-index 00000000000..d44052bfd74
+index 00000000000..f83a8eb607e
 --- /dev/null
 +++ b/configs/mt8127_tb3_710f_defconfig
-@@ -0,0 +1,47 @@
+@@ -0,0 +1,48 @@
 +CONFIG_ARM=y
 +CONFIG_SKIP_LOWLEVEL_INIT=y
 +CONFIG_SYS_THUMB_BUILD=y
@@ -452,6 +477,7 @@ index 00000000000..d44052bfd74
 +CONFIG_BOARD_EARLY_INIT_F=y
 +CONFIG_BOARD_EARLY_INIT_R=y
 +CONFIG_BOARD_LATE_INIT=y
++CONFIG_HUSH_PARSER=y
 +CONFIG_SYS_PROMPT="tb3=> "
 +CONFIG_CMD_BOOTZ=y
 +CONFIG_CMD_MMC=y
