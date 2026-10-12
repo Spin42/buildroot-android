@@ -1,0 +1,222 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Mon, 12 Oct 2026 15:08:24 +0200
+Subject: [PATCH 12/17] button: add MediaTek PMIC keys driver
+
+Power and home keys of the MT6323, read through the PMIC wrapper, with
+the Linux mediatek,mtk-pmic-keys binding. With BUTTON_KEYBOARD and
+BUTTON_REMAP_PHONE_KEYS the power key selects bootmenu entries.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/button/Kconfig           |  10 ++
+ drivers/button/Makefile          |   1 +
+ drivers/button/button-mtk-pmic.c | 167 +++++++++++++++++++++++++++++++
+ 3 files changed, 178 insertions(+)
+ create mode 100644 drivers/button/button-mtk-pmic.c
+
+diff --git a/drivers/button/Kconfig b/drivers/button/Kconfig
+index 6cae16fcc8b..e4fc2519682 100644
+--- a/drivers/button/Kconfig
++++ b/drivers/button/Kconfig
+@@ -39,6 +39,16 @@ config BUTTON_GPIO
+ 	  The GPIO driver must used driver model. Buttons are configured using
+ 	  the device tree.
+ 
++config BUTTON_MTK_PMIC
++	bool "MediaTek PMIC keys"
++	depends on BUTTON
++	depends on DM_PMIC_MTK_PWRAP
++	help
++	  Enable support for the power and home keys of MediaTek PMICs
++	  behind the PMIC wrapper (MT6323). With BUTTON_REMAP_PHONE_KEYS,
++	  a power key with KEY_POWER acts as Enter, which selects a
++	  bootmenu entry.
++
+ config BUTTON_QCOM_PMIC
+ 	bool "Qualcomm power button"
+ 	depends on BUTTON
+diff --git a/drivers/button/Makefile b/drivers/button/Makefile
+index 68555081a47..d6a25637f68 100644
+--- a/drivers/button/Makefile
++++ b/drivers/button/Makefile
+@@ -5,4 +5,5 @@
+ obj-$(CONFIG_BUTTON) += button-uclass.o
+ obj-$(CONFIG_BUTTON_ADC) += button-adc.o
+ obj-$(CONFIG_BUTTON_GPIO) += button-gpio.o
++obj-$(CONFIG_BUTTON_MTK_PMIC) += button-mtk-pmic.o
+ obj-$(CONFIG_BUTTON_QCOM_PMIC) += button-qcom-pmic.o
+\ No newline at end of file
+diff --git a/drivers/button/button-mtk-pmic.c b/drivers/button/button-mtk-pmic.c
+new file mode 100644
+index 00000000000..8ab38fb18c1
+--- /dev/null
++++ b/drivers/button/button-mtk-pmic.c
+@@ -0,0 +1,167 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * Power and home keys of MediaTek PMICs, read through the PMIC wrapper.
++ *
++ * Device tree binding: mediatek,mtk-pmic-keys (Linux). The keys node is a
++ * child of the PMIC node; each key is a sub-node ("power", "home") with a
++ * linux,keycodes property and an optional label (default: the node name).
++ */
++
++#include <button.h>
++#include <dm.h>
++#include <dm/device-internal.h>
++#include <log.h>
++#include <power/pmic.h>
++#include <linux/bitops.h>
++#include <time.h>
++
++/* The PMIC is polled at most this often; console polling loops are tight */
++#define MTK_PMIC_KEYS_POLL_MS	10
++
++struct mtk_pmic_key_regs {
++	const char *name;
++	u32 status_reg;
++	u32 status_mask;	/* the bit reads 0 while the key is held */
++};
++
++struct mtk_pmic_keys_data {
++	const struct mtk_pmic_key_regs *keys;
++	int num_keys;
++};
++
++struct mtk_pmic_key_priv {
++	struct udevice *pmic;
++	const struct mtk_pmic_key_regs *regs;
++	u32 code;
++	ulong last_poll;
++	enum button_state_t state;
++};
++
++static const struct mtk_pmic_key_regs mt6323_keys[] = {
++	{ .name = "power", .status_reg = 0x0142, .status_mask = BIT(1) },
++	{ .name = "home", .status_reg = 0x0142, .status_mask = BIT(2) },
++};
++
++static const struct mtk_pmic_keys_data mt6323_data = {
++	.keys = mt6323_keys,
++	.num_keys = ARRAY_SIZE(mt6323_keys),
++};
++
++static enum button_state_t mtk_pmic_key_get_state(struct udevice *dev)
++{
++	struct mtk_pmic_key_priv *priv = dev_get_priv(dev);
++	int reg;
++
++	if (!priv->regs)
++		return -ENODEV;
++
++	if (priv->last_poll && get_timer(priv->last_poll) < MTK_PMIC_KEYS_POLL_MS)
++		return priv->state;
++
++	reg = pmic_reg_read(priv->pmic, priv->regs->status_reg);
++	if (reg < 0)
++		return reg;
++
++	priv->last_poll = get_timer(0) ?: 1;
++	priv->state = reg & priv->regs->status_mask ? BUTTON_OFF : BUTTON_ON;
++
++	return priv->state;
++}
++
++static int mtk_pmic_key_get_code(struct udevice *dev)
++{
++	struct mtk_pmic_key_priv *priv = dev_get_priv(dev);
++
++	return priv->code ?: -ENODATA;
++}
++
++static const struct mtk_pmic_key_regs *mtk_pmic_key_find(struct udevice *dev,
++							 ofnode node)
++{
++	const struct mtk_pmic_keys_data *data;
++	const char *name = ofnode_get_name(node);
++	int i;
++
++	data = (const struct mtk_pmic_keys_data *)dev_get_driver_data(dev);
++	for (i = 0; i < data->num_keys; i++)
++		if (!strcmp(name, data->keys[i].name))
++			return &data->keys[i];
++
++	return NULL;
++}
++
++static int mtk_pmic_key_probe(struct udevice *dev)
++{
++	struct button_uc_plat *uc_plat = dev_get_uclass_plat(dev);
++	struct mtk_pmic_key_priv *priv = dev_get_priv(dev);
++	struct udevice *pmic;
++
++	/* Ignore the top-level keys node */
++	if (!uc_plat->label)
++		return 0;
++
++	priv->regs = mtk_pmic_key_find(dev, dev_ofnode(dev));
++	if (!priv->regs)
++		return -EINVAL;
++
++	for (pmic = dev->parent; pmic; pmic = pmic->parent)
++		if (device_get_uclass_id(pmic) == UCLASS_PMIC)
++			break;
++	if (!pmic)
++		return -ENODEV;
++	priv->pmic = pmic;
++
++	return dev_read_u32(dev, "linux,keycodes", &priv->code);
++}
++
++static int mtk_pmic_keys_bind(struct udevice *parent)
++{
++	struct button_uc_plat *uc_plat;
++	struct udevice *dev;
++	ofnode node;
++	int ret;
++
++	dev_for_each_subnode(node, parent) {
++		if (!ofnode_is_enabled(node))
++			continue;
++		if (!mtk_pmic_key_find(parent, node)) {
++			debug("%s: unknown key %s\n", __func__,
++			      ofnode_get_name(node));
++			continue;
++		}
++
++		ret = device_bind_with_driver_data(parent, parent->driver,
++						   ofnode_get_name(node),
++						   dev_get_driver_data(parent),
++						   node, &dev);
++		if (ret)
++			return ret;
++
++		uc_plat = dev_get_uclass_plat(dev);
++		uc_plat->label = ofnode_read_string(node, "label");
++		if (!uc_plat->label)
++			uc_plat->label = ofnode_get_name(node);
++	}
++
++	return 0;
++}
++
++static const struct button_ops mtk_pmic_keys_ops = {
++	.get_state	= mtk_pmic_key_get_state,
++	.get_code	= mtk_pmic_key_get_code,
++};
++
++static const struct udevice_id mtk_pmic_keys_ids[] = {
++	{ .compatible = "mediatek,mt6323-keys", .data = (ulong)&mt6323_data },
++	{ }
++};
++
++U_BOOT_DRIVER(mtk_pmic_keys) = {
++	.name = "mtk_pmic_keys",
++	.id = UCLASS_BUTTON,
++	.of_match = mtk_pmic_keys_ids,
++	.bind = mtk_pmic_keys_bind,
++	.probe = mtk_pmic_key_probe,
++	.ops = &mtk_pmic_keys_ops,
++	.priv_auto = sizeof(struct mtk_pmic_key_priv),
++};

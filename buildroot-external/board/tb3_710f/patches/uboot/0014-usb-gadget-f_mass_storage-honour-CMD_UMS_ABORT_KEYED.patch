@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Mon, 12 Oct 2026 15:08:34 +0200
+Subject: [PATCH 14/17] usb: gadget: f_mass_storage: honour CMD_UMS_ABORT_KEYED
+ while idle
+
+While no command is pending, the gadget waits in sleep_thread(), where
+ctrlc() takes and drops any other key. With CMD_UMS_ABORT_KEYED, ums
+then only noticed a key that arrived while a SCSI command was handled.
+Check for any key there as well.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/usb/gadget/f_mass_storage.c | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/usb/gadget/f_mass_storage.c b/drivers/usb/gadget/f_mass_storage.c
+index 76ee08dc5e8..d41a88db2d2 100644
+--- a/drivers/usb/gadget/f_mass_storage.c
++++ b/drivers/usb/gadget/f_mass_storage.c
+@@ -669,7 +669,11 @@ static int sleep_thread(struct fsg_common *common)
+ 			if (common->eject)
+ 				return -EPIPE;
+ 
+-			/* Handle CTRL+C */
++			/* Handle CTRL+C, or any key with CMD_UMS_ABORT_KEYED */
++			if (IS_ENABLED(CONFIG_CMD_UMS_ABORT_KEYED) && tstc()) {
++				getchar();
++				return -EPIPE;
++			}
+ 			if (ctrlc())
+ 				return -EPIPE;
+ 
