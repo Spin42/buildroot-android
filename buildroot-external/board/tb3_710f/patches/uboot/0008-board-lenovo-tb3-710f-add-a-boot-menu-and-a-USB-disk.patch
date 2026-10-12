@@ -316,10 +316,10 @@ index 76a39f5b545..b15f95afc20 100644
 +	if test "${tb3_mode}" = fastboot; then run fastboot_mode; fi;
  	run nerves_map; run boot_nerves; run boot_buildroot; run boot_failed
 diff --git a/configs/mt8127_tb3_710f_defconfig b/configs/mt8127_tb3_710f_defconfig
-index 66533d92972..6dffd89f02e 100644
+index 385785ca62c..7e31a7bfebf 100644
 --- a/configs/mt8127_tb3_710f_defconfig
 +++ b/configs/mt8127_tb3_710f_defconfig
-@@ -29,6 +29,7 @@ CONFIG_SYS_PROMPT="tb3=> "
+@@ -30,6 +30,7 @@ CONFIG_SYS_PROMPT="tb3=> "
  CONFIG_CMD_BOOTZ=y
  CONFIG_CMD_MMC=y
  CONFIG_CMD_PART=y
@@ -327,7 +327,7 @@ index 66533d92972..6dffd89f02e 100644
  CONFIG_CMD_WDT=y
  CONFIG_CMD_CACHE=y
  CONFIG_CMD_SYSBOOT=y
-@@ -45,6 +46,7 @@ CONFIG_FASTBOOT_FLASH=y
+@@ -46,6 +47,7 @@ CONFIG_FASTBOOT_FLASH=y
  CONFIG_FASTBOOT_FLASH_MMC_DEV=0
  CONFIG_FASTBOOT_MMC_RAW_PARTITIONS_ONLY=y
  CONFIG_FASTBOOT_CMD_OEM_CONSOLE=y
@@ -335,7 +335,7 @@ index 66533d92972..6dffd89f02e 100644
  CONFIG_MMC_MTK=y
  # CONFIG_REQUIRE_SERIAL_CONSOLE is not set
  CONFIG_DM_SERIAL=y
-@@ -57,6 +59,7 @@ CONFIG_USB_GADGET=y
+@@ -58,6 +60,7 @@ CONFIG_USB_GADGET=y
  CONFIG_USB_GADGET_VENDOR_NUM=0x18d1
  CONFIG_USB_GADGET_PRODUCT_NUM=0x4ee0
  CONFIG_VIDEO=y

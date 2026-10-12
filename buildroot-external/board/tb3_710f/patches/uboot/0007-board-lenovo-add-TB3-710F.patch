@@ -27,8 +27,8 @@ Assisted-by: Claude:claude-opus-5-5
  board/lenovo/tb3-710f/Makefile     |   3 +
  board/lenovo/tb3-710f/tb3-710f.c   | 448 +++++++++++++++++++++++++++++
  board/lenovo/tb3-710f/tb3-710f.env |  63 ++++
- configs/mt8127_tb3_710f_defconfig  |  63 ++++
- 6 files changed, 585 insertions(+)
+ configs/mt8127_tb3_710f_defconfig  |  64 +++++
+ 6 files changed, 586 insertions(+)
  create mode 100644 board/lenovo/tb3-710f/MAINTAINERS
  create mode 100644 board/lenovo/tb3-710f/Makefile
  create mode 100644 board/lenovo/tb3-710f/tb3-710f.c
@@ -601,10 +601,10 @@ index 00000000000..76a39f5b545
 +	run nerves_map; run boot_nerves; run boot_buildroot; run boot_failed
 diff --git a/configs/mt8127_tb3_710f_defconfig b/configs/mt8127_tb3_710f_defconfig
 new file mode 100644
-index 00000000000..66533d92972
+index 00000000000..385785ca62c
 --- /dev/null
 +++ b/configs/mt8127_tb3_710f_defconfig
-@@ -0,0 +1,63 @@
+@@ -0,0 +1,64 @@
 +CONFIG_ARM=y
 +CONFIG_SKIP_LOWLEVEL_INIT=y
 +CONFIG_SYS_THUMB_BUILD=y
@@ -623,6 +623,7 @@ index 00000000000..66533d92972
 +CONFIG_PRE_CON_BUF_ADDR=0x80f00000
 +CONFIG_PRE_CON_BUF_SZ=16384
 +# CONFIG_EFI_LOADER is not set
++CONFIG_SUPPORT_RAW_INITRD=y
 +CONFIG_BOOTDELAY=0
 +CONFIG_CONSOLE_RECORD=y
 +CONFIG_CONSOLE_RECORD_OUT_SIZE=0x10000
