@@ -1,0 +1,164 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Mon, 12 Oct 2026 11:33:33 +0200
+Subject: [PATCH 2/4] arm: mediatek: add MT8127 support
+
+U-Boot runs on the MT8127 as a second stage after the vendor LK
+bootloader, which has already set up DRAM, clocks and the PMIC wrapper:
+no SPL and no low-level init.
+
+The vendor boot chain leaves GPT6 off, which gates the clock of the
+generic timer counter, and does not program CNTFRQ: enable GPT6 like
+Linux does and set the 13 MHz counter rate at build time.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ arch/arm/mach-mediatek/Kconfig         | 11 +++++
+ arch/arm/mach-mediatek/Makefile        |  1 +
+ arch/arm/mach-mediatek/mt8127/Makefile |  3 ++
+ arch/arm/mach-mediatek/mt8127/init.c   | 58 ++++++++++++++++++++++++++
+ include/configs/mt8127.h               | 19 +++++++++
+ 5 files changed, 92 insertions(+)
+ create mode 100644 arch/arm/mach-mediatek/mt8127/Makefile
+ create mode 100644 arch/arm/mach-mediatek/mt8127/init.c
+ create mode 100644 include/configs/mt8127.h
+
+diff --git a/arch/arm/mach-mediatek/Kconfig b/arch/arm/mach-mediatek/Kconfig
+index 5e6c50ca64d..f37adfaa7ef 100644
+--- a/arch/arm/mach-mediatek/Kconfig
++++ b/arch/arm/mach-mediatek/Kconfig
+@@ -29,6 +29,16 @@ config TARGET_MT7623
+ 	  Peripherals include Gigabit Ethernet, switch, USB3.0 and OTG, PCIe,
+ 	  I2S, PCM, S/PDIF, UART, SPI, I2C, IR TX/RX, and PWM.
+ 
++config TARGET_MT8127
++	bool "MediaTek MT8127 SoC"
++	select CPU_V7A
++	select SYS_ARCH_TIMER
++	help
++	  The MediaTek MT8127 is an ARM-based tablet SoC with a quad-core
++	  Cortex-A7 and a Mali-450 GPU. U-Boot runs as a second stage loaded
++	  by the vendor LK bootloader, which has already set up DRAM, clocks,
++	  the PMIC wrapper and the display.
++
+ config TARGET_MT7629
+ 	bool "MediaTek MT7629 SoC"
+ 	select CPU_V7A
+@@ -197,6 +207,7 @@ config SYS_BOARD
+ config SYS_CONFIG_NAME
+ 	default "mt7623" if TARGET_MT7623
+ 	default "mt7629" if TARGET_MT7629
++	default "mt8127" if TARGET_MT8127
+ 	default "mt7981" if TARGET_MT7981
+ 	default "mt7986" if TARGET_MT7986
+ 	default "mt8183" if TARGET_MT8183
+diff --git a/arch/arm/mach-mediatek/Makefile b/arch/arm/mach-mediatek/Makefile
+index 35f748a70d6..7fc99da5391 100644
+--- a/arch/arm/mach-mediatek/Makefile
++++ b/arch/arm/mach-mediatek/Makefile
+@@ -8,6 +8,7 @@ obj-$(CONFIG_XPL_BUILD)	+= spl.o
+ obj-$(CONFIG_TARGET_MT7622) += mt7622/
+ obj-$(CONFIG_TARGET_MT7623) += mt7623/
+ obj-$(CONFIG_TARGET_MT7629) += mt7629/
++obj-$(CONFIG_TARGET_MT8127) += mt8127/
+ obj-$(CONFIG_TARGET_MT7981) += mt7981/
+ obj-$(CONFIG_TARGET_MT7986) += mt7986/
+ obj-$(CONFIG_TARGET_MT7987) += mt7987/
+diff --git a/arch/arm/mach-mediatek/mt8127/Makefile b/arch/arm/mach-mediatek/mt8127/Makefile
+new file mode 100644
+index 00000000000..b9a1e6b6463
+--- /dev/null
++++ b/arch/arm/mach-mediatek/mt8127/Makefile
+@@ -0,0 +1,3 @@
++# SPDX-License-Identifier: GPL-2.0
++
++obj-y += init.o
+diff --git a/arch/arm/mach-mediatek/mt8127/init.c b/arch/arm/mach-mediatek/mt8127/init.c
+new file mode 100644
+index 00000000000..a2d4fb7be5e
+--- /dev/null
++++ b/arch/arm/mach-mediatek/mt8127/init.c
+@@ -0,0 +1,58 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * MediaTek MT8127 support for U-Boot running as a second stage after the
++ * vendor LK bootloader: DRAM, clocks and the PMIC wrapper are already set up.
++ */
++
++#include <fdtdec.h>
++#include <init.h>
++#include <asm/global_data.h>
++#include <asm/io.h>
++#include <linux/sizes.h>
++
++DECLARE_GLOBAL_DATA_PTR;
++
++/*
++ * Keep U-Boot (relocated code, heap, stack) below the regions Linux reserves
++ * at the top of DRAM: CONSYS shared memory at 0xbc000000 and the ramoops
++ * buffer at 0xbd000000.
++ */
++#define MT8127_USABLE_RAM_TOP	0xbc000000
++
++/*
++ * The ARM generic timer counter only runs while GPT6 is enabled: it ungates
++ * the arch timer clocks. The vendor boot chain leaves it off.
++ */
++#define MT8127_GPT6_CON		0x10008060
++#define MT8127_GPT_ENABLE_FREERUN	0x31
++
++int mach_cpu_init(void)
++{
++	writel(MT8127_GPT_ENABLE_FREERUN, MT8127_GPT6_CON);
++
++	return 0;
++}
++
++int dram_init(void)
++{
++	return fdtdec_setup_mem_size_base();
++}
++
++int dram_init_banksize(void)
++{
++	return fdtdec_setup_memory_banksize();
++}
++
++phys_addr_t board_get_usable_ram_top(phys_size_t total_size)
++{
++	phys_addr_t top = gd->ram_base + gd->ram_size;
++
++	return min_t(phys_addr_t, top, MT8127_USABLE_RAM_TOP);
++}
++
++int print_cpuinfo(void)
++{
++	printf("CPU:   MediaTek MT8127\n");
++
++	return 0;
++}
+diff --git a/include/configs/mt8127.h b/include/configs/mt8127.h
+new file mode 100644
+index 00000000000..7e73bcb3265
+--- /dev/null
++++ b/include/configs/mt8127.h
+@@ -0,0 +1,19 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * Configuration for MediaTek MT8127 SoC
++ */
++
++#ifndef __MT8127_H
++#define __MT8127_H
++
++/* DRAM */
++#define CFG_SYS_SDRAM_BASE		0x80000000
++
++/*
++ * The vendor boot chain does not program CNTFRQ (the Linux device tree marks
++ * the timer "arm,cpu-registers-not-fw-configured"); the counter runs at the
++ * 13 MHz system clock.
++ */
++#define CFG_SYS_HZ_CLOCK		13000000
++
++#endif

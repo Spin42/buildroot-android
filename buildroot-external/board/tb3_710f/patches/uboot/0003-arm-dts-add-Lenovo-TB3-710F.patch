@@ -1,0 +1,177 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Mon, 12 Oct 2026 11:33:33 +0200
+Subject: [PATCH 3/4] arm: dts: add Lenovo TB3-710F
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ arch/arm/dts/Makefile                   |   1 +
+ arch/arm/dts/mt8127-lenovo-tb3-710f.dts | 147 ++++++++++++++++++++++++
+ 2 files changed, 148 insertions(+)
+ create mode 100644 arch/arm/dts/mt8127-lenovo-tb3-710f.dts
+
+diff --git a/arch/arm/dts/Makefile b/arch/arm/dts/Makefile
+index 37d3b6fd3cc..bba44600fb6 100644
+--- a/arch/arm/dts/Makefile
++++ b/arch/arm/dts/Makefile
+@@ -1088,6 +1088,7 @@ dtb-$(CONFIG_ARCH_MEDIATEK) += \
+ 	mt7986b-emmc-rfb.dtb \
+ 	mt7988-rfb.dtb \
+ 	mt7988-sd-rfb.dtb \
++	mt8127-lenovo-tb3-710f.dtb \
+ 	mt8183-pumpkin.dtb \
+ 	mt8371-genio-520-evk.dtb \
+ 	mt8371-genio-520-evk-ufs.dtb \
+diff --git a/arch/arm/dts/mt8127-lenovo-tb3-710f.dts b/arch/arm/dts/mt8127-lenovo-tb3-710f.dts
+new file mode 100644
+index 00000000000..43237fe57e7
+--- /dev/null
++++ b/arch/arm/dts/mt8127-lenovo-tb3-710f.dts
+@@ -0,0 +1,147 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Lenovo Tab3 7 Essential (TB3-710F), MediaTek MT8127.
++ *
++ * U-Boot runs as a second stage after the vendor LK bootloader, which has
++ * already set up DRAM, clocks, pads, the PMIC wrapper and the display. Only
++ * the blocks U-Boot drives are described, with the state LK leaves them in.
++ * Linux boots with its own device tree.
++ */
++
++/dts-v1/;
++
++#include <dt-bindings/interrupt-controller/irq.h>
++#include <dt-bindings/interrupt-controller/arm-gic.h>
++
++/ {
++	model = "Lenovo Tab3 7 Essential (TB3-710F)";
++	compatible = "lenovo,tb3-710f", "mediatek,mt8127";
++	#address-cells = <2>;
++	#size-cells = <2>;
++	interrupt-parent = <&gic>;
++
++	aliases {
++		mmc0 = &mmc0;
++	};
++
++	chosen {
++		#address-cells = <2>;
++		#size-cells = <2>;
++		ranges;
++
++		/* LK keeps scanning out this RGB565 buffer. */
++		framebuffer0: framebuffer@bee00000 {
++			compatible = "simple-framebuffer";
++			reg = <0 0xbee00000 0 (2048 * 600)>;
++			width = <1024>;
++			height = <600>;
++			stride = <2048>;
++			format = "r5g6b5";
++			bootph-all;
++		};
++	};
++
++	cpus {
++		#address-cells = <1>;
++		#size-cells = <0>;
++
++		cpu@0 {
++			device_type = "cpu";
++			compatible = "arm,cortex-a7";
++			reg = <0x0>;
++		};
++	};
++
++	/* DRAM above 0xbed00000 belongs to the TEE and the LK framebuffer. */
++	memory@80000000 {
++		device_type = "memory";
++		reg = <0 0x80000000 0 0x3ed00000>;
++	};
++
++	reserved-memory {
++		#address-cells = <2>;
++		#size-cells = <2>;
++		ranges;
++
++		/* Shared with the TEE for secondary CPU bring-up. */
++		trustzone-bootinfo@80002000 {
++			reg = <0 0x80002000 0 0x1000>;
++			no-map;
++		};
++	};
++
++	timer {
++		compatible = "arm,armv7-timer";
++		interrupt-parent = <&gic>;
++		interrupts = <GIC_PPI 13 (GIC_CPU_MASK_SIMPLE(4) | IRQ_TYPE_LEVEL_LOW)>,
++			     <GIC_PPI 14 (GIC_CPU_MASK_SIMPLE(4) | IRQ_TYPE_LEVEL_LOW)>,
++			     <GIC_PPI 11 (GIC_CPU_MASK_SIMPLE(4) | IRQ_TYPE_LEVEL_LOW)>,
++			     <GIC_PPI 10 (GIC_CPU_MASK_SIMPLE(4) | IRQ_TYPE_LEVEL_LOW)>;
++		clock-frequency = <13000000>;
++		arm,cpu-registers-not-fw-configured;
++	};
++
++	/* MSDC0 source clock as programmed by LK. */
++	msdc_clk: msdc-clk {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++		clock-frequency = <200000000>;
++		bootph-all;
++	};
++
++	wdt-reboot {
++		compatible = "wdt-reboot";
++		wdt = <&watchdog>;
++		bootph-all;
++	};
++
++	soc {
++		#address-cells = <2>;
++		#size-cells = <2>;
++		compatible = "simple-bus";
++		ranges;
++		bootph-all;
++
++		watchdog: watchdog@10007000 {
++			compatible = "mediatek,mt8127-wdt", "mediatek,mt6589-wdt";
++			reg = <0 0x10007000 0 0x100>;
++			bootph-all;
++		};
++
++		pwrap: pwrap@1000d000 {
++			compatible = "mediatek,mt8127-pwrap";
++			reg = <0 0x1000d000 0 0x1000>;
++			reg-names = "pwrap";
++		};
++
++		gic: interrupt-controller@10211000 {
++			compatible = "arm,cortex-a7-gic";
++			interrupt-controller;
++			#interrupt-cells = <3>;
++			interrupt-parent = <&gic>;
++			reg = <0 0x10211000 0 0x1000>,
++			      <0 0x10212000 0 0x2000>,
++			      <0 0x10214000 0 0x2000>,
++			      <0 0x10216000 0 0x2000>;
++		};
++
++		/*
++		 * eMMC. Pads, supplies and the clock mux are left set up by LK.
++		 * No DDR52: multi-block writes get corrupted in DDR mode on
++		 * this board, so the bus stays at 52 MHz SDR.
++		 */
++		mmc0: mmc@11230000 {
++			compatible = "mediatek,mt8127-mmc", "mediatek,mt8135-mmc";
++			reg = <0 0x11230000 0 0x1000>;
++			interrupts = <GIC_SPI 39 IRQ_TYPE_LEVEL_LOW>;
++			clocks = <&msdc_clk>, <&msdc_clk>;
++			clock-names = "source", "hclk";
++			bus-width = <8>;
++			max-frequency = <52000000>;
++			cap-mmc-highspeed;
++			non-removable;
++			no-sd;
++			no-sdio;
++		};
++	};
++};

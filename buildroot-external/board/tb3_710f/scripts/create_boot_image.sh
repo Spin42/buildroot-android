@@ -18,3 +18,13 @@ printf '' | cpio -o -H newc 2>/dev/null | gzip -9 > "${EMPTY}"
 	"${BINARIES_DIR}/boot.img"
 
 echo "boot.img created at ${BINARIES_DIR}/boot.img"
+
+# U-Boot chainloaded by LK: u-boot.bin (device tree appended) takes the place of the kernel.
+# It boots /boot/extlinux/extlinux.conf from userdata.
+if [ -f "${BINARIES_DIR}/u-boot.bin" ]; then
+	"${BOARD_DIR}/scripts/mkbootimg.py" \
+		"${BINARIES_DIR}/u-boot.bin" \
+		"${EMPTY}" \
+		"${BINARIES_DIR}/boot-uboot.img"
+	echo "boot-uboot.img created at ${BINARIES_DIR}/boot-uboot.img"
+fi

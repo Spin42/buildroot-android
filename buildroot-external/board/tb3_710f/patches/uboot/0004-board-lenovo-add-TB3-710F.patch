@@ -1,0 +1,477 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Mon, 12 Oct 2026 11:33:33 +0200
+Subject: [PATCH 4/4] board: lenovo: add TB3-710F
+
+U-Boot is packed as the kernel of an Android boot image in the boot
+partition, loaded by LK at 0x80008000, and boots Linux from
+extlinux.conf on userdata. The console is the framebuffer LK leaves
+running.
+
+LK boots recovery when the MT6323 RTC PDN1 recovery bit is set. U-Boot
+sets it on entry and clears it right before starting Linux, so a hang
+in U-Boot ends in a watchdog reset into recovery rather than a loop.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ arch/arm/mach-mediatek/Kconfig     |   2 +
+ board/lenovo/tb3-710f/MAINTAINERS  |   6 +
+ board/lenovo/tb3-710f/Makefile     |   3 +
+ board/lenovo/tb3-710f/tb3-710f.c   | 319 +++++++++++++++++++++++++++++
+ board/lenovo/tb3-710f/tb3-710f.env |  23 +++
+ configs/mt8127_tb3_710f_defconfig  |  47 +++++
+ 6 files changed, 400 insertions(+)
+ create mode 100644 board/lenovo/tb3-710f/MAINTAINERS
+ create mode 100644 board/lenovo/tb3-710f/Makefile
+ create mode 100644 board/lenovo/tb3-710f/tb3-710f.c
+ create mode 100644 board/lenovo/tb3-710f/tb3-710f.env
+ create mode 100644 configs/mt8127_tb3_710f_defconfig
+
+diff --git a/arch/arm/mach-mediatek/Kconfig b/arch/arm/mach-mediatek/Kconfig
+index f37adfaa7ef..310aa71bfe3 100644
+--- a/arch/arm/mach-mediatek/Kconfig
++++ b/arch/arm/mach-mediatek/Kconfig
+@@ -4,6 +4,7 @@ config SYS_SOC
+ 	default "mediatek"
+ 
+ config SYS_VENDOR
++	default "lenovo" if TARGET_MT8127
+ 	default "mediatek"
+ 
+ choice
+@@ -190,6 +191,7 @@ config SYS_BOARD
+ 	default "mt7622" if TARGET_MT7622
+ 	default "mt7623" if TARGET_MT7623
+ 	default "mt7629" if TARGET_MT7629
++	default "tb3-710f" if TARGET_MT8127
+ 	default "mt7981" if TARGET_MT7981
+ 	default "mt7986" if TARGET_MT7986
+ 	default "mt7987" if TARGET_MT7987
+diff --git a/board/lenovo/tb3-710f/MAINTAINERS b/board/lenovo/tb3-710f/MAINTAINERS
+new file mode 100644
+index 00000000000..6519e3a023f
+--- /dev/null
++++ b/board/lenovo/tb3-710f/MAINTAINERS
+@@ -0,0 +1,6 @@
++LENOVO TB3-710F
++M:	Marc Lainez <marc.lainez@gmail.com>
++S:	Maintained
++F:	arch/arm/dts/mt8127-lenovo-tb3-710f.dts
++F:	board/lenovo/tb3-710f/
++F:	configs/mt8127_tb3_710f_defconfig
+diff --git a/board/lenovo/tb3-710f/Makefile b/board/lenovo/tb3-710f/Makefile
+new file mode 100644
+index 00000000000..62ca34d0b34
+--- /dev/null
++++ b/board/lenovo/tb3-710f/Makefile
+@@ -0,0 +1,3 @@
++# SPDX-License-Identifier: GPL-2.0
++
++obj-y += tb3-710f.o
+diff --git a/board/lenovo/tb3-710f/tb3-710f.c b/board/lenovo/tb3-710f/tb3-710f.c
+new file mode 100644
+index 00000000000..aa0affa6dff
+--- /dev/null
++++ b/board/lenovo/tb3-710f/tb3-710f.c
+@@ -0,0 +1,319 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Lenovo Tab3 7 Essential (TB3-710F) board support.
++ *
++ * LK, the vendor bootloader, picks its boot mode from the MT6323 RTC
++ * power-down register PDN1: bit 13 selects fastboot, bit 4 (with bit 5
++ * clear) selects recovery. LK clears bit 13 when it enters fastboot and
++ * leaves bit 4 set when it boots recovery. The register survives a
++ * watchdog reset.
++ *
++ * Boot-once guard: U-Boot sets the recovery bit as soon as it starts and
++ * clears it just before jumping to Linux. If U-Boot hangs, the watchdog
++ * resets the SoC and LK boots the recovery image instead of U-Boot again.
++ *
++ * U-Boot also copies its console output to 0xbfd00000, the last MiB of
++ * the 16 MiB LK video memory, which Linux reserves and does not touch, so
++ * the log of the U-Boot run that started Linux can be read with /dev/mem.
++ * LK clears that memory at boot: the log does not survive a reset.
++ *
++ * The PMIC is reached through the PMIC wrapper (pwrap) WACS2 channel, which
++ * the preloader has already initialised.
++ */
++
++#include <command.h>
++#include <stdio_dev.h>
++#include <init.h>
++#include <time.h>
++#include <asm/processor.h>
++#include <asm/io.h>
++#include <asm/cache.h>
++#include <asm/system.h>
++#include <cpu_func.h>
++#include <linux/sizes.h>
++#include <image.h>
++#include <version_string.h>
++
++#define TB3_FB_BASE		0xbee00000
++#define TB3_FB_SIZE		SZ_2M
++
++#define PWRAP_BASE		0x1000d000
++#define PWRAP_WACS2_CMD		(PWRAP_BASE + 0x9c)
++#define PWRAP_WACS2_RDATA	(PWRAP_BASE + 0xa0)
++#define PWRAP_WACS2_VLDCLR	(PWRAP_BASE + 0xa4)
++#define PWRAP_CMD_WRITE		BIT(31)
++#define PWRAP_STATE(rdata)	(((rdata) >> 16) & 7)
++#define PWRAP_STATE_IDLE	0
++#define PWRAP_STATE_WFVLDCLR	6
++#define PWRAP_POLL_LOOPS	1000000
++
++#define MT6323_RTC_BBPU		0x8000
++#define RTC_BBPU_CBUSY		BIT(6)
++#define MT6323_RTC_PDN1		0x802c
++#define MT6323_RTC_PROT		0x8036
++#define MT6323_RTC_WRTGR	0x803c
++#define RTC_PROT_UNLOCK1	0x586a
++#define RTC_PROT_UNLOCK2	0x9136
++
++#define PDN1_RECOVERY_MASK	(3 << 4)
++#define PDN1_RECOVERY		BIT(4)
++#define PDN1_FASTBOOT		BIT(13)
++
++#define TB3_LOG_BASE		0xbfd00000
++#define TB3_LOG_SIZE		SZ_64K
++#define TB3_LOG_MAGIC		0x4c334254	/* "TB3L" */
++
++struct tb3_log {
++	u32 magic;
++	u32 stage;	/* last board hook reached, see tb3_stage() */
++	u32 len;	/* bytes of text, the text is not wrapped */
++	u32 reserved;
++	char text[];
++};
++
++#define TB3_LOG_TEXT_MAX	(TB3_LOG_SIZE - sizeof(struct tb3_log))
++
++enum tb3_bootmode {
++	TB3_BOOT_NORMAL,
++	TB3_BOOT_RECOVERY,
++	TB3_BOOT_FASTBOOT,
++};
++
++/* Written before relocation, when .bss is not usable yet. */
++static int guard_status __section(".data");
++static u16 guard_pdn1 __section(".data");
++
++static int pwrap_wait(int state)
++{
++	int i;
++
++	for (i = 0; i < PWRAP_POLL_LOOPS; i++)
++		if (PWRAP_STATE(readl(PWRAP_WACS2_RDATA)) == state)
++			return 0;
++
++	return -ETIMEDOUT;
++}
++
++static int pmic_read(u32 reg, u16 *val)
++{
++	if (pwrap_wait(PWRAP_STATE_IDLE))
++		return -ETIMEDOUT;
++	writel((reg >> 1) << 16, PWRAP_WACS2_CMD);
++	if (pwrap_wait(PWRAP_STATE_WFVLDCLR))
++		return -ETIMEDOUT;
++	*val = readl(PWRAP_WACS2_RDATA) & 0xffff;
++	writel(1, PWRAP_WACS2_VLDCLR);
++
++	return 0;
++}
++
++static int pmic_write(u32 reg, u16 val)
++{
++	if (pwrap_wait(PWRAP_STATE_IDLE))
++		return -ETIMEDOUT;
++	writel(PWRAP_CMD_WRITE | ((reg >> 1) << 16) | val, PWRAP_WACS2_CMD);
++
++	return 0;
++}
++
++/* Commit the RTC shadow registers to the RTC domain. */
++static int rtc_write_trigger(void)
++{
++	u16 bbpu;
++	int i;
++
++	if (pmic_write(MT6323_RTC_WRTGR, 1))
++		return -ETIMEDOUT;
++	for (i = 0; i < 100000; i++) {
++		if (pmic_read(MT6323_RTC_BBPU, &bbpu))
++			return -ETIMEDOUT;
++		if (!(bbpu & RTC_BBPU_CBUSY))
++			return 0;
++	}
++
++	return -ETIMEDOUT;
++}
++
++static int rtc_unlock(void)
++{
++	if (pmic_write(MT6323_RTC_PROT, RTC_PROT_UNLOCK1) || rtc_write_trigger())
++		return -ETIMEDOUT;
++	if (pmic_write(MT6323_RTC_PROT, RTC_PROT_UNLOCK2) || rtc_write_trigger())
++		return -ETIMEDOUT;
++
++	return 0;
++}
++
++static int tb3_set_bootmode(enum tb3_bootmode mode, u16 *pdn1_out)
++{
++	u16 pdn1;
++	int ret;
++
++	ret = rtc_unlock();
++	if (!ret)
++		ret = pmic_read(MT6323_RTC_PDN1, &pdn1);
++	if (ret)
++		return ret;
++
++	pdn1 &= ~(PDN1_RECOVERY_MASK | PDN1_FASTBOOT);
++	if (mode == TB3_BOOT_RECOVERY)
++		pdn1 |= PDN1_RECOVERY;
++	else if (mode == TB3_BOOT_FASTBOOT)
++		pdn1 |= PDN1_FASTBOOT;
++
++	ret = pmic_write(MT6323_RTC_PDN1, pdn1);
++	if (!ret)
++		ret = rtc_write_trigger();
++	if (!ret)
++		ret = pmic_read(MT6323_RTC_PDN1, &pdn1);
++	if (!ret && pdn1_out)
++		*pdn1_out = pdn1;
++
++	return ret;
++}
++
++static struct tb3_log *tb3_log(void)
++{
++	return (struct tb3_log *)TB3_LOG_BASE;
++}
++
++static void tb3_stage(u32 stage)
++{
++	tb3_log()->stage = stage;
++	flush_dcache_range(TB3_LOG_BASE, TB3_LOG_BASE + ARCH_DMA_MINALIGN);
++}
++
++static void tb3_log_putc(struct stdio_dev *dev, const char c)
++{
++	struct tb3_log *log = tb3_log();
++
++	if (log->len >= TB3_LOG_TEXT_MAX)
++		return;
++	log->text[log->len++] = c;
++}
++
++static void tb3_log_puts(struct stdio_dev *dev, const char *s)
++{
++	while (*s)
++		tb3_log_putc(dev, *s++);
++}
++
++int board_early_init_f(void)
++{
++	struct tb3_log *log = tb3_log();
++
++	/* Arm the boot-once guard before anything else can hang. */
++	guard_status = tb3_set_bootmode(TB3_BOOT_RECOVERY, &guard_pdn1);
++
++	/* Caches are off here: plain stores reach DRAM. */
++	log->magic = TB3_LOG_MAGIC;
++	log->len = 0;
++	log->stage = 1;
++
++	return 0;
++}
++
++int board_early_init_r(void)
++{
++	struct stdio_dev dev = {
++		.name = "memlog",
++		.flags = DEV_FLAGS_OUTPUT,
++		.putc = tb3_log_putc,
++		.puts = tb3_log_puts,
++	};
++
++	tb3_stage(3);
++
++	return stdio_register(&dev);
++}
++
++int board_init(void)
++{
++	/*
++	 * The framebuffer lies outside the DRAM bank U-Boot maps, so it would
++	 * be strongly ordered; write-through keeps the scanout coherent and
++	 * makes console scrolling usable.
++	 */
++	mmu_set_region_dcache_behaviour(TB3_FB_BASE, TB3_FB_SIZE,
++					DCACHE_WRITETHROUGH);
++	/* The log must reach DRAM even if U-Boot hangs right after a write. */
++	mmu_set_region_dcache_behaviour(ALIGN_DOWN(TB3_LOG_BASE, SZ_1M), SZ_1M,
++					DCACHE_WRITETHROUGH);
++	tb3_stage(2);
++
++	return 0;
++}
++
++int board_late_init(void)
++{
++	u64 t0;
++	int i;
++
++	tb3_stage(4);
++	printf("\n%s\n", version_string);
++	printf("Lenovo TB3-710F, chainloaded by LK\n");
++	/* A busy loop, not udelay(): it would never return if the counter stopped. */
++	t0 = get_ticks();
++	for (i = 0; i < 100000; i++)
++		cpu_relax();
++	printf("Timer: arch counter at %lu Hz, %s\n", get_tbclk(),
++	       get_ticks() != t0 ? "running" : "STOPPED");
++	if (guard_status)
++		printf("Boot-once guard: PMIC access failed (%d)\n", guard_status);
++	else
++		printf("Boot-once guard: armed (RTC PDN1 0x%04x, recovery on reset)\n",
++		       guard_pdn1);
++
++	return 0;
++}
++
++void board_prep_linux(struct bootm_headers *images)
++{
++	u16 pdn1;
++
++	tb3_stage(5);
++
++	if (tb3_set_bootmode(TB3_BOOT_NORMAL, &pdn1))
++		printf("Boot-once guard: failed to disarm\n");
++	else
++		printf("Boot-once guard: disarmed (RTC PDN1 0x%04x)\n", pdn1);
++}
++
++static int do_tb3_bootmode(struct cmd_tbl *cmdtp, int flag, int argc,
++			   char *const argv[])
++{
++	enum tb3_bootmode mode;
++	u16 pdn1;
++
++	if (argc < 2) {
++		if (rtc_unlock() || pmic_read(MT6323_RTC_PDN1, &pdn1))
++			return CMD_RET_FAILURE;
++		printf("RTC PDN1 0x%04x: %s\n", pdn1,
++		       pdn1 & PDN1_FASTBOOT ? "fastboot" :
++		       (pdn1 & PDN1_RECOVERY_MASK) == PDN1_RECOVERY ?
++		       "recovery" : "normal");
++		return CMD_RET_SUCCESS;
++	}
++
++	if (!strcmp(argv[1], "normal"))
++		mode = TB3_BOOT_NORMAL;
++	else if (!strcmp(argv[1], "recovery"))
++		mode = TB3_BOOT_RECOVERY;
++	else if (!strcmp(argv[1], "fastboot") || !strcmp(argv[1], "bootloader"))
++		mode = TB3_BOOT_FASTBOOT;
++	else
++		return CMD_RET_USAGE;
++
++	if (tb3_set_bootmode(mode, &pdn1)) {
++		printf("PMIC access failed\n");
++		return CMD_RET_FAILURE;
++	}
++	printf("RTC PDN1 0x%04x: LK boots %s on the next reset\n", pdn1, argv[1]);
++
++	return CMD_RET_SUCCESS;
++}
++
++U_BOOT_CMD(bootmode, 2, 0, do_tb3_bootmode,
++	   "select the boot mode of the vendor bootloader (LK)",
++	   "[normal|recovery|fastboot]\n"
++	   "  - without argument, show the current mode");
+diff --git a/board/lenovo/tb3-710f/tb3-710f.env b/board/lenovo/tb3-710f/tb3-710f.env
+new file mode 100644
+index 00000000000..57771e5be2d
+--- /dev/null
++++ b/board/lenovo/tb3-710f/tb3-710f.env
+@@ -0,0 +1,23 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++
++stdin=nulldev
++stdout=vidconsole,memlog
++stderr=vidconsole,memlog
++
++/* 0x80002000 is the TEE boot-info page, 0x80008000 the kernel text */
++kernel_addr_r=0x80800000
++pxefile_addr_r=0x83d00000
++scriptaddr=0x83e00000
++fdt_addr_r=0x83f00000
++ramdisk_addr_r=0x84000000
++/* FDT and initrd are relocated below this, inside Linux lowmem */
++bootm_size=0x10000000
++
++/* userdata (mmcblk0p7 in Linux) holds the root filesystem */
++bootpart=0:7
++extlinux=/boot/extlinux/extlinux.conf
++
++boot_extlinux=sysboot mmc ${bootpart} any ${scriptaddr} ${extlinux}
++boot_failed=echo No bootable ${extlinux} on mmc ${bootpart}, rebooting into fastboot;
++	sleep 5; bootmode fastboot; reset
++bootcmd=run boot_extlinux; run boot_failed
+diff --git a/configs/mt8127_tb3_710f_defconfig b/configs/mt8127_tb3_710f_defconfig
+new file mode 100644
+index 00000000000..d44052bfd74
+--- /dev/null
++++ b/configs/mt8127_tb3_710f_defconfig
+@@ -0,0 +1,47 @@
++CONFIG_ARM=y
++CONFIG_SKIP_LOWLEVEL_INIT=y
++CONFIG_SYS_THUMB_BUILD=y
++CONFIG_ARCH_MEDIATEK=y
++CONFIG_TEXT_BASE=0x80008000
++CONFIG_SYS_MALLOC_LEN=0x2000000
++CONFIG_SYS_MALLOC_F_LEN=0x4000
++CONFIG_NR_DRAM_BANKS=1
++CONFIG_HAS_CUSTOM_SYS_INIT_SP_ADDR=y
++CONFIG_CUSTOM_SYS_INIT_SP_ADDR=0x80e00000
++CONFIG_DEFAULT_DEVICE_TREE="mt8127-lenovo-tb3-710f"
++CONFIG_TARGET_MT8127=y
++CONFIG_SYS_BOOTM_LEN=0x4000000
++CONFIG_SYS_LOAD_ADDR=0x80800000
++CONFIG_WATCHDOG_TIMEOUT_MSECS=15000
++CONFIG_PRE_CON_BUF_ADDR=0x80f00000
++CONFIG_PRE_CON_BUF_SZ=16384
++# CONFIG_EFI_LOADER is not set
++CONFIG_BOOTDELAY=1
++CONFIG_PRE_CONSOLE_BUFFER=y
++CONFIG_SYS_DEVICE_NULLDEV=y
++CONFIG_BOARD_EARLY_INIT_F=y
++CONFIG_BOARD_EARLY_INIT_R=y
++CONFIG_BOARD_LATE_INIT=y
++CONFIG_SYS_PROMPT="tb3=> "
++CONFIG_CMD_BOOTZ=y
++CONFIG_CMD_MMC=y
++CONFIG_CMD_PART=y
++CONFIG_CMD_WDT=y
++CONFIG_CMD_CACHE=y
++CONFIG_CMD_SYSBOOT=y
++CONFIG_CMD_EXT4=y
++CONFIG_CMD_FAT=y
++CONFIG_CMD_FS_GENERIC=y
++CONFIG_NO_NET=y
++CONFIG_BLKMAP=y
++CONFIG_CLK=y
++CONFIG_MMC_MTK=y
++# CONFIG_REQUIRE_SERIAL_CONSOLE is not set
++CONFIG_DM_SERIAL=y
++CONFIG_SYSRESET=y
++CONFIG_SYSRESET_WATCHDOG=y
++CONFIG_VIDEO=y
++CONFIG_SYS_WHITE_ON_BLACK=y
++CONFIG_VIDEO_SIMPLE=y
++CONFIG_WDT_MTK=y
++CONFIG_PANIC_HANG=y
