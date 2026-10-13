@@ -1,0 +1,61 @@
+#!/bin/sh
+#
+# Initramfs of the RAUC configuration: the userdata partition holds a disk
+# image with its own partition table. Attach it to /dev/loop0 with partition
+# scanning and switch to the root filesystem of the slot U-Boot booted
+# (rauc.slot=A|B on the kernel command line):
+#   /dev/loop0p2: rootfs A, /dev/loop0p3: rootfs B
+# A slot that cannot be mounted reboots, so that U-Boot uses up its attempts
+# and falls back to the other slot.
+
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+
+fail() {
+	echo "initramfs: $*, rebooting" > /dev/kmsg
+	sleep 5
+	reboot -f
+}
+
+find_userdata() {
+	for uevent in /sys/class/block/*/uevent; do
+		if grep -qx "PARTNAME=userdata" "$uevent"; then
+			dev=${uevent%/uevent}
+			echo "/dev/${dev##*/}"
+			return 0
+		fi
+	done
+	return 1
+}
+
+slot=$(sed -n 's/.*rauc\.slot=\([AB]\).*/\1/p' /proc/cmdline)
+case "$slot" in
+A) root=/dev/loop0p2 ;;
+B) root=/dev/loop0p3 ;;
+*) fail "no rauc.slot on the kernel command line" ;;
+esac
+
+for i in $(seq 50); do
+	userdata=$(find_userdata) && break
+	sleep 0.2
+done
+[ -n "$userdata" ] || fail "userdata partition not found"
+
+losetup -P /dev/loop0 "$userdata" || fail "cannot attach $userdata"
+
+for i in $(seq 50); do
+	[ -b "$root" ] && break
+	sleep 0.1
+done
+
+mkdir -p /newroot
+mount -t ext4 -o rw,noatime "$root" /newroot || fail "cannot mount $root"
+[ -x /newroot/sbin/init ] || fail "no /sbin/init on $root"
+
+echo "initramfs: booting slot $slot from $root" > /dev/kmsg
+mount --move /dev /newroot/dev
+umount /proc /sys
+exec switch_root /newroot /sbin/init
