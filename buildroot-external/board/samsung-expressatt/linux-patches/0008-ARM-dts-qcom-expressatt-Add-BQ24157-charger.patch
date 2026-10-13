@@ -1,0 +1,39 @@
+From 8af484d0960dfa9633e2cacfd5b79946e786414f Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Tue, 13 Oct 2026 21:31:15 +0200
+Subject: [PATCH 8/8] ARM: dts: qcom: expressatt: Add BQ24157 charger
+
+Describe the charger with a 500 mA USB input limit and conservative
+4.2 V battery regulation. Connect the fuel gauge to its power supplier.
+
+Signed-off-by: Marc Lainez <marc.lainez@gmail.com>
+---
+ .../dts/qcom/qcom-msm8960-samsung-expressatt.dts     | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/arch/arm/boot/dts/qcom/qcom-msm8960-samsung-expressatt.dts b/arch/arm/boot/dts/qcom/qcom-msm8960-samsung-expressatt.dts
+index 99eb5815a..291bf08ab 100644
+--- a/arch/arm/boot/dts/qcom/qcom-msm8960-samsung-expressatt.dts
++++ b/arch/arm/boot/dts/qcom/qcom-msm8960-samsung-expressatt.dts
+@@ -38,6 +38,18 @@ battery@36 {
+ 			reg = <0x36>;
+ 			maxim,double-soc;
+ 			maxim,rcomp = /bits/ 8 <0x62>;
++			power-supplies = <&charger>;
++		};
++
++		charger: charger@6a {
++			compatible = "ti,bq24157";
++			reg = <0x6a>;
++			ti,current-limit = <500>;
++			ti,weak-battery-voltage = <3400>;
++			ti,battery-regulation-voltage = <4200>;
++			ti,charge-current = <550>;
++			ti,termination-current = <50>;
++			ti,resistor-sense = <68>;
+ 		};
+ 	};
+ 
+-- 
+2.43.0
+

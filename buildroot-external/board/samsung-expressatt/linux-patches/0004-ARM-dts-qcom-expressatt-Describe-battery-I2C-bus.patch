@@ -1,0 +1,60 @@
+From cffa1543b46d44419a07d9e7f558692b098db392 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Tue, 13 Oct 2026 21:16:19 +0200
+Subject: [PATCH] ARM: dts: qcom: expressatt: Describe battery I2C bus
+
+The battery fuel gauge and charger share a GPIO I2C bus on TLMM pins 24
+and 25. Describe the adapter and its GPIO pin configuration, matching
+the vendor board wiring. Reserve the vendor bus number through an alias.
+
+Signed-off-by: Marc Lainez <marc.lainez@gmail.com>
+---
+ .../qcom/qcom-msm8960-samsung-expressatt.dts   | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/arch/arm/boot/dts/qcom/qcom-msm8960-samsung-expressatt.dts b/arch/arm/boot/dts/qcom/qcom-msm8960-samsung-expressatt.dts
+index fb338fa37..7e3cbebc5 100644
+--- a/arch/arm/boot/dts/qcom/qcom-msm8960-samsung-expressatt.dts
++++ b/arch/arm/boot/dts/qcom/qcom-msm8960-samsung-expressatt.dts
+@@ -14,6 +14,7 @@ / {
+ 	chassis-type = "handset";
+ 
+ 	aliases {
++		i2c13 = &battery_i2c;
+ 		serial0 = &gsbi5_serial;
+ 		mmc0 = &sdcc1; /* SDCC1 eMMC slot */
+ 		mmc1 = &sdcc3; /* SDCC3 SD card slot */
+@@ -23,6 +24,16 @@ chosen {
+ 		stdout-path = "serial0:115200n8";
+ 	};
+ 
++	battery_i2c: i2c-battery {
++		compatible = "i2c-gpio";
++		sda-gpios = <&tlmm 24 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
++		scl-gpios = <&tlmm 25 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
++		pinctrl-names = "default";
++		pinctrl-0 = <&battery_i2c_default>;
++		#address-cells = <1>;
++		#size-cells = <0>;
++	};
++
+ 	gpio-keys {
+ 		compatible = "gpio-keys";
+ 
+@@ -144,6 +155,13 @@ touchscreen@4a {
+ };
+ 
+ &tlmm {
++	battery_i2c_default: battery-i2c-default-state {
++		pins = "gpio24", "gpio25";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-disable;
++	};
++
+ 	spi1_default: spi1-default-state {
+ 		mosi-pins {
+ 			pins = "gpio6";
+-- 
+2.43.0
+

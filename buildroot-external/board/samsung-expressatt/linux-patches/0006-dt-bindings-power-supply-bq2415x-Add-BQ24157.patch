@@ -1,0 +1,28 @@
+From 0d40bc024c45a0c66ccc09baff85db33575f571a Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Tue, 13 Oct 2026 21:31:15 +0200
+Subject: [PATCH 6/8] dt-bindings: power: supply: bq2415x: Add BQ24157
+
+Document the non-S BQ24157 charger supported through its existing
+register-compatible family driver.
+
+Signed-off-by: Marc Lainez <marc.lainez@gmail.com>
+---
+ Documentation/devicetree/bindings/power/supply/bq2415x.yaml | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/Documentation/devicetree/bindings/power/supply/bq2415x.yaml b/Documentation/devicetree/bindings/power/supply/bq2415x.yaml
+index 13822346e..9ef801a85 100644
+--- a/Documentation/devicetree/bindings/power/supply/bq2415x.yaml
++++ b/Documentation/devicetree/bindings/power/supply/bq2415x.yaml
+@@ -26,6 +26,7 @@ properties:
+       - ti,bq24155
+       - ti,bq24156
+       - ti,bq24156a
++      - ti,bq24157
+       - ti,bq24158
+ 
+   reg:
+-- 
+2.43.0
+

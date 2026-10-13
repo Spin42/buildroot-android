@@ -1,0 +1,35 @@
+From 37b0cd93e19d26b3050e9fe72dfe3d8b6e929bb0 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Tue, 13 Oct 2026 20:48:55 +0200
+Subject: [PATCH 3/3] ARM: dts: qcom: expressatt: Describe Samsung reboot modes
+
+The Samsung bootloader uses 0x12345671 to request download mode and
+0x12345678 for a normal reboot. Describe these values for the generic
+syscon reboot mode driver.
+
+Signed-off-by: Marc Lainez <marc.lainez@gmail.com>
+---
+ arch/arm/boot/dts/qcom/qcom-msm8960-samsung-expressatt.dts | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/arch/arm/boot/dts/qcom/qcom-msm8960-samsung-expressatt.dts b/arch/arm/boot/dts/qcom/qcom-msm8960-samsung-expressatt.dts
+index 5a39abd6f..fb338fa37 100644
+--- a/arch/arm/boot/dts/qcom/qcom-msm8960-samsung-expressatt.dts
++++ b/arch/arm/boot/dts/qcom/qcom-msm8960-samsung-expressatt.dts
+@@ -54,6 +54,13 @@ key-volume-down {
+ 	};
+ };
+ 
++&imem {
++	reboot-mode {
++		mode-normal = <0x12345678>;
++		mode-download = <0x12345671>;
++	};
++};
++
+ &gsbi2 {
+ 	qcom,mode = <GSBI_PROT_I2C>;
+ 
+-- 
+2.43.0
+

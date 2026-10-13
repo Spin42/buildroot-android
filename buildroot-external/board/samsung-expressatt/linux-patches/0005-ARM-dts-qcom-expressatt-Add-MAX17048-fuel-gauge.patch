@@ -1,0 +1,35 @@
+From 0abb8e3373ce2f1d000dfdcd29f8015e5a15cfab Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Tue, 13 Oct 2026 21:26:23 +0200
+Subject: [PATCH] ARM: dts: qcom: expressatt: Add MAX17048 fuel gauge
+
+Describe the fuel gauge on the battery I2C bus. Its state of charge
+uses the doubled encoding and the board uses an RCOMP value of 0x62.
+Leave alerts unconnected and use the existing driver polling support.
+
+Signed-off-by: Marc Lainez <marc.lainez@gmail.com>
+---
+ arch/arm/boot/dts/qcom/qcom-msm8960-samsung-expressatt.dts | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/arch/arm/boot/dts/qcom/qcom-msm8960-samsung-expressatt.dts b/arch/arm/boot/dts/qcom/qcom-msm8960-samsung-expressatt.dts
+index 7e3cbebc5..99eb5815a 100644
+--- a/arch/arm/boot/dts/qcom/qcom-msm8960-samsung-expressatt.dts
++++ b/arch/arm/boot/dts/qcom/qcom-msm8960-samsung-expressatt.dts
+@@ -32,6 +32,13 @@ battery_i2c: i2c-battery {
+ 		pinctrl-0 = <&battery_i2c_default>;
+ 		#address-cells = <1>;
+ 		#size-cells = <0>;
++
++		battery@36 {
++			compatible = "maxim,max17048";
++			reg = <0x36>;
++			maxim,double-soc;
++			maxim,rcomp = /bits/ 8 <0x62>;
++		};
+ 	};
+ 
+ 	gpio-keys {
+-- 
+2.43.0
+
