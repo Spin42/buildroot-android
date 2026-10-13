@@ -1,0 +1,44 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Mon, 12 Oct 2026 14:51:06 +0200
+Subject: [PATCH 04/28] clk: qcom: support GDSCs without a CFG_GDSCR register
+
+Older SoCs like MSM8953 report the power state in GDSCR itself. Reading
+CFG_GDSCR there returns an unrelated clock register.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/clk/qcom/clock-qcom.c | 6 +++++-
+ drivers/clk/qcom/clock-qcom.h | 2 ++
+ 2 files changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/clk/qcom/clock-qcom.c b/drivers/clk/qcom/clock-qcom.c
+index 6b46d9db..b6d92da9 100644
+--- a/drivers/clk/qcom/clock-qcom.c
++++ b/drivers/clk/qcom/clock-qcom.c
+@@ -527,7 +527,11 @@ static int qcom_power_set(struct power_domain *pwr, bool on)
+ 
+ 	writel(value, base + map->reg);
+ 
+-	if (on)
++	if (map->no_cfg_gdscr)
++		ret = readl_poll_timeout(base + map->reg, value,
++					 !!(value & GDSC_PWR_ON_MASK) == on,
++					 GDSC_STATUS_POLL_TIMEOUT_US);
++	else if (on)
+ 		ret = readl_poll_timeout(base + map->reg + CFG_GDSCR_OFFSET,
+ 					 value,
+ 					 (value & GDSC_POWER_UP_COMPLETE) ||
+diff --git a/drivers/clk/qcom/clock-qcom.h b/drivers/clk/qcom/clock-qcom.h
+index 9899cd28..3bc4a6f7 100644
+--- a/drivers/clk/qcom/clock-qcom.h
++++ b/drivers/clk/qcom/clock-qcom.h
+@@ -78,6 +78,8 @@ struct qcom_reset_map {
+ 
+ struct qcom_power_map {
+ 	unsigned int reg;
++	/* Older GDSCs report their state in GDSCR rather than in CFG_GDSCR */
++	bool no_cfg_gdscr;
+ };
+ 
+ struct clk;

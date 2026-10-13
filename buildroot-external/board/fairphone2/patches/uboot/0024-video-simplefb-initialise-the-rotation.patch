@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Wed, 14 Oct 2026 00:46:12 +0200
+Subject: [PATCH 24/28] video: simplefb: initialise the rotation
+
+Without a "rot" property the rotation was left uninitialised and used to
+pick the console driver, e.g. "vidconsole4940".
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/video/simplefb.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/video/simplefb.c b/drivers/video/simplefb.c
+index 631ae00b..c514cac3 100644
+--- a/drivers/video/simplefb.c
++++ b/drivers/video/simplefb.c
+@@ -21,7 +21,7 @@ static int simple_video_probe(struct udevice *dev)
+ 	int ret;
+ 	fdt_addr_t base;
+ 	fdt_size_t size;
+-	u32 width, height, stride, rot;
++	u32 width, height, stride, rot = 0;
+ 	struct ofnode_phandle_args args;
+ 
+ 	ret = dev_read_phandle_with_args(dev, "memory-region", NULL, 0, 0, &args);

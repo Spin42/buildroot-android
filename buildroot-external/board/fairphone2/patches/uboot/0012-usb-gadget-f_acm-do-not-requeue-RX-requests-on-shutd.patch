@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Mon, 12 Oct 2026 17:18:45 +0200
+Subject: [PATCH 12/28] usb: gadget: f_acm: do not requeue RX requests on
+ shutdown
+
+When the endpoint is disabled the pending OUT request is given back with
+-ESHUTDOWN. Queueing it again had it given back again, so stopping the
+USB serial console never returned.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/usb/gadget/f_acm.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/drivers/usb/gadget/f_acm.c b/drivers/usb/gadget/f_acm.c
+index b6c11d97..b5667a8c 100644
+--- a/drivers/usb/gadget/f_acm.c
++++ b/drivers/usb/gadget/f_acm.c
+@@ -293,6 +293,13 @@ static void acm_rx_complete(struct usb_ep *ep, struct usb_request *req)
+ {
+ 	struct f_acm *f_acm = req->context;
+ 
++	/*
++	 * The endpoint is being disabled: queueing the request again would
++	 * have it given back again, forever.
++	 */
++	if (req->status == -ESHUTDOWN || req->status == -ECONNRESET)
++		return;
++
+ 	buf_push(&f_acm->rx_buf, req->buf, req->actual);
+ 
+ 	/* Queue RX req again */

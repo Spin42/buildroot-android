@@ -1,0 +1,293 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Wed, 14 Oct 2026 00:46:11 +0200
+Subject: [PATCH 15/28] mach-snapdragon: support 32-bit ARMv7 SoCs
+
+The Krait based SoCs (MSM8974, APQ8084, MSM8226, ...) run 32-bit code. LK
+boots their kernels as a zImage with an appended device tree, entered with
+the device tree address in r2.
+
+Give U-Boot a zImage header after the vector table, whose end address field
+points at the appended device tree, keep r2 for board_fdt_blob_setup() and
+keep the arm64 only parts (PSCI, Linux Image header, page table) out of
+32-bit builds.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ arch/arm/Kconfig                              | 10 +++++-----
+ arch/arm/mach-snapdragon/Kconfig              | 10 ++++++++++
+ arch/arm/mach-snapdragon/Makefile             |  3 ++-
+ arch/arm/mach-snapdragon/armv7.S              | 19 +++++++++++++++++++
+ arch/arm/mach-snapdragon/board.c              | 11 +++++++++--
+ arch/arm/mach-snapdragon/dram.c               |  2 +-
+ arch/arm/mach-snapdragon/include/mach/boot0.h | 13 ++++++++++++-
+ drivers/clk/qcom/clock-qcom.c                 |  4 ++--
+ drivers/soc/qcom/Kconfig                      |  2 +-
+ drivers/soc/qcom/smem.c                       | 10 +++++++---
+ drivers/spmi/spmi-msm.c                       |  6 +++---
+ 11 files changed, 71 insertions(+), 19 deletions(-)
+ create mode 100644 arch/arm/mach-snapdragon/armv7.S
+
+diff --git a/arch/arm/Kconfig b/arch/arm/Kconfig
+index 3e9f3b51..e7da5d01 100644
+--- a/arch/arm/Kconfig
++++ b/arch/arm/Kconfig
+@@ -1134,7 +1134,7 @@ config ARCH_RENESAS
+ 
+ config ARCH_SNAPDRAGON
+ 	bool "Qualcomm Snapdragon SoCs"
+-	select ARM64
++	select ARM64 if !SNAPDRAGON_ARMV7
+ 	select DM
+ 	select DM_GPIO
+ 	select DM_SERIAL
+@@ -1147,12 +1147,12 @@ config ARCH_SNAPDRAGON
+ 	select SPMI
+ 	select BOARD_LATE_INIT
+ 	select OF_BOARD
+-	select SAVE_PREV_BL_FDT_ADDR if !ENABLE_ARM_SOC_BOOT0_HOOK
+-	select LINUX_KERNEL_IMAGE_HEADER if !ENABLE_ARM_SOC_BOOT0_HOOK
++	select SAVE_PREV_BL_FDT_ADDR if ARM64 && !ENABLE_ARM_SOC_BOOT0_HOOK
++	select LINUX_KERNEL_IMAGE_HEADER if ARM64 && !ENABLE_ARM_SOC_BOOT0_HOOK
+ 	select SYSRESET
+-	select SYSRESET_PSCI if !SPL
++	select SYSRESET_PSCI if ARM64 && !SPL
+ 	select ANDROID_BOOT_IMAGE_IGNORE_BLOB_ADDR
+-	select MMU_PGPROT
++	select MMU_PGPROT if ARM64
+ 	select SUPPORT_SPL
+ 
+ 	select OF_LIVE
+diff --git a/arch/arm/mach-snapdragon/Kconfig b/arch/arm/mach-snapdragon/Kconfig
+index 11a0ecab..91c56681 100644
+--- a/arch/arm/mach-snapdragon/Kconfig
++++ b/arch/arm/mach-snapdragon/Kconfig
+@@ -11,6 +11,16 @@ config SYS_VENDOR
+ 	  Based on this option board/<CONFIG_SYS_VENDOR>/<CONFIG_SYS_BOARD>
+ 	  will be used as the custom board directory.
+ 
++config SNAPDRAGON_ARMV7
++	bool "32-bit ARMv7 Snapdragon SoC"
++	select CPU_V7A
++	select SYS_ARCH_TIMER
++	select ENABLE_ARM_SOC_BOOT0_HOOK
++	select SYSRESET_QCOM_PSHOLD
++	help
++	  Build U-Boot for the 32-bit Krait based SoCs (e.g. MSM8974), chainloaded
++	  by the Android bootloader (LK) as a zImage with an appended device tree.
++
+ config SYS_MALLOC_F_LEN
+ 	default 0x2000
+ 
+diff --git a/arch/arm/mach-snapdragon/Makefile b/arch/arm/mach-snapdragon/Makefile
+index 2360b7c6..d7572a80 100644
+--- a/arch/arm/mach-snapdragon/Makefile
++++ b/arch/arm/mach-snapdragon/Makefile
+@@ -3,7 +3,8 @@
+ # (C) Copyright 2015 Mateusz Kulikowski <mateusz.kulikowski@gmail.com>
+ 
+ obj-y += dram.o
+-obj-y += mem_map.o
++obj-$(CONFIG_ARM64) += mem_map.o
++obj-$(CONFIG_SNAPDRAGON_ARMV7) += armv7.o
+ 
+ ifeq ($(CONFIG_SPL_BUILD),y)
+ obj-y += board_spl.o
+diff --git a/arch/arm/mach-snapdragon/armv7.S b/arch/arm/mach-snapdragon/armv7.S
+new file mode 100644
+index 00000000..0cb2f9dd
+--- /dev/null
++++ b/arch/arm/mach-snapdragon/armv7.S
+@@ -0,0 +1,19 @@
++/* SPDX-License-Identifier: GPL-2.0+ */
++/*
++ * LK enters 32-bit kernels with r0 = 0, r1 = the machine type and r2 = the
++ * device tree. Keep r2 for board_fdt_blob_setup().
++ */
++
++#include <linux/linkage.h>
++
++ENTRY(save_boot_params)
++	ldr	r3, =qcom_prev_bl_fdt
++	str	r2, [r3]
++	b	save_boot_params_ret
++ENDPROC(save_boot_params)
++
++	.section .data
++	.align	2
++	.globl	qcom_prev_bl_fdt
++qcom_prev_bl_fdt:
++	.word	0
+diff --git a/arch/arm/mach-snapdragon/board.c b/arch/arm/mach-snapdragon/board.c
+index a94c70a1..138b3822 100644
+--- a/arch/arm/mach-snapdragon/board.c
++++ b/arch/arm/mach-snapdragon/board.c
+@@ -32,6 +32,13 @@
+ enum qcom_boot_source qcom_boot_source __section(".data") = 0;
+ enum qcom_memmap_source qcom_memmap_source __section(".data") = 0;
+ 
++#if IS_ENABLED(CONFIG_SNAPDRAGON_ARMV7)
++/* Saved from r2 by save_boot_params() */
++extern ulong qcom_prev_bl_fdt;
++#undef get_prev_bl_fdt_addr
++#define get_prev_bl_fdt_addr()	((phys_addr_t)qcom_prev_bl_fdt)
++#endif
++
+ #if CONFIG_IS_ENABLED(SYSRESET_PSCI)
+ static void show_psci_version(void)
+ {
+@@ -97,7 +104,7 @@ int board_fdt_blob_setup(void **fdtp)
+ 	 */
+ 	if (!internal_valid && !external_valid)
+ 		panic("Internal FDT is invalid and no external FDT was provided! (fdt=%#llx)\n",
+-		      (phys_addr_t)external_fdt);
++		      (u64)(uintptr_t)external_fdt);
+ 
+ 	/* Prefer memory information from internal DT if it's present */
+ 	if (internal_valid)
+@@ -123,7 +130,7 @@ int board_fdt_blob_setup(void **fdtp)
+ 		qcom_boot_source = QCOM_BOOT_SOURCE_XBL;
+ 
+ 	debug("ram_base = %#011lx, ram_size = %#011llx\n",
+-	      gd->ram_base, gd->ram_size);
++	      gd->ram_base, (u64)gd->ram_size);
+ 
+ 	if (internal_valid) {
+ 		debug("Using built in FDT\n");
+diff --git a/arch/arm/mach-snapdragon/dram.c b/arch/arm/mach-snapdragon/dram.c
+index 0b97b698..8228bc75 100644
+--- a/arch/arm/mach-snapdragon/dram.c
++++ b/arch/arm/mach-snapdragon/dram.c
+@@ -53,7 +53,7 @@ static void qcom_configure_dram(void)
+ 		gd->dram[i].start = prevbl_ddr_banks[i].start;
+ 		gd->dram[i].size = prevbl_ddr_banks[i].size;
+ 		debug("Bank[%d]: start = %#011llx, size = %#011llx\n",
+-		      i, gd->dram[i].start, gd->dram[i].size);
++		      i, (u64)gd->dram[i].start, (u64)gd->dram[i].size);
+ 		if (!prevbl_ddr_banks[i].size)
+ 			break;
+ 	}
+diff --git a/arch/arm/mach-snapdragon/include/mach/boot0.h b/arch/arm/mach-snapdragon/include/mach/boot0.h
+index b71aab37..877246cd 100644
+--- a/arch/arm/mach-snapdragon/include/mach/boot0.h
++++ b/arch/arm/mach-snapdragon/include/mach/boot0.h
+@@ -1,5 +1,16 @@
+ /* SPDX-License-Identifier: GPL-2.0+ */
+-#if defined(CONFIG_SPL_BUILD)
++#if defined(CONFIG_SNAPDRAGON_ARMV7)
++/*
++ * The vector table followed by a zImage header: LK looks for the appended
++ * device tree at the offset stored in the zImage end address field.
++ */
++_start:
++	ARM_VECTORS
++	.word	0
++	.word	0x016f2818				/* zImage magic */
++	.word	0					/* position independent */
++	.word	_image_binary_end - CONFIG_TEXT_BASE	/* image end */
++#elif defined(CONFIG_SPL_BUILD)
+ #if defined(CONFIG_BOOT0_SDM845_WORKAROUND)
+ #include "sdm845_spl_boot0.h"
+ #else
+diff --git a/drivers/clk/qcom/clock-qcom.c b/drivers/clk/qcom/clock-qcom.c
+index b6d92da9..dddb5580 100644
+--- a/drivers/clk/qcom/clock-qcom.c
++++ b/drivers/clk/qcom/clock-qcom.c
+@@ -78,7 +78,7 @@ int qcom_gate_clk_en(const struct msm_clk_priv *priv, unsigned long id)
+ {
+ 	if (id >= priv->data->num_clks || priv->data->clks[id].reg == 0) {
+ 		log_err("gcc@%#08llx: unknown clock ID %lu!\n",
+-			priv->base, id);
++			(u64)priv->base, id);
+ 		return -ENOENT;
+ 	}
+ 
+@@ -116,7 +116,7 @@ void clk_bcr_update(phys_addr_t apps_cmd_rcgr)
+ 		udelay(1);
+ 	}
+ 	WARN(count == 50000, "WARNING: RCG @ %#llx [%#010x] stuck at off\n",
+-	     apps_cmd_rcgr, readl(apps_cmd_rcgr));
++	     (u64)apps_cmd_rcgr, readl(apps_cmd_rcgr));
+ }
+ 
+ #define CFG_SRC_DIV_MASK	0b11111
+diff --git a/drivers/soc/qcom/Kconfig b/drivers/soc/qcom/Kconfig
+index cdd9e30f..a28c613c 100644
+--- a/drivers/soc/qcom/Kconfig
++++ b/drivers/soc/qcom/Kconfig
+@@ -4,7 +4,7 @@
+ #
+ menuconfig SOC_QCOM
+ 	bool "Qualcomm SOC drivers support"
+-	depends on ARM64
++	depends on ARM64 || ARCH_SNAPDRAGON
+ 	help
+ 	  Say Y here if you want to enable Qualcomm SOC drivers support.
+ 
+diff --git a/drivers/soc/qcom/smem.c b/drivers/soc/qcom/smem.c
+index e20523e2..e13583ed 100644
+--- a/drivers/soc/qcom/smem.c
++++ b/drivers/soc/qcom/smem.c
+@@ -817,7 +817,7 @@ qcom_smem_partition_header(struct qcom_smem *smem,
+ 	u32 size;
+ 
+ 	phys_addr = smem->regions[0].aux_base + le32_to_cpu(entry->offset);
+-	header = (void *)phys_addr; // devm_ioremap_wc()
++	header = (void *)(uintptr_t)phys_addr; // devm_ioremap_wc()
+ 
+ 	if (!header)
+ 		return NULL;
+@@ -968,13 +968,15 @@ static int qcom_smem_map_toc(struct qcom_smem *smem, struct smem_region *region)
+ 	region->virt_base = (void *)region->aux_base;
+ 	ptable_start = region->aux_base + region->size - SZ_4K;
+ 	/* map last 4k for toc */
+-	smem->ptable = (struct smem_ptable *)(u64)ptable_start;
++	smem->ptable = (struct smem_ptable *)(uintptr_t)ptable_start;
+ 
+ 	if (!region->virt_base || !smem->ptable)
+ 		return -ENOMEM;
+ 
++#if IS_ENABLED(CONFIG_ARM64)
+ 	if (dcache_status())
+ 		mmu_map_region(region->aux_base, region->size, false);
++#endif
+ 
+ 	return 0;
+ }
+@@ -986,7 +988,7 @@ static int qcom_smem_map_global(struct qcom_smem *smem, u32 size)
+ 	phys_addr = smem->regions[0].aux_base;
+ 
+ 	smem->regions[0].size = size;
+-	smem->regions[0].virt_base = (void *)phys_addr;
++	smem->regions[0].virt_base = (void *)(uintptr_t)phys_addr;
+ 
+ 	if (!smem->regions[0].virt_base)
+ 		return -ENOMEM;
+@@ -1029,8 +1031,10 @@ int qcom_smem_init(void)
+ 	int ret;
+ 	int i;
+ 
++#if IS_ENABLED(CONFIG_ARM64)
+ 	if (dcache_status() && smem)
+ 		mmu_map_region(smem->regions[0].aux_base, smem->regions[0].size, false);
++#endif
+ 
+ 	if (smem)
+ 		return 0;
+diff --git a/drivers/spmi/spmi-msm.c b/drivers/spmi/spmi-msm.c
+index b89dd0b4..9c908013 100644
+--- a/drivers/spmi/spmi-msm.c
++++ b/drivers/spmi/spmi-msm.c
+@@ -338,9 +338,9 @@ static int msm_spmi_probe(struct udevice *dev)
+ 	    priv->spmi_obs == FDT_ADDR_T_NONE)
+ 		return -EINVAL;
+ 
+-	dev_dbg(dev, "priv->arb_chnl address (%#08llx)\n", priv->arb_chnl);
+-	dev_dbg(dev, "priv->spmi_chnls address (%#08llx)\n", priv->spmi_chnls);
+-	dev_dbg(dev, "priv->spmi_obs address (%#08llx)\n", priv->spmi_obs);
++	dev_dbg(dev, "priv->arb_chnl address (%#08llx)\n", (u64)priv->arb_chnl);
++	dev_dbg(dev, "priv->spmi_chnls address (%#08llx)\n", (u64)priv->spmi_chnls);
++	dev_dbg(dev, "priv->spmi_obs address (%#08llx)\n", (u64)priv->spmi_obs);
+ 	/* Scan peripherals connected to each SPMI channel */
+ 	for (i = 0; i < priv->max_channels; i++) {
+ 		uint32_t periph = readl(priv->arb_chnl + ARB_CHANNEL_OFFSET(i));

@@ -1,0 +1,24 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Wed, 14 Oct 2026 00:46:12 +0200
+Subject: [PATCH 23/28] button: gpio: skip disabled keys
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/button/button-gpio.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/drivers/button/button-gpio.c b/drivers/button/button-gpio.c
+index 31b85c81..3eccf4dd 100644
+--- a/drivers/button/button-gpio.c
++++ b/drivers/button/button-gpio.c
+@@ -90,6 +90,9 @@ static int button_gpio_bind(struct udevice *parent)
+ 		struct button_uc_plat *uc_plat;
+ 		const char *label;
+ 
++		if (!ofnode_is_enabled(node))
++			continue;
++
+ 		label = ofnode_read_string(node, "label");
+ 		if (!label) {
+ 			debug("%s: node %s has no label\n", __func__,

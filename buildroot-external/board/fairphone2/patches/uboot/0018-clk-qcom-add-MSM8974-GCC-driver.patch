@@ -1,0 +1,205 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Wed, 14 Oct 2026 00:46:11 +0200
+Subject: [PATCH 18/28] clk: qcom: add MSM8974 GCC driver
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/clk/qcom/Kconfig         |   9 ++
+ drivers/clk/qcom/Makefile        |   1 +
+ drivers/clk/qcom/clock-msm8974.c | 154 +++++++++++++++++++++++++++++++
+ 3 files changed, 164 insertions(+)
+ create mode 100644 drivers/clk/qcom/clock-msm8974.c
+
+diff --git a/drivers/clk/qcom/Kconfig b/drivers/clk/qcom/Kconfig
+index 5fd497cf..d4d6f576 100644
+--- a/drivers/clk/qcom/Kconfig
++++ b/drivers/clk/qcom/Kconfig
+@@ -15,6 +15,15 @@ config CLK_QCOM_APQ8016
+ 	  on the Snapdragon APQ8016 SoC. This driver supports the clocks
+ 	  and resets exposed by the GCC hardware block.
+ 
++config CLK_QCOM_MSM8974
++	bool "Qualcomm MSM8974 GCC"
++	select CLK_QCOM
++	help
++	  Say Y here to enable support for the Global Clock Controller
++	  on the Snapdragon MSM8974 SoC. Only the SDCC, BLSP1 UART and USB HS
++	  clocks are handled, the rest are left as the previous bootloader
++	  configured them.
++
+ config CLK_QCOM_APQ8096
+ 	bool "Qualcomm APQ8096 GCC"
+ 	select CLK_QCOM
+diff --git a/drivers/clk/qcom/Makefile b/drivers/clk/qcom/Makefile
+index b061d98e..727c4077 100644
+--- a/drivers/clk/qcom/Makefile
++++ b/drivers/clk/qcom/Makefile
+@@ -5,6 +5,7 @@
+ obj-y += clock-qcom.o
+ obj-$(CONFIG_CLK_QCOM_SDM845) += clock-sdm845.o
+ obj-$(CONFIG_CLK_QCOM_APQ8016) += clock-apq8016.o
++obj-$(CONFIG_CLK_QCOM_MSM8974) += clock-msm8974.o
+ obj-$(CONFIG_CLK_QCOM_APQ8096) += clock-apq8096.o
+ obj-$(CONFIG_CLK_QCOM_IPQ4019) += clock-ipq4019.o
+ obj-$(CONFIG_CLK_QCOM_IPQ5424) += clock-ipq5424.o
+diff --git a/drivers/clk/qcom/clock-msm8974.c b/drivers/clk/qcom/clock-msm8974.c
+new file mode 100644
+index 00000000..774bd968
+--- /dev/null
++++ b/drivers/clk/qcom/clock-msm8974.c
+@@ -0,0 +1,154 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * Clock driver for the Qualcomm MSM8974 Global Clock Controller
++ *
++ * Covers what U-Boot needs: SDCC, the BLSP1 UART and USB HS. Register
++ * offsets are taken from the Linux gcc-msm8974 driver.
++ */
++
++#include <clk-uclass.h>
++#include <dm.h>
++#include <linux/bitops.h>
++#include <linux/delay.h>
++#include <dt-bindings/clock/qcom,gcc-msm8974.h>
++#include <dt-bindings/reset/qcom,gcc-msm8974.h>
++
++#include "clock-qcom.h"
++
++#define GPLL0_STATUS			0x001c
++#define GPLL0_STATUS_ACTIVE		BIT(17)
++#define APCS_GPLL_ENA_VOTE		0x1480
++#define APCS_CLOCK_BRANCH_ENA_VOTE	0x1484
++
++#define USB_HS_SYSTEM_CMD_RCGR		0x0490
++#define BLSP1_UART2_APPS_CMD_RCGR	0x070c
++#define SDCC1_APPS_CMD_RCGR		0x04d0
++#define SDCC2_APPS_CMD_RCGR		0x0510
++
++static struct pll_vote_clk gpll0_vote_clk = {
++	.status = GPLL0_STATUS,
++	.status_bit = GPLL0_STATUS_ACTIVE,
++	.ena_vote = APCS_GPLL_ENA_VOTE,
++	.vote_bit = BIT(0),
++};
++
++static const struct gate_clk msm8974_clks[] = {
++	GATE_CLK_POLLED(GCC_BLSP1_AHB_CLK,	APCS_CLOCK_BRANCH_ENA_VOTE, BIT(17), 0x05c4),
++	GATE_CLK_POLLED(GCC_BLSP1_UART2_APPS_CLK, 0x0704, BIT(0), 0x0704),
++	GATE_CLK_POLLED(GCC_SDCC1_AHB_CLK,	0x04c8, BIT(0), 0x04c8),
++	GATE_CLK_POLLED(GCC_SDCC1_APPS_CLK,	0x04c4, BIT(0), 0x04c4),
++	GATE_CLK_POLLED(GCC_SDCC2_AHB_CLK,	0x0508, BIT(0), 0x0508),
++	GATE_CLK_POLLED(GCC_SDCC2_APPS_CLK,	0x0504, BIT(0), 0x0504),
++	GATE_CLK_POLLED(GCC_USB_HS_AHB_CLK,	0x0488, BIT(0), 0x0488),
++	GATE_CLK_POLLED(GCC_USB_HS_SYSTEM_CLK,	0x0484, BIT(0), 0x0484),
++	GATE_CLK_POLLED(GCC_USB2A_PHY_SLEEP_CLK, 0x04ac, BIT(0), 0x04ac),
++	GATE_CLK_POLLED(GCC_SDCC1_CDCCAL_FF_CLK, 0x04e8, BIT(0), 0x04e8),
++	GATE_CLK_POLLED(GCC_SDCC1_CDCCAL_SLEEP_CLK, 0x04e4, BIT(0), 0x04e4),
++};
++
++static const struct qcom_reset_map msm8974_gcc_resets[] = {
++	[GCC_SDCC1_BCR] = { 0x04c0 },
++	[GCC_SDCC2_BCR] = { 0x0500 },
++	[GCC_USB_HS_BCR] = { 0x0480 },
++	[GCC_USB2A_PHY_BCR] = { 0x04a8 },
++};
++
++/* GPLL0 runs at 600 MHz. The RCG divider field holds 2 * div - 1. */
++static ulong msm8974_set_sdcc_rate(struct msm_clk_priv *priv, u32 cmd_rcgr, ulong rate)
++{
++	if (rate <= 400000) {
++		/* XO / 12 * 1/4 */
++		clk_rcg_set_rate_mnd(priv->base, cmd_rcgr, 23, 1, 4, CFG_CLK_SRC_CXO, 8);
++		return 400000;
++	}
++
++	clk_enable_gpll0(priv->base, &gpll0_vote_clk);
++
++	if (rate >= 200000000) {
++		clk_rcg_set_rate_mnd(priv->base, cmd_rcgr, 5, 0, 0, CFG_CLK_SRC_GPLL0, 8);
++		return 200000000;
++	}
++	if (rate >= 100000000) {
++		clk_rcg_set_rate_mnd(priv->base, cmd_rcgr, 11, 0, 0, CFG_CLK_SRC_GPLL0, 8);
++		return 100000000;
++	}
++	if (rate >= 50000000) {
++		clk_rcg_set_rate_mnd(priv->base, cmd_rcgr, 23, 0, 0, CFG_CLK_SRC_GPLL0, 8);
++		return 50000000;
++	}
++	/* GPLL0 / 12 * 1/2 */
++	clk_rcg_set_rate_mnd(priv->base, cmd_rcgr, 23, 1, 2, CFG_CLK_SRC_GPLL0, 8);
++	return 25000000;
++}
++
++static ulong msm8974_clk_set_rate(struct clk *clk, ulong rate)
++{
++	struct msm_clk_priv *priv = dev_get_priv(clk->dev);
++
++	switch (clk->id) {
++	case GCC_SDCC1_APPS_CLK:
++		return msm8974_set_sdcc_rate(priv, SDCC1_APPS_CMD_RCGR, rate);
++	case GCC_SDCC2_APPS_CLK:
++		return msm8974_set_sdcc_rate(priv, SDCC2_APPS_CMD_RCGR, rate);
++	case GCC_BLSP1_UART2_APPS_CLK:
++		/* 7.3728 MHz: GPLL0 * 192 / 15625 */
++		clk_enable_gpll0(priv->base, &gpll0_vote_clk);
++		clk_rcg_set_rate_mnd(priv->base, BLSP1_UART2_APPS_CMD_RCGR, 1, 192, 15625,
++				     CFG_CLK_SRC_GPLL0, 16);
++		return 7372800;
++	case GCC_USB_HS_SYSTEM_CLK:
++		/* 75 MHz: GPLL0 / 8 */
++		clk_enable_gpll0(priv->base, &gpll0_vote_clk);
++		clk_rcg_set_rate_mnd(priv->base, USB_HS_SYSTEM_CMD_RCGR, 15, 0, 0,
++				     CFG_CLK_SRC_GPLL0, 0);
++		return 75000000;
++	default:
++		return 0;
++	}
++}
++
++static int msm8974_clk_enable(struct clk *clk)
++{
++	struct msm_clk_priv *priv = dev_get_priv(clk->dev);
++
++	if (clk->id >= ARRAY_SIZE(msm8974_clks) || !msm8974_clks[clk->id].reg) {
++		/* Left as the previous bootloader configured it */
++		debug("%s: unhandled clock %lu\n", __func__, clk->id);
++		return 0;
++	}
++
++	return qcom_gate_clk_en(priv, clk->id);
++}
++
++static struct msm_clk_data msm8974_gcc_data = {
++	.resets = msm8974_gcc_resets,
++	.num_resets = ARRAY_SIZE(msm8974_gcc_resets),
++	.clks = msm8974_clks,
++	.num_clks = ARRAY_SIZE(msm8974_clks),
++	.enable = msm8974_clk_enable,
++	.set_rate = msm8974_clk_set_rate,
++};
++
++static const struct udevice_id gcc_msm8974_of_match[] = {
++	{
++		.compatible = "qcom,gcc-msm8974",
++		.data = (ulong)&msm8974_gcc_data,
++	},
++	{
++		.compatible = "qcom,gcc-msm8974pro",
++		.data = (ulong)&msm8974_gcc_data,
++	},
++	{
++		.compatible = "qcom,gcc-msm8974pro-ac",
++		.data = (ulong)&msm8974_gcc_data,
++	},
++	{ }
++};
++
++U_BOOT_DRIVER(gcc_msm8974) = {
++	.name		= "gcc_msm8974",
++	.id		= UCLASS_NOP,
++	.of_match	= gcc_msm8974_of_match,
++	.bind		= qcom_cc_bind,
++	.flags		= DM_FLAG_PRE_RELOC,
++};

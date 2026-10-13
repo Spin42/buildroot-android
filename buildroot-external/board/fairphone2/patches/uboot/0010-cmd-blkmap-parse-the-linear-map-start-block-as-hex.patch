@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Mon, 12 Oct 2026 14:51:20 +0200
+Subject: [PATCH 10/28] cmd: blkmap: parse the linear map start block as hex
+
+Like the other block numbers of the command and as the documented
+example expects. The start block from 'part start' is hex.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ cmd/blkmap.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/cmd/blkmap.c b/cmd/blkmap.c
+index 65edec89..d5e5002d 100644
+--- a/cmd/blkmap.c
++++ b/cmd/blkmap.c
+@@ -36,7 +36,7 @@ static int do_blkmap_map_linear(struct map_ctx *ctx, int argc,
+ 		return CMD_RET_USAGE;
+ 
+ 	ldevnum = dectoul(argv[2], NULL);
+-	lblknr = dectoul(argv[3], NULL);
++	lblknr = hextoul(argv[3], NULL);
+ 
+ 	lbd = blk_get_devnum_by_uclass_idname(argv[1], ldevnum);
+ 	if (!lbd) {

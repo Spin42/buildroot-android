@@ -1,0 +1,284 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Mon, 12 Oct 2026 14:51:06 +0200
+Subject: [PATCH 05/28] clk: qcom: add MSM8953 GCC driver
+
+Covers the UART, SDCC, USB 3.0 and PRNG clocks, the BCR resets and the
+USB 3.0 GDSC, which is what the MSM8953, SDM450 and SDM632 boards need.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ configs/qcom_defconfig           |   1 +
+ drivers/clk/qcom/Kconfig         |   9 ++
+ drivers/clk/qcom/Makefile        |   1 +
+ drivers/clk/qcom/clock-msm8953.c | 217 +++++++++++++++++++++++++++++++
+ 4 files changed, 228 insertions(+)
+ create mode 100644 drivers/clk/qcom/clock-msm8953.c
+
+diff --git a/configs/qcom_defconfig b/configs/qcom_defconfig
+index 7d4a2b58..e1ef959b 100644
+--- a/configs/qcom_defconfig
++++ b/configs/qcom_defconfig
+@@ -57,6 +57,7 @@ CONFIG_CLK_STUB=y
+ CONFIG_CLK_QCOM_APQ8016=y
+ CONFIG_CLK_QCOM_APQ8096=y
+ CONFIG_CLK_QCOM_MILOS=y
++CONFIG_CLK_QCOM_MSM8953=y
+ CONFIG_CLK_QCOM_QCM2290=y
+ CONFIG_CLK_QCOM_QCS404=y
+ CONFIG_CLK_QCOM_QCS615=y
+diff --git a/drivers/clk/qcom/Kconfig b/drivers/clk/qcom/Kconfig
+index 95b65083..5fd497cf 100644
+--- a/drivers/clk/qcom/Kconfig
++++ b/drivers/clk/qcom/Kconfig
+@@ -55,6 +55,15 @@ config CLK_QCOM_MILOS
+ 	  on the Snapdragon Milos SoC. This driver supports the clocks
+ 	  and resets exposed by the GCC hardware block.
+ 
++config CLK_QCOM_MSM8953
++	bool "Qualcomm MSM8953 GCC"
++	select CLK_QCOM
++	help
++	  Say Y here to enable support for the Global Clock Controller
++	  on the Snapdragon MSM8953, SDM450 and SDM632 SoCs. This driver
++	  supports the clocks, resets and power domains exposed by the GCC
++	  hardware block.
++
+ config CLK_QCOM_QCM2290
+ 	bool "Qualcomm QCM2290 GCC"
+ 	select CLK_QCOM
+diff --git a/drivers/clk/qcom/Makefile b/drivers/clk/qcom/Makefile
+index 1adca029..b061d98e 100644
+--- a/drivers/clk/qcom/Makefile
++++ b/drivers/clk/qcom/Makefile
+@@ -10,6 +10,7 @@ obj-$(CONFIG_CLK_QCOM_IPQ4019) += clock-ipq4019.o
+ obj-$(CONFIG_CLK_QCOM_IPQ5424) += clock-ipq5424.o
+ obj-$(CONFIG_CLK_QCOM_IPQ9574) += clock-ipq9574.o
+ obj-$(CONFIG_CLK_QCOM_MILOS) += clock-milos.o
++obj-$(CONFIG_CLK_QCOM_MSM8953) += clock-msm8953.o
+ obj-$(CONFIG_CLK_QCOM_QCM2290) += clock-qcm2290.o
+ obj-$(CONFIG_CLK_QCOM_QCS404) += clock-qcs404.o
+ obj-$(CONFIG_CLK_QCOM_QCS8300) += clock-qcs8300.o
+diff --git a/drivers/clk/qcom/clock-msm8953.c b/drivers/clk/qcom/clock-msm8953.c
+new file mode 100644
+index 00000000..b69d8858
+--- /dev/null
++++ b/drivers/clk/qcom/clock-msm8953.c
+@@ -0,0 +1,217 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * Clock driver for the Qualcomm MSM8953 family (MSM8953, SDM450, SDM632)
++ *
++ * Register offsets are taken from the Linux gcc-msm8953 driver.
++ */
++
++#include <clk-uclass.h>
++#include <dm.h>
++#include <linux/bitops.h>
++#include <dt-bindings/clock/qcom,gcc-msm8953.h>
++
++#include "clock-qcom.h"
++
++/* RCG source selection values */
++#define SRC_XO				(0 << 8)
++#define SRC_GPLL0			(1 << 8)
++#define SRC_GPLL0_DIV2			(4 << 8)
++
++#define APCS_GPLL_ENA_VOTE		0x45000
++#define APCS_CLOCK_BRANCH_ENA_VOTE	0x45004
++
++#define BLSP1_UART1_APPS_CMD_RCGR	0x02044
++#define BLSP1_UART2_APPS_CMD_RCGR	0x03034
++#define BLSP2_UART1_APPS_CMD_RCGR	0x0c044
++#define BLSP2_UART2_APPS_CMD_RCGR	0x0d034
++#define SDCC1_APPS_CMD_RCGR		0x42004
++#define SDCC2_APPS_CMD_RCGR		0x43004
++#define USB30_MASTER_CMD_RCGR		0x3f00c
++#define USB30_MOCK_UTMI_CMD_RCGR	0x3f020
++
++static const struct pll_vote_clk gpll0_clk = {
++	.status = 0x21000,
++	.status_bit = BIT(31),
++	.ena_vote = APCS_GPLL_ENA_VOTE,
++	.vote_bit = BIT(0),
++};
++
++static const struct freq_tbl ftbl_blsp_uart_apps_clk_src[] = {
++	F(3686400, SRC_GPLL0_DIV2, 1, 144, 15625),
++	F(7372800, SRC_GPLL0_DIV2, 1, 288, 15625),
++	F(14745600, SRC_GPLL0_DIV2, 1, 576, 15625),
++	F(19200000, SRC_XO, 1, 0, 0),
++	F(48000000, SRC_GPLL0, 1, 3, 50),
++	{ }
++};
++
++/* GPLL4 based rates are left out, only GPLL0 is guaranteed to be running */
++static const struct freq_tbl ftbl_sdcc1_apps_clk_src[] = {
++	F(144000, SRC_XO, 16, 3, 25),
++	F(400000, SRC_XO, 12, 1, 4),
++	F(20000000, SRC_GPLL0_DIV2, 5, 1, 4),
++	F(25000000, SRC_GPLL0_DIV2, 16, 0, 0),
++	F(50000000, SRC_GPLL0, 16, 0, 0),
++	F(100000000, SRC_GPLL0, 8, 0, 0),
++	F(177770000, SRC_GPLL0, 4.5, 0, 0),
++	{ }
++};
++
++static const struct freq_tbl ftbl_sdcc2_apps_clk_src[] = {
++	F(144000, SRC_XO, 16, 3, 25),
++	F(400000, SRC_XO, 12, 1, 4),
++	F(20000000, SRC_GPLL0_DIV2, 5, 1, 4),
++	F(25000000, SRC_GPLL0_DIV2, 16, 0, 0),
++	F(50000000, SRC_GPLL0, 16, 0, 0),
++	F(100000000, SRC_GPLL0, 8, 0, 0),
++	F(177770000, SRC_GPLL0, 4.5, 0, 0),
++	F(200000000, SRC_GPLL0, 4, 0, 0),
++	{ }
++};
++
++static const struct freq_tbl ftbl_usb30_master_clk_src[] = {
++	F(80000000, SRC_GPLL0_DIV2, 5, 0, 0),
++	F(100000000, SRC_GPLL0, 8, 0, 0),
++	F(133330000, SRC_GPLL0, 6, 0, 0),
++	{ }
++};
++
++static const struct gate_clk msm8953_clks[] = {
++	GATE_CLK_POLLED(GCC_APSS_AHB_CLK, APCS_CLOCK_BRANCH_ENA_VOTE, BIT(14), 0x4601c),
++	GATE_CLK_POLLED(GCC_BLSP1_AHB_CLK, APCS_CLOCK_BRANCH_ENA_VOTE, BIT(10), 0x01008),
++	GATE_CLK_POLLED(GCC_BLSP2_AHB_CLK, APCS_CLOCK_BRANCH_ENA_VOTE, BIT(20), 0x0b008),
++	GATE_CLK_POLLED(GCC_BLSP1_UART1_APPS_CLK, 0x0203c, BIT(0), 0x0203c),
++	GATE_CLK_POLLED(GCC_BLSP1_UART2_APPS_CLK, 0x0302c, BIT(0), 0x0302c),
++	GATE_CLK_POLLED(GCC_BLSP2_UART1_APPS_CLK, 0x0c03c, BIT(0), 0x0c03c),
++	GATE_CLK_POLLED(GCC_BLSP2_UART2_APPS_CLK, 0x0d02c, BIT(0), 0x0d02c),
++	GATE_CLK_POLLED(GCC_SDCC1_AHB_CLK, 0x4201c, BIT(0), 0x4201c),
++	GATE_CLK_POLLED(GCC_SDCC1_APPS_CLK, 0x42018, BIT(0), 0x42018),
++	GATE_CLK_POLLED(GCC_SDCC1_ICE_CORE_CLK, 0x5d014, BIT(0), 0x5d014),
++	GATE_CLK_POLLED(GCC_SDCC2_AHB_CLK, 0x4301c, BIT(0), 0x4301c),
++	GATE_CLK_POLLED(GCC_SDCC2_APPS_CLK, 0x43018, BIT(0), 0x43018),
++	GATE_CLK_POLLED(GCC_PCNOC_USB3_AXI_CLK, 0x3f038, BIT(0), 0x3f038),
++	GATE_CLK_POLLED(GCC_PRNG_AHB_CLK, APCS_CLOCK_BRANCH_ENA_VOTE, BIT(8), 0x13004),
++	GATE_CLK_POLLED(GCC_USB30_MASTER_CLK, 0x3f000, BIT(0), 0x3f000),
++	GATE_CLK_POLLED(GCC_USB30_SLEEP_CLK, 0x3f004, BIT(0), 0x3f004),
++	GATE_CLK_POLLED(GCC_USB30_MOCK_UTMI_CLK, 0x3f008, BIT(0), 0x3f008),
++	GATE_CLK_POLLED(GCC_USB3_AUX_CLK, 0x3f044, BIT(0), 0x3f044),
++	GATE_CLK(GCC_USB3_PIPE_CLK, 0x3f040, BIT(0)),
++	GATE_CLK_POLLED(GCC_USB_PHY_CFG_AHB_CLK, 0x3f080, BIT(0), 0x3f080),
++	GATE_CLK(GCC_USB_SS_REF_CLK, 0x3f07c, BIT(0)),
++	GATE_CLK(GCC_QUSB_REF_CLK, 0x41030, BIT(0)),
++};
++
++static ulong msm8953_set_rate_tbl(struct msm_clk_priv *priv, u32 cmd_rcgr,
++				  const struct freq_tbl *tbl, u8 mnd_width,
++				  ulong rate)
++{
++	const struct freq_tbl *freq = qcom_find_freq(tbl, rate);
++
++	clk_enable_gpll0(priv->base, &gpll0_clk);
++	clk_rcg_set_rate_mnd(priv->base, cmd_rcgr, freq->pre_div, freq->m,
++			     freq->n, freq->src, mnd_width);
++
++	return freq->freq;
++}
++
++static ulong msm8953_set_rate(struct clk *clk, ulong rate)
++{
++	struct msm_clk_priv *priv = dev_get_priv(clk->dev);
++
++	switch (clk->id) {
++	case GCC_BLSP1_UART1_APPS_CLK:
++		return msm8953_set_rate_tbl(priv, BLSP1_UART1_APPS_CMD_RCGR,
++					    ftbl_blsp_uart_apps_clk_src, 16, rate);
++	case GCC_BLSP1_UART2_APPS_CLK:
++		return msm8953_set_rate_tbl(priv, BLSP1_UART2_APPS_CMD_RCGR,
++					    ftbl_blsp_uart_apps_clk_src, 16, rate);
++	case GCC_BLSP2_UART1_APPS_CLK:
++		return msm8953_set_rate_tbl(priv, BLSP2_UART1_APPS_CMD_RCGR,
++					    ftbl_blsp_uart_apps_clk_src, 16, rate);
++	case GCC_BLSP2_UART2_APPS_CLK:
++		return msm8953_set_rate_tbl(priv, BLSP2_UART2_APPS_CMD_RCGR,
++					    ftbl_blsp_uart_apps_clk_src, 16, rate);
++	case GCC_SDCC1_APPS_CLK:
++		return msm8953_set_rate_tbl(priv, SDCC1_APPS_CMD_RCGR,
++					    ftbl_sdcc1_apps_clk_src, 8, rate);
++	case GCC_SDCC2_APPS_CLK:
++		return msm8953_set_rate_tbl(priv, SDCC2_APPS_CMD_RCGR,
++					    ftbl_sdcc2_apps_clk_src, 8, rate);
++	case GCC_USB30_MASTER_CLK:
++		return msm8953_set_rate_tbl(priv, USB30_MASTER_CMD_RCGR,
++					    ftbl_usb30_master_clk_src, 0, rate);
++	case GCC_USB30_MOCK_UTMI_CLK:
++		/* Only XO is used, the GPLL6 based 60 MHz rate is not needed */
++		clk_rcg_set_rate_mnd(priv->base, USB30_MOCK_UTMI_CMD_RCGR,
++				     0, 0, 0, SRC_XO, 8);
++		return 19200000;
++	default:
++		return 0;
++	}
++}
++
++static int msm8953_enable(struct clk *clk)
++{
++	struct msm_clk_priv *priv = dev_get_priv(clk->dev);
++
++	switch (clk->id) {
++	case GCC_USB30_MASTER_CLK:
++		qcom_gate_clk_en(priv, GCC_USB3_AUX_CLK);
++		break;
++	case GCC_BLSP1_UART1_APPS_CLK:
++	case GCC_BLSP1_UART2_APPS_CLK:
++		qcom_gate_clk_en(priv, GCC_BLSP1_AHB_CLK);
++		break;
++	case GCC_BLSP2_UART1_APPS_CLK:
++	case GCC_BLSP2_UART2_APPS_CLK:
++		qcom_gate_clk_en(priv, GCC_BLSP2_AHB_CLK);
++		break;
++	}
++
++	return qcom_gate_clk_en(priv, clk->id);
++}
++
++static const struct qcom_reset_map msm8953_gcc_resets[] = {
++	[GCC_CAMSS_MICRO_BCR]	= { 0x56008 },
++	[GCC_MSS_BCR]		= { 0x71000 },
++	[GCC_QUSB2_PHY_BCR]	= { 0x4103c },
++	[GCC_USB3PHY_PHY_BCR]	= { 0x3f03c },
++	[GCC_USB3_PHY_BCR]	= { 0x3f034 },
++	[GCC_USB_30_BCR]	= { 0x3f070 },
++	[GCC_MDSS_BCR]		= { 0x4d074 },
++	[GCC_CRYPTO_BCR]	= { 0x16000 },
++	[GCC_SDCC1_BCR]		= { 0x42000 },
++	[GCC_SDCC2_BCR]		= { 0x43000 },
++};
++
++static const struct qcom_power_map msm8953_gdscs[] = {
++	[USB30_GDSC] = { 0x3f078, .no_cfg_gdscr = true },
++};
++
++static struct msm_clk_data msm8953_gcc_data = {
++	.resets = msm8953_gcc_resets,
++	.num_resets = ARRAY_SIZE(msm8953_gcc_resets),
++	.clks = msm8953_clks,
++	.num_clks = ARRAY_SIZE(msm8953_clks),
++	.power_domains = msm8953_gdscs,
++	.num_power_domains = ARRAY_SIZE(msm8953_gdscs),
++
++	.enable = msm8953_enable,
++	.set_rate = msm8953_set_rate,
++};
++
++static const struct udevice_id gcc_msm8953_of_match[] = {
++	{
++		.compatible = "qcom,gcc-msm8953",
++		.data = (ulong)&msm8953_gcc_data,
++	},
++	{ }
++};
++
++U_BOOT_DRIVER(gcc_msm8953) = {
++	.name = "gcc_msm8953",
++	.id = UCLASS_NOP,
++	.of_match = gcc_msm8953_of_match,
++	.bind = qcom_cc_bind,
++	.flags = DM_FLAG_PRE_RELOC,
++};
