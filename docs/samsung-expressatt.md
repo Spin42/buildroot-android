@@ -30,6 +30,24 @@ reservations. The bootloader must use the proven Express RAM base 0x80200000.
 
 ## Startup and access
 
+### WiFi preparation
+
+The current WiFi scope is scanning nearby networks. The persistent defconfig includes iw,
+libnl and signed wireless-regdb data; it does not enable WPA authentication or store network
+credentials. Before a coordinated WiFi image build, extract this phone's firmware locally:
+
+```sh
+buildroot-external/board/samsung-expressatt/scripts/prepare_firmware.sh
+```
+
+This verifies modem/persist backup hashes and uses mcopy and read-only debugfs to populate
+the ignored `overlay/lib/firmware/`. The private calibration and any image containing it
+must remain local. The stock MDT uses legacy packed program headers and needs the audited
+kernel compatibility change; extraction alone does not establish WiFi operation. See the
+port's `dossier/wifi-firmware.md` for provenance, exact files and the loader constraint.
+
+### Base services
+
 BusyBox `/sbin/init` runs the standard inittab and rcS sequence. `S40kit` mounts configfs
 and pstore, starts the watchdog feeder, selects the verified BQ24157 USB host charging
 mode (500 mA input), then starts the existing kit ACM+NCM USB and SSH services. A missing

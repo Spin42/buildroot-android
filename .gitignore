@@ -19,3 +19,4 @@ log.txt
 
 # proprietary firmware collected by prepare_firmware.sh
 /buildroot-external/board/tb3_710f/firmware/
+/buildroot-external/board/samsung-expressatt/overlay/lib/firmware/
