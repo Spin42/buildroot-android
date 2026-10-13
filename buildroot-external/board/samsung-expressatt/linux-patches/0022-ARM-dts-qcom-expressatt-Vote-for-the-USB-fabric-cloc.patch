@@ -1,0 +1,32 @@
+From de8cf78dccf31961ffd6ccb7a981abcab6d45ed0 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Tue, 13 Oct 2026 23:07:40 +0200
+Subject: [PATCH 22/22] ARM: dts: qcom: expressatt: Vote for the USB fabric
+ clock
+
+Supply the Daytona fabric clock to the USB controller so its vote
+survives transient SCM activity. Retain both GCC functional clocks
+and order them according to the binding.
+
+Signed-off-by: Marc Lainez <marc.lainez@gmail.com>
+---
+ arch/arm/boot/dts/qcom/qcom-msm8960-samsung-expressatt.dts | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/arch/arm/boot/dts/qcom/qcom-msm8960-samsung-expressatt.dts b/arch/arm/boot/dts/qcom/qcom-msm8960-samsung-expressatt.dts
+index 002031f66..b9730244c 100644
+--- a/arch/arm/boot/dts/qcom/qcom-msm8960-samsung-expressatt.dts
++++ b/arch/arm/boot/dts/qcom/qcom-msm8960-samsung-expressatt.dts
+@@ -539,6 +539,9 @@ &usb_hs1_phy {
+ };
+ 
+ &usb1 {
++	clocks = <&gcc USB_HS1_H_CLK>, <&gcc USB_HS1_XCVR_CLK>,
++		 <&rpmcc RPM_DAYTONA_FABRIC_CLK>;
++	clock-names = "iface", "core", "bus";
+ 	dr_mode = "otg";
+ 	status = "okay";
+ };
+-- 
+2.43.0
+

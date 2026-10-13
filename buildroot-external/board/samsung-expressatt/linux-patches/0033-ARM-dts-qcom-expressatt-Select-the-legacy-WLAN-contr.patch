@@ -1,0 +1,37 @@
+From 09259161867933e874f80cd569729f4054e19326 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Wed, 14 Oct 2026 00:47:44 +0200
+Subject: [PATCH 33/33] ARM: dts: qcom: expressatt: Select the legacy WLAN
+ control service
+
+The original SYSTEM WCNSS firmware advertises WLAN_CTRL and no
+WCNSS_CTRL service. Select the legacy interface so wcn36xx can bind to
+that channel and upload its NV calibration through the WLAN HAL
+protocol.
+
+Signed-off-by: Marc Lainez <marc.lainez@gmail.com>
+---
+ arch/arm/boot/dts/qcom/qcom-msm8960-samsung-expressatt.dts | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/arch/arm/boot/dts/qcom/qcom-msm8960-samsung-expressatt.dts b/arch/arm/boot/dts/qcom/qcom-msm8960-samsung-expressatt.dts
+index b9730244c..7177591b8 100644
+--- a/arch/arm/boot/dts/qcom/qcom-msm8960-samsung-expressatt.dts
++++ b/arch/arm/boot/dts/qcom/qcom-msm8960-samsung-expressatt.dts
+@@ -148,6 +148,13 @@ iris {
+ 		vddpa-supply = <&pm8921_l10>;
+ 		vdddig-supply = <&pm8921_lvs2>;
+ 	};
++
++	smd-edge {
++		wcnss {
++			compatible = "qcom,riva-wlan-ctrl";
++			qcom,smd-channels = "WLAN_CTRL";
++		};
++	};
+ };
+ 
+ &sdcc1 {
+-- 
+2.43.0
+

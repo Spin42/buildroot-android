@@ -1,0 +1,92 @@
+From 8e6dfe31ad462f5917d2e0ba0eb54675ced9aa88 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Tue, 13 Oct 2026 23:07:40 +0200
+Subject: [PATCH 21/22] usb: chipidea: msm: Keep an optional fabric clock
+ enabled
+
+MSM8960 USB needs a Daytona fabric vote independent of transient SCM
+operations. Without a USB consumer, the last SCM unprepare can drop
+the fabric vote while the controller is still in use.
+
+Acquire the optional bus clock, request its maximum rate as the vendor
+driver does, and enable it before controller reset and child creation.
+Balance it on probe failures and removal, matching the existing core
+and interface clock lifetime. Boards without this clock are unchanged.
+
+Signed-off-by: Marc Lainez <marc.lainez@gmail.com>
+---
+ drivers/usb/chipidea/ci_hdrc_msm.c | 20 ++++++++++++++++++--
+ 1 file changed, 18 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/usb/chipidea/ci_hdrc_msm.c b/drivers/usb/chipidea/ci_hdrc_msm.c
+index 3ab3daa78..779e95fb8 100644
+--- a/drivers/usb/chipidea/ci_hdrc_msm.c
++++ b/drivers/usb/chipidea/ci_hdrc_msm.c
+@@ -38,6 +38,7 @@ struct ci_hdrc_msm {
+ 	struct clk *core_clk;
+ 	struct clk *iface_clk;
+ 	struct clk *fs_clk;
++	struct clk *bus_clk;
+ 	struct ci_hdrc_platform_data pdata;
+ 	struct reset_controller_dev rcdev;
+ 	bool secondary_phy;
+@@ -208,6 +209,10 @@ static int ci_hdrc_msm_probe(struct platform_device *pdev)
+ 	if (IS_ERR(clk))
+ 		return PTR_ERR(clk);
+ 
++	ci->bus_clk = clk = devm_clk_get_optional(&pdev->dev, "bus");
++	if (IS_ERR(clk))
++		return PTR_ERR(clk);
++
+ 	ci->base = devm_platform_ioremap_resource(pdev, 1);
+ 	if (IS_ERR(ci->base))
+ 		return PTR_ERR(ci->base);
+@@ -220,10 +225,18 @@ static int ci_hdrc_msm_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		return ret;
+ 
+-	ret = clk_prepare_enable(ci->fs_clk);
++	ret = clk_set_rate(ci->bus_clk, INT_MAX);
+ 	if (ret)
+ 		return ret;
+ 
++	ret = clk_prepare_enable(ci->bus_clk);
++	if (ret)
++		return ret;
++
++	ret = clk_prepare_enable(ci->fs_clk);
++	if (ret)
++		goto err_bus;
++
+ 	reset_control_assert(reset);
+ 	usleep_range(10000, 12000);
+ 	reset_control_deassert(reset);
+@@ -232,7 +245,7 @@ static int ci_hdrc_msm_probe(struct platform_device *pdev)
+ 
+ 	ret = clk_prepare_enable(ci->core_clk);
+ 	if (ret)
+-		return ret;
++		goto err_bus;
+ 
+ 	ret = clk_prepare_enable(ci->iface_clk);
+ 	if (ret)
+@@ -271,6 +284,8 @@ static int ci_hdrc_msm_probe(struct platform_device *pdev)
+ 	clk_disable_unprepare(ci->iface_clk);
+ err_iface:
+ 	clk_disable_unprepare(ci->core_clk);
++err_bus:
++	clk_disable_unprepare(ci->bus_clk);
+ 	return ret;
+ }
+ 
+@@ -282,6 +297,7 @@ static void ci_hdrc_msm_remove(struct platform_device *pdev)
+ 	ci_hdrc_remove_device(ci->ci);
+ 	clk_disable_unprepare(ci->iface_clk);
+ 	clk_disable_unprepare(ci->core_clk);
++	clk_disable_unprepare(ci->bus_clk);
+ }
+ 
+ static const struct of_device_id msm_ci_dt_match[] = {
+-- 
+2.43.0
+

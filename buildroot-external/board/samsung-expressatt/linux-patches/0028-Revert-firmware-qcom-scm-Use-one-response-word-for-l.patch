@@ -1,0 +1,43 @@
+From f6fe8dff8777ece27104a0f316a1a0d7478d56c1 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Tue, 13 Oct 2026 23:42:09 +0200
+Subject: [PATCH] Revert "firmware: qcom: scm: Use one response word for legacy
+ WCNSS init"
+
+This reverts commit b447f708397c1ea62268a04a5136ec6cd98804e8.
+
+Signed-off-by: Marc Lainez <marc.lainez@gmail.com>
+---
+ drivers/firmware/qcom/qcom_scm-legacy.c | 9 ++-------
+ 1 file changed, 2 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/firmware/qcom/qcom_scm-legacy.c b/drivers/firmware/qcom/qcom_scm-legacy.c
+index 71ebd2dec..e5cc73e1e 100644
+--- a/drivers/firmware/qcom/qcom_scm-legacy.c
++++ b/drivers/firmware/qcom/qcom_scm-legacy.c
+@@ -142,11 +142,7 @@ int scm_legacy_call(struct device *dev, const struct qcom_scm_desc *desc,
+ 	struct arm_smccc_args smc = {0};
+ 	struct arm_smccc_res smc_res;
+ 	const size_t cmd_len = arglen * sizeof(__le32);
+-	const unsigned int num_rets = desc->svc == QCOM_SCM_SVC_PIL &&
+-				      desc->cmd == QCOM_SCM_PIL_PAS_INIT_IMAGE &&
+-				      arglen == 2 && desc->args[0] == 6 ?
+-				      1 : MAX_QCOM_SCM_RETS;
+-	const size_t resp_len = num_rets * sizeof(__le32);
++	const size_t resp_len = MAX_QCOM_SCM_RETS * sizeof(__le32);
+ 	size_t alloc_len = sizeof(*cmd) + cmd_len + sizeof(*rsp) + resp_len;
+ 	dma_addr_t cmd_phys;
+ 	__le32 *arg_buf;
+@@ -201,8 +197,7 @@ int scm_legacy_call(struct device *dev, const struct qcom_scm_desc *desc,
+ 
+ 	if (res) {
+ 		res_buf = scm_legacy_get_response_buffer(rsp);
+-		memset(res, 0, sizeof(*res));
+-		for (i = 0; i < num_rets; i++)
++		for (i = 0; i < MAX_QCOM_SCM_RETS; i++)
+ 			res->result[i] = le32_to_cpu(res_buf[i]);
+ 	}
+ out:
+-- 
+2.43.0
+

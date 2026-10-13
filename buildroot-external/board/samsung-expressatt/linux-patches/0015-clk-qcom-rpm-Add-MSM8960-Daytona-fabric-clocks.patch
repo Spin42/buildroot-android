@@ -1,0 +1,47 @@
+From d3e5ac3f026b8bbada51c5ae3952d637f26370b3 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Tue, 13 Oct 2026 22:41:17 +0200
+Subject: [PATCH 15/17] clk: qcom: rpm: Add MSM8960 Daytona fabric clocks
+
+Expose the active and sleep Daytona fabric votes used by SCM on
+MSM8960. The RPM resource mapping already exists in the MSM8960 RPM
+controller. Limit the initial clock table to this dependency so probing
+it does not hand off unrelated fabric clocks.
+
+Signed-off-by: Marc Lainez <marc.lainez@gmail.com>
+---
+ drivers/clk/qcom/clk-rpm.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/drivers/clk/qcom/clk-rpm.c b/drivers/clk/qcom/clk-rpm.c
+index be0145631..f8b300a38 100644
+--- a/drivers/clk/qcom/clk-rpm.c
++++ b/drivers/clk/qcom/clk-rpm.c
+@@ -475,6 +475,16 @@ static const struct rpm_clk_desc rpm_clk_apq8064 = {
+ 	.num_clks = ARRAY_SIZE(apq8064_clks),
+ };
+ 
++static struct clk_rpm *msm8960_clks[] = {
++	[RPM_DAYTONA_FABRIC_CLK] = &clk_rpm_daytona_clk,
++	[RPM_DAYTONA_FABRIC_A_CLK] = &clk_rpm_daytona_a_clk,
++};
++
++static const struct rpm_clk_desc rpm_clk_msm8960 = {
++	.clks = msm8960_clks,
++	.num_clks = ARRAY_SIZE(msm8960_clks),
++};
++
+ static struct clk_rpm *ipq806x_clks[] = {
+ 	[RPM_APPS_FABRIC_CLK] = &clk_rpm_afab_clk,
+ 	[RPM_APPS_FABRIC_A_CLK] = &clk_rpm_afab_a_clk,
+@@ -503,6 +513,7 @@ static const struct of_device_id rpm_clk_match_table[] = {
+ 	{ .compatible = "qcom,rpmcc-msm8660", .data = &rpm_clk_msm8660 },
+ 	{ .compatible = "qcom,rpmcc-apq8060", .data = &rpm_clk_msm8660 },
+ 	{ .compatible = "qcom,rpmcc-apq8064", .data = &rpm_clk_apq8064 },
++	{ .compatible = "qcom,rpmcc-msm8960", .data = &rpm_clk_msm8960 },
+ 	{ .compatible = "qcom,rpmcc-ipq806x", .data = &rpm_clk_ipq806x },
+ 	{ }
+ };
+-- 
+2.43.0
+

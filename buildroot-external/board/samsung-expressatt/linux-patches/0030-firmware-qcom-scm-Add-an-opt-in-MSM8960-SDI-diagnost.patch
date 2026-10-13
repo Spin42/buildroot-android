@@ -1,0 +1,75 @@
+From 4a95cc27d662a1343a3b4e19790b58800805b06b Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Tue, 13 Oct 2026 23:58:40 +0200
+Subject: [PATCH] firmware: qcom: scm: Add an opt-in MSM8960 SDI diagnostic
+
+The captured MSM8960 stock SCM initializer only establishes the cache
+line size, whereas mainline sends an SDI-disable command at probe when
+download mode is off. Whether this extra command affects the failing
+WCNSS PAS initialization remains unverified.
+
+Allow a boot-time parameter to omit only that command on MSM8960 for a
+controlled comparison. Keep the existing behavior by default, including
+the command arguments and download-mode handling. Report the SDI result
+on MSM8960 so the normal path is observable as well.
+
+This is a diagnostic experiment, not an established PAS fix.
+
+Signed-off-by: Marc Lainez <marc.lainez@gmail.com>
+---
+ drivers/firmware/qcom/qcom_scm.c | 25 +++++++++++++++++++++++--
+ 1 file changed, 23 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/firmware/qcom/qcom_scm.c b/drivers/firmware/qcom/qcom_scm.c
+index e91d600e8..e33f83b4b 100644
+--- a/drivers/firmware/qcom/qcom_scm.c
++++ b/drivers/firmware/qcom/qcom_scm.c
+@@ -37,6 +37,10 @@
+ #include "qcom_tzmem.h"
+ 
+ static u32 download_mode;
++static bool msm8960_skip_sdi;
++module_param(msm8960_skip_sdi, bool, 0400);
++MODULE_PARM_DESC(msm8960_skip_sdi,
++		 "Skip the MSM8960 probe-time SDI command for diagnosis");
+ 
+ #define GIC_SPI_BASE        32
+ #define GIC_MAX_SPI       1019  // SPIs in GICv3 spec range from 32..1019
+@@ -534,6 +538,24 @@ static int qcom_scm_disable_sdi(void)
+ 	return ret ? : res.result[0];
+ }
+ 
++static void qcom_scm_configure_sdi(struct device *dev)
++{
++	bool msm8960 = of_device_is_compatible(dev->of_node, "qcom,scm-msm8960");
++	int ret;
++
++	if (!of_property_read_bool(dev->of_node, "qcom,sdi-enabled") && download_mode)
++		return;
++
++	if (msm8960 && msm8960_skip_sdi) {
++		dev_info(dev, "MSM8960 probe SDI command skipped for diagnosis\n");
++		return;
++	}
++
++	ret = qcom_scm_disable_sdi();
++	if (msm8960)
++		dev_info(dev, "MSM8960 probe SDI command returned: %d\n", ret);
++}
++
+ static int __qcom_scm_set_dload_mode(struct device *dev, bool enable)
+ {
+ 	struct qcom_scm_desc desc = {
+@@ -2886,8 +2908,7 @@ static int qcom_scm_probe(struct platform_device *pdev)
+ 	/*
+ 	 * Disable SDI if indicated by DT that it is enabled by default.
+ 	 */
+-	if (of_property_read_bool(pdev->dev.of_node, "qcom,sdi-enabled") || !download_mode)
+-		qcom_scm_disable_sdi();
++	qcom_scm_configure_sdi(&pdev->dev);
+ 
+ 	/*
+ 	 * Initialize the QSEECOM interface.
+-- 
+2.43.0
+

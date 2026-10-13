@@ -1,0 +1,157 @@
+From 785fe77b23e981076caf8a62fcc3ffd1375a1229 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Tue, 13 Oct 2026 22:41:17 +0200
+Subject: [PATCH 16/17] ARM: dts: qcom: msm8960: Describe RIVA firmware
+ transport
+
+Add SCM with its Daytona fabric clock, the SFPB mutex and SMEM region,
+and the applications/WCNSS SMSM states. Describe the RIVA loader and
+WCNSS SMD channel using the MSM8960 interrupt and APCS doorbell wiring.
+Keep the remote processor disabled until a board supplies its memory
+and regulators.
+
+Signed-off-by: Marc Lainez <marc.lainez@gmail.com>
+---
+ arch/arm/boot/dts/qcom/qcom-msm8960.dtsi | 98 ++++++++++++++++++++++++
+ 1 file changed, 98 insertions(+)
+
+diff --git a/arch/arm/boot/dts/qcom/qcom-msm8960.dtsi b/arch/arm/boot/dts/qcom/qcom-msm8960.dtsi
+index 4d1345267..065c42f5b 100644
+--- a/arch/arm/boot/dts/qcom/qcom-msm8960.dtsi
++++ b/arch/arm/boot/dts/qcom/qcom-msm8960.dtsi
+@@ -5,6 +5,7 @@
+ #include <dt-bindings/clock/qcom,gcc-msm8960.h>
+ #include <dt-bindings/reset/qcom,gcc-msm8960.h>
+ #include <dt-bindings/clock/qcom,lcc-msm8960.h>
++#include <dt-bindings/clock/qcom,rpmcc.h>
+ #include <dt-bindings/mfd/qcom-rpm.h>
+ #include <dt-bindings/soc/qcom,gsbi.h>
+ 
+@@ -15,6 +16,50 @@ / {
+ 	compatible = "qcom,msm8960";
+ 	interrupt-parent = <&intc>;
+ 
++	reserved-memory {
++		#address-cells = <1>;
++		#size-cells = <1>;
++		ranges;
++
++		smem_region: smem@80000000 {
++			reg = <0x80000000 0x200000>;
++			no-map;
++		};
++	};
++
++	firmware {
++		scm {
++			compatible = "qcom,scm-msm8960", "qcom,scm";
++			clocks = <&rpmcc RPM_DAYTONA_FABRIC_CLK>;
++			clock-names = "core";
++		};
++	};
++
++	smem {
++		compatible = "qcom,smem";
++		memory-region = <&smem_region>;
++		hwlocks = <&sfpb_mutex 3>;
++	};
++
++	smsm {
++		compatible = "qcom,smsm";
++		#address-cells = <1>;
++		#size-cells = <0>;
++		qcom,ipc-3 = <&l2cc 8 23>;
++
++		apps_smsm: apps@0 {
++			reg = <0>;
++			#qcom,smem-state-cells = <1>;
++		};
++
++		wcnss_smsm: wcnss@3 {
++			reg = <3>;
++			interrupts = <GIC_SPI 204 IRQ_TYPE_EDGE_RISING>;
++			interrupt-controller;
++			#interrupt-cells = <2>;
++		};
++	};
++
+ 	clocks {
+ 		cxo_board: cxo_board {
+ 			compatible = "fixed-clock";
+@@ -98,6 +143,13 @@ rpm: rpm@108000 {
+ 			interrupt-names = "ack",
+ 					  "err",
+ 					  "wakeup";
++
++			rpmcc: clock-controller {
++				compatible = "qcom,rpmcc-msm8960", "qcom,rpmcc";
++				#clock-cells = <1>;
++				clocks = <&pxo_board>;
++				clock-names = "pxo";
++			};
+ 		};
+ 
+ 		ssbi: ssbi@500000 {
+@@ -344,6 +396,12 @@ timer@200a000 {
+ 			cpu-offset = <0x80000>;
+ 		};
+ 
++		sfpb_mutex: hwmutex@1200600 {
++			compatible = "qcom,sfpb-mutex";
++			reg = <0x01200600 0x100>;
++			#hwlock-cells = <1>;
++		};
++
+ 		l2cc: clock-controller@2011000 {
+ 			compatible = "qcom,kpss-gcc-msm8960", "qcom,kpss-gcc", "syscon";
+ 			reg = <0x2011000 0x1000>;
+@@ -805,6 +863,46 @@ lcc: clock-controller@28000000 {
+ 				      "pcm_codec_clk";
+ 		};
+ 
++		riva: remoteproc@3200800 {
++			compatible = "qcom,riva-pil";
++			reg = <0x03200800 0x1000>, <0x03202000 0x2000>,
++			      <0x03204000 0x100>;
++			reg-names = "ccu", "dxe", "pmu";
++			interrupts-extended = <&intc GIC_SPI 199 IRQ_TYPE_EDGE_RISING>,
++					      <&wcnss_smsm 6 IRQ_TYPE_EDGE_RISING>;
++			interrupt-names = "wdog", "fatal";
++			status = "disabled";
++
++			iris {
++				compatible = "qcom,wcn3660";
++				clocks = <&cxo_board>;
++				clock-names = "xo";
++			};
++
++			smd-edge {
++				interrupts = <GIC_SPI 198 IRQ_TYPE_EDGE_RISING>;
++				qcom,ipc = <&l2cc 8 25>;
++				qcom,smd-edge = <6>;
++				label = "riva";
++
++				wcnss {
++					compatible = "qcom,wcnss";
++					qcom,smd-channels = "WCNSS_CTRL";
++					qcom,mmio = <&riva>;
++
++					wifi {
++						compatible = "qcom,wcnss-wlan";
++						interrupts = <GIC_SPI 203 IRQ_TYPE_LEVEL_HIGH>,
++							     <GIC_SPI 202 IRQ_TYPE_LEVEL_HIGH>;
++						interrupt-names = "tx", "rx";
++						qcom,smem-states = <&apps_smsm 10>, <&apps_smsm 9>;
++						qcom,smem-state-names = "tx-enable",
++									"tx-rings-empty";
++					};
++				};
++			};
++		};
++
+ 		imem: sram@2a03f000 {
+ 			compatible = "qcom,msm8960-imem", "syscon", "simple-mfd";
+ 			reg = <0x2a03f000 0x1000>;
+-- 
+2.43.0
+

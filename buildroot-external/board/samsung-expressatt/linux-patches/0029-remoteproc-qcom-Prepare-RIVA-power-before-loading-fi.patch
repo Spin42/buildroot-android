@@ -1,0 +1,215 @@
+From 4112bb402d39b20335028dca1007696688db717d Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Tue, 13 Oct 2026 23:44:19 +0200
+Subject: [PATCH] remoteproc: qcom: Prepare RIVA power before loading firmware
+
+The vendor WLAN path enables RIVA and IRIS supplies and configures the
+XO before invoking the peripheral loader. Starting these resources only
+after PAS metadata initialization leaves the load phase unpowered.
+
+Prepare RIVA before loading and retain its resources until unprepare.
+Keep Pronto resources scoped to start as before. Share the power helpers,
+balance failed domain votes and retain bounded IRIS polling. Serialize
+ownership under the IRIS mutex and tear down remoteproc before IRIS.
+
+Signed-off-by: Marc Lainez <marc.lainez@gmail.com>
+---
+ drivers/remoteproc/qcom_wcnss.c | 119 +++++++++++++++++++++++++++-----
+ 1 file changed, 101 insertions(+), 18 deletions(-)
+
+diff --git a/drivers/remoteproc/qcom_wcnss.c b/drivers/remoteproc/qcom_wcnss.c
+index eb2cb2a30..bb28a346e 100644
+--- a/drivers/remoteproc/qcom_wcnss.c
++++ b/drivers/remoteproc/qcom_wcnss.c
+@@ -72,6 +72,8 @@ struct qcom_wcnss {
+ 	void __iomem *spare_out;
+ 
+ 	bool use_48mhz_xo;
++	bool preload_power;
++	bool prepared;
+ 
+ 	int wdog_irq;
+ 	int fatal_irq;
+@@ -244,16 +246,13 @@ static int wcnss_configure_iris(struct qcom_wcnss *wcnss)
+ 	return 0;
+ }
+ 
+-static int wcnss_start(struct rproc *rproc)
++static int wcnss_power_on(struct qcom_wcnss *wcnss)
+ {
+-	struct qcom_wcnss *wcnss = rproc->priv;
+ 	int ret, i;
+ 
+-	mutex_lock(&wcnss->iris_lock);
+ 	if (!wcnss->iris) {
+ 		dev_err(wcnss->dev, "no iris registered\n");
+-		ret = -EINVAL;
+-		goto release_iris_lock;
++		return -EINVAL;
+ 	}
+ 
+ 	for (i = 0; i < wcnss->num_pds; i++) {
+@@ -261,6 +260,7 @@ static int wcnss_start(struct rproc *rproc)
+ 		ret = pm_runtime_get_sync(wcnss->pds[i]);
+ 		if (ret < 0) {
+ 			pm_runtime_put_noidle(wcnss->pds[i]);
++			dev_pm_genpd_set_performance_state(wcnss->pds[i], 0);
+ 			goto disable_pds;
+ 		}
+ 	}
+@@ -278,11 +278,97 @@ static int wcnss_start(struct rproc *rproc)
+ 	if (ret)
+ 		goto disable_iris;
+ 
++	return 0;
++
++disable_iris:
++	qcom_iris_disable(wcnss->iris);
++disable_regulators:
++	regulator_bulk_disable(wcnss->num_vregs, wcnss->vregs);
++disable_pds:
++	for (i--; i >= 0; i--) {
++		pm_runtime_put(wcnss->pds[i]);
++		dev_pm_genpd_set_performance_state(wcnss->pds[i], 0);
++	}
++
++	return ret;
++}
++
++static void wcnss_power_off(struct qcom_wcnss *wcnss)
++{
++	int i;
++
++	qcom_iris_disable(wcnss->iris);
++	regulator_bulk_disable(wcnss->num_vregs, wcnss->vregs);
++	for (i = wcnss->num_pds; i-- > 0;) {
++		pm_runtime_put(wcnss->pds[i]);
++		dev_pm_genpd_set_performance_state(wcnss->pds[i], 0);
++	}
++}
++
++static int wcnss_prepare(struct rproc *rproc)
++{
++	struct qcom_wcnss *wcnss = rproc->priv;
++	int ret;
++
++	if (!wcnss->preload_power)
++		return 0;
++
++	mutex_lock(&wcnss->iris_lock);
++	if (wcnss->prepared) {
++		ret = -EBUSY;
++		goto unlock;
++	}
++
++	ret = wcnss_power_on(wcnss);
++	if (!ret) {
++		wcnss->prepared = true;
++		dev_info(wcnss->dev, "RIVA power prepared before firmware load\n");
++	}
++
++unlock:
++	mutex_unlock(&wcnss->iris_lock);
++	return ret;
++}
++
++static int wcnss_unprepare(struct rproc *rproc)
++{
++	struct qcom_wcnss *wcnss = rproc->priv;
++
++	if (!wcnss->preload_power)
++		return 0;
++
++	mutex_lock(&wcnss->iris_lock);
++	if (wcnss->prepared) {
++		wcnss_power_off(wcnss);
++		wcnss->prepared = false;
++	}
++	mutex_unlock(&wcnss->iris_lock);
++
++	return 0;
++}
++
++static int wcnss_start(struct rproc *rproc)
++{
++	struct qcom_wcnss *wcnss = rproc->priv;
++	int ret;
++
++	mutex_lock(&wcnss->iris_lock);
++	if (wcnss->preload_power) {
++		if (!wcnss->prepared) {
++			ret = -EINVAL;
++			goto release_iris_lock;
++		}
++	} else {
++		ret = wcnss_power_on(wcnss);
++		if (ret)
++			goto release_iris_lock;
++	}
++
+ 	ret = qcom_scm_pas_auth_and_reset(WCNSS_PAS_ID);
+ 	if (ret) {
+ 		dev_err(wcnss->dev,
+ 			"failed to authenticate image and release reset\n");
+-		goto disable_iris;
++		goto release_power;
+ 	}
+ 
+ 	ret = wait_for_completion_timeout(&wcnss->start_done,
+@@ -292,20 +378,14 @@ static int wcnss_start(struct rproc *rproc)
+ 		dev_err(wcnss->dev, "start timed out\n");
+ 		qcom_scm_pas_shutdown(WCNSS_PAS_ID);
+ 		ret = -ETIMEDOUT;
+-		goto disable_iris;
++		goto release_power;
+ 	}
+ 
+ 	ret = 0;
+ 
+-disable_iris:
+-	qcom_iris_disable(wcnss->iris);
+-disable_regulators:
+-	regulator_bulk_disable(wcnss->num_vregs, wcnss->vregs);
+-disable_pds:
+-	for (i--; i >= 0; i--) {
+-		pm_runtime_put(wcnss->pds[i]);
+-		dev_pm_genpd_set_performance_state(wcnss->pds[i], 0);
+-	}
++release_power:
++	if (!wcnss->preload_power)
++		wcnss_power_off(wcnss);
+ release_iris_lock:
+ 	mutex_unlock(&wcnss->iris_lock);
+ 
+@@ -352,6 +432,8 @@ static void *wcnss_da_to_va(struct rproc *rproc, u64 da, size_t len, bool *is_io
+ }
+ 
+ static const struct rproc_ops wcnss_ops = {
++	.prepare = wcnss_prepare,
++	.unprepare = wcnss_unprepare,
+ 	.start = wcnss_start,
+ 	.stop = wcnss_stop,
+ 	.da_to_va = wcnss_da_to_va,
+@@ -608,6 +690,8 @@ static int wcnss_probe(struct platform_device *pdev)
+ 	wcnss = rproc->priv;
+ 	wcnss->dev = &pdev->dev;
+ 	wcnss->rproc = rproc;
++	wcnss->preload_power = of_device_is_compatible(pdev->dev.of_node,
++						       "qcom,riva-pil");
+ 	platform_set_drvdata(pdev, wcnss);
+ 
+ 	init_completion(&wcnss->start_done);
+@@ -703,9 +787,8 @@ static void wcnss_remove(struct platform_device *pdev)
+ {
+ 	struct qcom_wcnss *wcnss = platform_get_drvdata(pdev);
+ 
+-	qcom_iris_remove(wcnss->iris);
+-
+ 	rproc_del(wcnss->rproc);
++	qcom_iris_remove(wcnss->iris);
+ 
+ 	qcom_remove_sysmon_subdev(wcnss->sysmon);
+ 	qcom_remove_smd_subdev(wcnss->rproc, &wcnss->smd_subdev);
+-- 
+2.43.0
+

@@ -1,0 +1,143 @@
+From 5dd512807109b2557fbf923d1b3a9ee6737d0978 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Wed, 14 Oct 2026 00:47:44 +0200
+Subject: [PATCH 32/33] soc: qcom: wcnss_ctrl: Support the legacy RIVA WLAN
+ channel
+
+Some RIVA firmware exposes WLAN_CTRL without the modern WCNSS_CTRL
+version and NV-download service. Register a separate driver without an
+RPMSG callback for this explicit DT interface, leaving endpoint
+ownership to the WLAN child. Populate children asynchronously and drain
+that work before teardown.
+
+Store the RPMSG device independently of the modern control endpoint, and
+translate endpoint allocation failure to an error pointer as expected by
+wcn36xx. Leave the modern control handshake unchanged.
+
+Signed-off-by: Marc Lainez <marc.lainez@gmail.com>
+---
+ drivers/soc/qcom/wcnss_ctrl.c | 64 +++++++++++++++++++++++++++++++++--
+ 1 file changed, 61 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/soc/qcom/wcnss_ctrl.c b/drivers/soc/qcom/wcnss_ctrl.c
+index 942e11feb..5095a49ba 100644
+--- a/drivers/soc/qcom/wcnss_ctrl.c
++++ b/drivers/soc/qcom/wcnss_ctrl.c
+@@ -26,6 +26,7 @@
+ /**
+  * struct wcnss_ctrl - driver context
+  * @dev:	device handle
++ * @rpdev:	parent RPMSG device
+  * @channel:	SMD channel handle
+  * @ack:	completion for outstanding requests
+  * @cbc:	completion for cbc complete indication
+@@ -34,6 +35,7 @@
+  */
+ struct wcnss_ctrl {
+ 	struct device *dev;
++	struct rpmsg_device *rpdev;
+ 	struct rpmsg_endpoint *channel;
+ 
+ 	struct completion ack;
+@@ -283,12 +285,14 @@ struct rpmsg_endpoint *qcom_wcnss_open_channel(void *wcnss, const char *name, rp
+ {
+ 	struct rpmsg_channel_info chinfo;
+ 	struct wcnss_ctrl *_wcnss = wcnss;
++	struct rpmsg_endpoint *ept;
+ 
+ 	strscpy(chinfo.name, name, sizeof(chinfo.name));
+ 	chinfo.src = RPMSG_ADDR_ANY;
+ 	chinfo.dst = RPMSG_ADDR_ANY;
+ 
+-	return rpmsg_create_ept(_wcnss->channel->rpdev, cb, priv, chinfo);
++	ept = rpmsg_create_ept(_wcnss->rpdev, cb, priv, chinfo);
++	return ept ? ept : ERR_PTR(-ENODEV);
+ }
+ EXPORT_SYMBOL_GPL(qcom_wcnss_open_channel);
+ 
+@@ -316,6 +320,19 @@ static void wcnss_async_probe(struct work_struct *work)
+ 	of_platform_populate(wcnss->dev->of_node, NULL, NULL, wcnss->dev);
+ }
+ 
++static void wcnss_legacy_probe(struct work_struct *work)
++{
++	struct wcnss_ctrl *wcnss = container_of(work, struct wcnss_ctrl, probe_work);
++	int ret;
++
++	/* Legacy firmware receives its NV data through wcn36xx on WLAN_CTRL. */
++	ret = of_platform_populate(wcnss->dev->of_node, NULL, NULL, wcnss->dev);
++	if (ret) {
++		of_platform_depopulate(wcnss->dev);
++		dev_err(wcnss->dev, "failed to populate WLAN device: %d\n", ret);
++	}
++}
++
+ static int wcnss_ctrl_probe(struct rpmsg_device *rpdev)
+ {
+ 	struct wcnss_ctrl *wcnss;
+@@ -325,11 +342,15 @@ static int wcnss_ctrl_probe(struct rpmsg_device *rpdev)
+ 		return -ENOMEM;
+ 
+ 	wcnss->dev = &rpdev->dev;
++	wcnss->rpdev = rpdev;
+ 	wcnss->channel = rpdev->ept;
+ 
+ 	init_completion(&wcnss->ack);
+ 	init_completion(&wcnss->cbc);
+-	INIT_WORK(&wcnss->probe_work, wcnss_async_probe);
++	if (of_device_is_compatible(rpdev->dev.of_node, "qcom,riva-wlan-ctrl"))
++		INIT_WORK(&wcnss->probe_work, wcnss_legacy_probe);
++	else
++		INIT_WORK(&wcnss->probe_work, wcnss_async_probe);
+ 
+ 	dev_set_drvdata(&rpdev->dev, wcnss);
+ 
+@@ -362,7 +383,44 @@ static struct rpmsg_driver wcnss_ctrl_driver = {
+ 	},
+ };
+ 
+-module_rpmsg_driver(wcnss_ctrl_driver);
++static const struct of_device_id wcnss_legacy_of_match[] = {
++	{ .compatible = "qcom,riva-wlan-ctrl" },
++	{}
++};
++MODULE_DEVICE_TABLE(of, wcnss_legacy_of_match);
++
++static struct rpmsg_driver wcnss_legacy_driver = {
++	.probe = wcnss_ctrl_probe,
++	.remove = wcnss_ctrl_remove,
++	/* wcn36xx owns the only WLAN_CTRL endpoint. */
++	.drv = {
++		.name = "qcom_wcnss_legacy",
++		.of_match_table = wcnss_legacy_of_match,
++	},
++};
++
++static int __init wcnss_ctrl_init(void)
++{
++	int ret;
++
++	ret = register_rpmsg_driver(&wcnss_ctrl_driver);
++	if (ret)
++		return ret;
++
++	ret = register_rpmsg_driver(&wcnss_legacy_driver);
++	if (ret)
++		unregister_rpmsg_driver(&wcnss_ctrl_driver);
++
++	return ret;
++}
++module_init(wcnss_ctrl_init);
++
++static void __exit wcnss_ctrl_exit(void)
++{
++	unregister_rpmsg_driver(&wcnss_legacy_driver);
++	unregister_rpmsg_driver(&wcnss_ctrl_driver);
++}
++module_exit(wcnss_ctrl_exit);
+ 
+ MODULE_DESCRIPTION("Qualcomm WCNSS control driver");
+ MODULE_LICENSE("GPL v2");
+-- 
+2.43.0
+

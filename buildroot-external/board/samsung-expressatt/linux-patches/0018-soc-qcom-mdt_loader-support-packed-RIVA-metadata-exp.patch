@@ -1,0 +1,268 @@
+From dc6a312fae1b5951ead7f0a0d1f38915a49bb7f4 Mon Sep 17 00:00:00 2001
+From: Express Port <expressatt@localhost>
+Date: Tue, 13 Oct 2026 22:43:43 +0200
+Subject: [PATCH 18/19] soc: qcom: mdt_loader: support packed RIVA metadata
+ explicitly
+
+Early RIVA MDT files keep the original ELF program-header offset while
+storing the table directly after the ELF header. The downstream PIL
+passes this entire packed MDT unchanged for authentication.
+
+Provide an explicit legacy entry point for RIVA only. Bound the packed
+table, hash tail, split segment numbering and every destination before
+authenticating the original bytes. Reject relocatable legacy images.
+Reuse the existing split segment loader while preserving validation and
+dispatch for modern MDT files.
+
+Signed-off-by: Express Port <expressatt@localhost>
+---
+ drivers/remoteproc/qcom_wcnss.c     |  12 ++-
+ drivers/soc/qcom/mdt_loader.c       | 151 ++++++++++++++++++++++++----
+ include/linux/soc/qcom/mdt_loader.h |  13 +++
+ 3 files changed, 153 insertions(+), 23 deletions(-)
+
+diff --git a/drivers/remoteproc/qcom_wcnss.c b/drivers/remoteproc/qcom_wcnss.c
+index 5e4a623b8..b47edf8dc 100644
+--- a/drivers/remoteproc/qcom_wcnss.c
++++ b/drivers/remoteproc/qcom_wcnss.c
+@@ -157,9 +157,15 @@ static int wcnss_load(struct rproc *rproc, const struct firmware *fw)
+ 	struct qcom_wcnss *wcnss = rproc->priv;
+ 	int ret;
+ 
+-	ret = qcom_mdt_load(wcnss->dev, fw, rproc->firmware, WCNSS_PAS_ID,
+-			    wcnss->mem_region, wcnss->mem_phys,
+-			    wcnss->mem_size, &wcnss->mem_reloc);
++	if (of_device_is_compatible(wcnss->dev->of_node, "qcom,riva-pil"))
++		ret = qcom_mdt_load_legacy(wcnss->dev, fw, rproc->firmware,
++					   WCNSS_PAS_ID, wcnss->mem_region,
++					   wcnss->mem_phys, wcnss->mem_size,
++					   &wcnss->mem_reloc);
++	else
++		ret = qcom_mdt_load(wcnss->dev, fw, rproc->firmware, WCNSS_PAS_ID,
++				    wcnss->mem_region, wcnss->mem_phys,
++				    wcnss->mem_size, &wcnss->mem_reloc);
+ 	if (ret)
+ 		return ret;
+ 
+diff --git a/drivers/soc/qcom/mdt_loader.c b/drivers/soc/qcom/mdt_loader.c
+index c004d444d..0846c9357 100644
+--- a/drivers/soc/qcom/mdt_loader.c
++++ b/drivers/soc/qcom/mdt_loader.c
+@@ -320,22 +320,10 @@ static bool qcom_mdt_bins_are_split(const struct firmware *fw)
+ 	return false;
+ }
+ 
+-/**
+- * qcom_mdt_load_no_init() - load the firmware which header is loaded as fw
+- * @dev:	device handle to associate resources with
+- * @fw:		firmware object for the mdt file
+- * @fw_name:	name of the firmware, for construction of segment file names
+- * @mem_region:	allocated memory region to load firmware into
+- * @mem_phys:	physical address of allocated memory region
+- * @mem_size:	size of the allocated memory region
+- * @reloc_base:	adjusted physical address after relocation
+- *
+- * Returns 0 on success, negative errno otherwise.
+- */
+-int qcom_mdt_load_no_init(struct device *dev, const struct firmware *fw,
++static int __qcom_mdt_load_no_init(struct device *dev, const struct firmware *fw,
+ 			  const char *fw_name, void *mem_region,
+ 			  phys_addr_t mem_phys, size_t mem_size,
+-			  phys_addr_t *reloc_base)
++			  phys_addr_t *reloc_base, size_t phoff, bool is_split)
+ {
+ 	const struct elf32_phdr *phdrs;
+ 	const struct elf32_phdr *phdr;
+@@ -344,7 +332,6 @@ int qcom_mdt_load_no_init(struct device *dev, const struct firmware *fw,
+ 	phys_addr_t min_addr = PHYS_ADDR_MAX;
+ 	ssize_t offset;
+ 	bool relocate = false;
+-	bool is_split;
+ 	void *ptr;
+ 	int ret = 0;
+ 	int i;
+@@ -352,12 +339,8 @@ int qcom_mdt_load_no_init(struct device *dev, const struct firmware *fw,
+ 	if (!fw || !mem_region || !mem_phys || !mem_size)
+ 		return -EINVAL;
+ 
+-	if (!mdt_header_valid(fw))
+-		return -EINVAL;
+-
+-	is_split = qcom_mdt_bins_are_split(fw);
+ 	ehdr = (struct elf32_hdr *)fw->data;
+-	phdrs = (struct elf32_phdr *)(fw->data + ehdr->e_phoff);
++	phdrs = (struct elf32_phdr *)(fw->data + phoff);
+ 
+ 	for (i = 0; i < ehdr->e_phnum; i++) {
+ 		phdr = &phdrs[i];
+@@ -435,8 +418,136 @@ int qcom_mdt_load_no_init(struct device *dev, const struct firmware *fw,
+ 
+ 	return ret;
+ }
++
++/**
++ * qcom_mdt_load_no_init() - load the firmware which header is loaded as fw
++ * @dev:	device handle to associate resources with
++ * @fw:		firmware object for the mdt file
++ * @fw_name:	name of the firmware, for construction of segment file names
++ * @mem_region:	allocated memory region to load firmware into
++ * @mem_phys:	physical address of allocated memory region
++ * @mem_size:	size of the allocated memory region
++ * @reloc_base:	adjusted physical address after relocation
++ *
++ * Returns 0 on success, negative errno otherwise.
++ */
++int qcom_mdt_load_no_init(struct device *dev, const struct firmware *fw,
++			  const char *fw_name, void *mem_region,
++			  phys_addr_t mem_phys, size_t mem_size,
++			  phys_addr_t *reloc_base)
++{
++	const struct elf32_hdr *ehdr;
++
++	if (!fw || !mdt_header_valid(fw))
++		return -EINVAL;
++
++	ehdr = (const struct elf32_hdr *)fw->data;
++	return __qcom_mdt_load_no_init(dev, fw, fw_name, mem_region, mem_phys,
++				     mem_size, reloc_base, ehdr->e_phoff,
++				     qcom_mdt_bins_are_split(fw));
++}
+ EXPORT_SYMBOL_GPL(qcom_mdt_load_no_init);
+ 
++static bool mdt_legacy_header_valid(const struct firmware *fw,
++				    phys_addr_t mem_phys, size_t mem_size)
++{
++	const struct elf32_phdr *phdrs;
++	const struct elf32_hdr *ehdr;
++	size_t phend;
++	bool loadable = false;
++	unsigned int i;
++
++	if (fw->size < sizeof(*ehdr))
++		return false;
++
++	ehdr = (const struct elf32_hdr *)fw->data;
++	if (memcmp(ehdr->e_ident, ELFMAG, SELFMAG) ||
++	    ehdr->e_ident[EI_CLASS] != ELFCLASS32 ||
++	    ehdr->e_ident[EI_DATA] != ELFDATA2LSB ||
++	    ehdr->e_ident[EI_VERSION] != EV_CURRENT ||
++	    ehdr->e_version != EV_CURRENT || ehdr->e_machine != EM_ARM ||
++	    ehdr->e_type != ET_EXEC || ehdr->e_ehsize != sizeof(*ehdr) ||
++	    ehdr->e_phentsize != sizeof(*phdrs) ||
++	    ehdr->e_phnum < 3 || ehdr->e_phnum > 100 ||
++	    ehdr->e_phoff <= fw->size || ehdr->e_shnum || ehdr->e_shoff ||
++	    (ehdr->e_shentsize && ehdr->e_shentsize != sizeof(struct elf32_shdr)))
++		return false;
++
++	phend = sizeof(*ehdr) + sizeof(*phdrs) * ehdr->e_phnum;
++	if (phend > fw->size)
++		return false;
++
++	phdrs = (const struct elf32_phdr *)(fw->data + sizeof(*ehdr));
++	if (phdrs[0].p_type != PT_NULL || phdrs[0].p_offset ||
++	    phdrs[0].p_filesz != phend || phdrs[0].p_memsz ||
++	    phdrs[1].p_type != PT_LOAD ||
++	    (phdrs[1].p_flags & QCOM_MDT_TYPE_MASK) != QCOM_MDT_TYPE_HASH ||
++	    !phdrs[1].p_filesz || phdrs[1].p_filesz != fw->size - phend)
++		return false;
++
++	for (i = 1; i < ehdr->e_phnum; i++) {
++		const struct elf32_phdr *phdr = &phdrs[i];
++
++		if (phdr->p_flags & QCOM_MDT_RELOCATABLE ||
++		    phdr->p_filesz > phdr->p_memsz ||
++		    (u64)phdr->p_offset + phdr->p_filesz > U32_MAX ||
++		    (u64)phdr->p_paddr + phdr->p_memsz > U32_MAX)
++			return false;
++
++		if (i == 1)
++			continue;
++		if (!mdt_phdr_loadable(phdr) || phdr->p_paddr < mem_phys ||
++		    phdr->p_memsz > mem_size ||
++		    phdr->p_paddr - mem_phys > mem_size - phdr->p_memsz)
++			return false;
++		loadable = true;
++	}
++
++	return loadable;
++}
++
++/**
++ * qcom_mdt_load_legacy() - load packed, split RIVA metadata without rewriting it
++ * @dev: device handle
++ * @fw: original signed MDT
++ * @fw_name: name used for split segment files
++ * @pas_id: peripheral authentication identifier
++ * @mem_region: mapped destination
++ * @mem_phys: destination physical address
++ * @mem_size: destination size
++ * @reloc_base: loaded physical base
++ *
++ * Early RIVA MDT files retain the full ELF's program-header offset but pack
++ * the table immediately after the ELF header. Authentication requires the
++ * original bytes, including that offset. Only this explicit caller accepts
++ * the legacy layout; ordinary MDT validation is unchanged.
++ * Return: zero on success or a negative error code.
++ */
++int qcom_mdt_load_legacy(struct device *dev, const struct firmware *fw,
++			 const char *fw_name, int pas_id, void *mem_region,
++			 phys_addr_t mem_phys, size_t mem_size,
++			 phys_addr_t *reloc_base)
++{
++	int ret;
++
++	if (!fw || !mem_region || !mem_phys || !mem_size)
++		return -EINVAL;
++	if (mdt_header_valid(fw))
++		return qcom_mdt_load(dev, fw, fw_name, pas_id, mem_region,
++				     mem_phys, mem_size, reloc_base);
++	if (!mdt_legacy_header_valid(fw, mem_phys, mem_size))
++		return -EINVAL;
++
++	ret = qcom_scm_pas_init_image(pas_id, fw->data, fw->size, NULL);
++	if (ret)
++		return ret;
++
++	return __qcom_mdt_load_no_init(dev, fw, fw_name, mem_region, mem_phys,
++				     mem_size, reloc_base, sizeof(struct elf32_hdr),
++				     true);
++}
++EXPORT_SYMBOL_GPL(qcom_mdt_load_legacy);
++
+ /**
+  * qcom_mdt_load() - load the firmware which header is loaded as fw
+  * @dev:	device handle to associate resources with
+diff --git a/include/linux/soc/qcom/mdt_loader.h b/include/linux/soc/qcom/mdt_loader.h
+index 82372e0db..80cf27fa4 100644
+--- a/include/linux/soc/qcom/mdt_loader.h
++++ b/include/linux/soc/qcom/mdt_loader.h
+@@ -15,6 +15,10 @@ struct qcom_scm_pas_context;
+ #if IS_ENABLED(CONFIG_QCOM_MDT_LOADER)
+ 
+ ssize_t qcom_mdt_get_size(const struct firmware *fw);
++int qcom_mdt_load_legacy(struct device *dev, const struct firmware *fw,
++			 const char *fw_name, int pas_id, void *mem_region,
++			 phys_addr_t mem_phys, size_t mem_size,
++			 phys_addr_t *reloc_base);
+ int qcom_mdt_load(struct device *dev, const struct firmware *fw,
+ 		  const char *fw_name, int pas_id, void *mem_region,
+ 		  phys_addr_t mem_phys, size_t mem_size,
+@@ -32,6 +36,15 @@ void *qcom_mdt_read_metadata(const struct firmware *fw, size_t *data_len,
+ 
+ #else /* !IS_ENABLED(CONFIG_QCOM_MDT_LOADER) */
+ 
++static inline int qcom_mdt_load_legacy(struct device *dev,
++				     const struct firmware *fw,
++				     const char *fw_name, int pas_id,
++				     void *mem_region, phys_addr_t mem_phys,
++				     size_t mem_size, phys_addr_t *reloc_base)
++{
++	return -ENODEV;
++}
++
+ static inline ssize_t qcom_mdt_get_size(const struct firmware *fw)
+ {
+ 	return -ENODEV;
+-- 
+2.43.0
+
