@@ -4,7 +4,8 @@
 #
 ################################################################################
 
-TB3_FIRMWARE_SITE = $(call qstrip,$(BR2_PACKAGE_TB3_FIRMWARE_DIR))
+# The option exists only when the package is selected; every other defconfig still parses this file
+TB3_FIRMWARE_SITE = $(or $(call qstrip,$(BR2_PACKAGE_TB3_FIRMWARE_DIR)),$(BR2_EXTERNAL_ANDROID_PATH)/board/tb3_710f/firmware)
 TB3_FIRMWARE_SITE_METHOD = local
 TB3_FIRMWARE_LICENSE = proprietary
 
