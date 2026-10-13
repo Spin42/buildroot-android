@@ -39,8 +39,9 @@ survive reboot. Errors are retained in `/tmp/dropbear.log` during that boot.
 
 The kernel watchdog driver is enabled; the persistent command line has
 `watchdog.open_timeout=60` and no diagnostic initcall blacklist or fixed 45-second boot
-guard. The PM8xxx XOADC driver is built in for measurement and later power bring-up;
-this does not establish working battery charging.
+guard. GPIO I2C adapter13 and its userspace interface are built in for battery-chip
+diagnosis. No charger or gauge child nodes are instantiated. The PM8xxx XOADC path is
+disabled after its runtime readings proved unusable; charging is not established by this build.
 
 ## Rescue and installation
 

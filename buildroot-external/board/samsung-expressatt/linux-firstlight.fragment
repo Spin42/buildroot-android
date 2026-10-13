@@ -95,7 +95,9 @@ CONFIG_USB_CONFIGFS_ECM=y
 CONFIG_TMPFS=y
 CONFIG_EXT4_FS=y
 CONFIG_EXT2_FS=y
-CONFIG_QCOM_PM8XXX_XOADC=y
+# CONFIG_QCOM_PM8XXX_XOADC is not set
+CONFIG_I2C_GPIO=y
+CONFIG_I2C_CHARDEV=y
 # ACM console of the kit gadget (ttyGS0)
 CONFIG_USB_CONFIGFS_ACM=y
 # Self-recovery: reboot 10 s after a panic, panic on a soft lockup, a hardware watchdog
