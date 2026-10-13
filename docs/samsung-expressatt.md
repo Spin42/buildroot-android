@@ -51,7 +51,18 @@ WCNSS must come from the original SYSTEM `/etc/firmware/wcnss.*`, pinned by
 bytes. The MODEM `/image/wcnss.*` set previously selected by this script has a
 different signing root and is not accepted for this phone. Do not normalize the
 signed MDT or mix segments from the two sets. Private NV still comes from the
-same PERSIST `/WCNSS_qcom_wlan_nv.bin`.
+same PERSIST `/WCNSS_qcom_wlan_nv.bin`, processed by `project_legacy_nv.py`
+exactly as the shipped legacy driver prepares it. The original 29,776-byte
+private file stays untouched. The helper requires its verified identity and
+valid table bits 1, 2, 0, 3, 4, 5, 18, 11, 12, 13, 14, 15 and 16. It preserves
+the bitmap and all 13 calibration tables, takes the legacy 28,452-byte payload,
+and supplies the shipped public fwConfig defaults at file offsets 27084:27116
+(26 bytes FF, then six zero bytes). The resulting file is 28,456 bytes;
+mainline removes the four-byte bitmap before sending it to RIVA. Short inputs,
+unknown schemas and missing required validity bits are rejected. Bare truncation
+is not equivalent to this stock transformation. The private projected output
+hash begins `62cabe64`; it must also stay local. Python 3.10+ is the only added
+host requirement and no Python packages are needed.
 
 The optional second argument selects a separate output directory for validation.
 Existing different output files cause refusal before installation. To migrate an

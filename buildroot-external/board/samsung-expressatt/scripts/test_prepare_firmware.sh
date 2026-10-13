@@ -7,8 +7,11 @@ BACKUPS=$(realpath -- "$1")
 mkdir -p "$2"
 EVIDENCE=$(realpath -- "$2")
 exec > >(tee "$EVIDENCE/test.log") 2>&1
+debugfs -R "dump /WCNSS_qcom_wlan_nv.bin \"$EVIDENCE/raw-nv.bin\"" "$BACKUPS/persist.img"
+python3 "$HERE/test_legacy_nv.py" "$EVIDENCE/raw-nv.bin" "$EVIDENCE/nv-tests"
 bash "$HERE/prepare_firmware.sh" "$BACKUPS" "$EVIDENCE/first"
 bash "$HERE/prepare_firmware.sh" "$BACKUPS" "$EVIDENCE/second"
+cmp "$EVIDENCE/nv-tests/projected.bin" "$EVIDENCE/first/wlan/prima/WCNSS_qcom_wlan_nv.bin"
 diff -r "$EVIDENCE/first" "$EVIDENCE/second"
 echo "PASS: two independent extractions are byte-identical"
 [ "$(stat -c %s "$EVIDENCE/first/wcnss.b04")" = 1808268 ]
@@ -38,4 +41,15 @@ if bash "$HERE/prepare_firmware.sh" "$EVIDENCE/bad-backups" "$EVIDENCE/rejected"
 fi
 [ ! -e "$EVIDENCE/rejected" ]
 echo "PASS: invalid backup checksum rejected before extraction"
+mkdir "$EVIDENCE/invalid-nv-backups"
+ln -s "$BACKUPS/system.img" "$EVIDENCE/invalid-nv-backups/system.img"
+cp --reflink=auto "$BACKUPS/persist.img" "$EVIDENCE/invalid-nv-backups/persist.img"
+debugfs -w -R 'rm /WCNSS_qcom_wlan_nv.bin' "$EVIDENCE/invalid-nv-backups/persist.img"
+debugfs -w -R "write \"$EVIDENCE/nv-tests/missing-bit-18.bin\" /WCNSS_qcom_wlan_nv.bin" "$EVIDENCE/invalid-nv-backups/persist.img"
+(cd "$EVIDENCE/invalid-nv-backups" && sha256sum system.img persist.img) > "$EVIDENCE/invalid-nv-backups/SHA256SUMS"
+if bash "$HERE/prepare_firmware.sh" "$EVIDENCE/invalid-nv-backups" "$EVIDENCE/rejected-nv"; then
+    echo "FAIL: invalid calibration installed"; exit 1
+fi
+[ -z "$(ls -A "$EVIDENCE/rejected-nv")" ]
+echo "PASS: invalid NV fails before any firmware is installed"
 echo "PASS: all host firmware fixture scenarios"

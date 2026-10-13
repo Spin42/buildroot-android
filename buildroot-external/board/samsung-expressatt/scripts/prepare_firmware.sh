@@ -6,7 +6,7 @@ PORT_DIR=$(cd "$HERE/../../../../.." && pwd)
 BACKUPS=$(realpath -- "${1:-$PORT_DIR/backups}")
 OUT=${2:-$HERE/../overlay/lib/firmware}
 [ "$#" -le 2 ] || { echo "Usage: $0 [BACKUPS_DIRECTORY [OUTPUT_DIRECTORY]]" >&2; exit 2; }
-for tool in debugfs sha256sum; do command -v "$tool" >/dev/null; done
+for tool in debugfs sha256sum python3; do command -v "$tool" >/dev/null; done
 for image in system.img persist.img; do
     line=$(awk -v image="$image" '$2==image {print}' "$BACKUPS/SHA256SUMS")
     [ "$(grep -c . <<< "$line")" = 1 ] || { echo "missing or duplicate checksum for $image" >&2; exit 1; }
@@ -26,8 +26,8 @@ done
 [ "$(stat -c %s "$STAGE/wcnss.mdt")" = 6752 ] || { echo "unexpected MDT size" >&2; exit 1; }
 cmp "$STAGE/wcnss.b01" <(tail -c 6540 "$STAGE/wcnss.mdt")
 nv=wlan/prima/WCNSS_qcom_wlan_nv.bin
-debugfs -R "dump /WCNSS_qcom_wlan_nv.bin \"$STAGE/$nv\"" "$BACKUPS/persist.img"
-[ "$(stat -c %s "$STAGE/$nv")" = 29776 ] || { echo "unexpected private NV size" >&2; exit 1; }
+debugfs -R "dump /WCNSS_qcom_wlan_nv.bin \"$STAGE/raw-nv.bin\"" "$BACKUPS/persist.img"
+python3 "$HERE/project_legacy_nv.py" "$STAGE/raw-nv.bin" "$STAGE/$nv"
 files+=("$nv")
 for file in "${files[@]}"; do
     if [ -e "$OUT/$file" ] && ! cmp -s "$OUT/$file" "$STAGE/$file"; then
