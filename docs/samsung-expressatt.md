@@ -1,7 +1,7 @@
 # Samsung SGH-I437 Express
 
 The board uses Linux 7.2.9, pinned to commit
-`5fce161649b4d779d1b76d9fcd52dc77779774b8`, with the three reboot-mode patches
+`5fce161649b4d779d1b76d9fcd52dc77779774b8`, with the reboot-mode and battery-support patches
 in `buildroot-external/board/samsung-expressatt/linux-patches/`.
 
 ## Build
@@ -31,7 +31,9 @@ reservations. The bootloader must use the proven Express RAM base 0x80200000.
 ## Startup and access
 
 BusyBox `/sbin/init` runs the standard inittab and rcS sequence. `S40kit` mounts configfs
-and pstore, starts the watchdog feeder, then the existing kit ACM+NCM USB and SSH services.
+and pstore, starts the watchdog feeder, selects the verified BQ24157 USB host charging
+mode (500 mA input), then starts the existing kit ACM+NCM USB and SSH services. A missing
+charger mode or a failed mode write is logged and does not prevent USB startup.
 The gadget serial is `08a571a0`, product `samsung-expressatt-system`; the phone uses
 10.0.42.1 and its DHCP server offers 10.0.42.2 to the host. Root's initial password is
 `root`. Dropbear host keys are generated in the writable `/etc/dropbear` directory and
@@ -39,9 +41,11 @@ survive reboot. Errors are retained in `/tmp/dropbear.log` during that boot.
 
 The kernel watchdog driver is enabled; the persistent command line has
 `watchdog.open_timeout=60` and no diagnostic initcall blacklist or fixed 45-second boot
-guard. GPIO I2C adapter13 and its userspace interface are built in for battery-chip
-diagnosis. No charger or gauge child nodes are instantiated. The PM8xxx XOADC path is
-disabled after its runtime readings proved unusable; charging is not established by this build.
+guard. GPIO I2C adapter13, the MAX17048 fuel gauge and the BQ24157 charger driver are built
+in, with their board device-tree descriptions. The Express charger node disables charge
+termination from the first driver probe, preserving the vendor policy. The PM8xxx XOADC
+path is disabled after its runtime readings proved unusable. Charging mode and current
+limits must be verified on the device; compiling these drivers does not establish working charging.
 
 ## Rescue and installation
 
