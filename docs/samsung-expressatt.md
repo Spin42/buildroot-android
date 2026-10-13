@@ -40,11 +40,30 @@ credentials. Before a coordinated WiFi image build, extract this phone's firmwar
 buildroot-external/board/samsung-expressatt/scripts/prepare_firmware.sh
 ```
 
-This verifies modem/persist backup hashes and uses mcopy and read-only debugfs to populate
+This verifies system/persist backup hashes and uses read-only debugfs to populate
 the ignored `overlay/lib/firmware/`. The private calibration and any image containing it
 must remain local. The stock MDT uses legacy packed program headers and needs the audited
 kernel compatibility change; extraction alone does not establish WiFi operation. See the
 port's `dossier/wifi-firmware.md` for provenance, exact files and the loader constraint.
+
+WCNSS must come from the original SYSTEM `/etc/firmware/wcnss.*`, pinned by
+`scripts/wcnss-system.sha256`. Its MDT hash begins `59d69215` and b04 is 1,808,268
+bytes. The MODEM `/image/wcnss.*` set previously selected by this script has a
+different signing root and is not accepted for this phone. Do not normalize the
+signed MDT or mix segments from the two sets. Private NV still comes from the
+same PERSIST `/WCNSS_qcom_wlan_nv.bin`.
+
+The optional second argument selects a separate output directory for validation.
+Existing different output files cause refusal before installation. To migrate an
+old overlay, first retain its six-file SHA256 inventory and a local copy, then
+prepare a separate corrected directory and coordinate replacing the overlay
+with the build owner. Preserve the original MODEM backup as a reference; it is
+not the WiFi rollback source. The original SYSTEM and PERSIST backups reproduce
+the corrected set. Firmware and calibration bytes must never enter Git.
+
+Run `scripts/test_prepare_firmware.sh BACKUPS_DIRECTORY EVIDENCE_DIRECTORY` from
+the board directory for the actual-backup deterministic extraction and rejection
+tests. The evidence directory contains private calibration and must remain local.
 
 ### Base services
 
