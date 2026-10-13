@@ -49,6 +49,52 @@ limits must be verified on the device; compiling these drivers does not establis
 
 ## Rescue and installation
 
+### Reflash an already running system
+
+The board's `scripts/reflash.sh` follows the tb3_710f reflash cycle using the kit's
+serial discovery, ACM return mechanism and safe-flash checks. It starts from running
+Express kit Linux with working USB networking; it refuses an absent or ambiguous gadget.
+It does not configure the host network. Run a host-only check first:
+
+```sh
+buildroot-external/board/samsung-expressatt/scripts/reflash.sh --dry-run /absolute/path/rootfs.ext2
+```
+
+After the orchestrator has claimed the device and approved the exact write, run from
+this repository (use the owner recorded in the port's `.device-owner`):
+
+```sh
+EXPRESSATT_REFLASH_OWNER=porting-guide buildroot-external/board/samsung-expressatt/scripts/reflash.sh --execute /absolute/path/rootfs.ext2
+```
+
+`EXPRESSATT_REFLASH_PASSWORD` optionally supplies the running root password; the default
+is `root`. It is passed through sshpass's environment, never printed in the command.
+The same credential must work after reflashing. The helper reads serial `08a571a0` from
+port.yaml, verifies the USB kit identity and the remote device-tree serial over SSH bound
+to that USB interface, then uses its ACM console to return to download mode. This reuses
+the ACM branch of `tools/return-to-flash.sh` without its unbound SSH fallback.
+
+Only a 256 MiB strict ext2 system image with matching kit identity is accepted. Exactly
+one Odin device must appear on the same physical USB port; other Fastboot phones can
+remain connected. Every issued device command requires guard `ALLOW`. The write is
+`tools/safe-flash.sh --port samsung-expressatt --mode samsung-download --execute flash userdata IMAGE`.
+The existing verified userdata backup and allowlist remain required by safe-flash.
+BOOT and partition tables are not written. After the no-reboot flash, the helper uses
+`heimdall print-pit --resume` to reboot and waits at most 90 seconds for serial-verified SSH.
+
+SSH host keys are stored in the port's `journal/plans/expressatt-reflash-known-hosts`.
+Before flashing, an unexpected changed key fails normally. After a successful flash and
+rediscovery of the expected system gadget on the same USB port, the old key file is copied
+to a unique `.before-reflash.*` backup and a fresh dedicated file accepts the new key once.
+This explicitly trusts the verified USB attachment for the expected reinstallation; it
+does not authenticate the new key through the previous key. An unexpected key change
+within the subsequent boot still fails. The helper never uses StrictHostKeyChecking=no.
+
+On failure, inspect the ACM/reboot logs in the same journal directory. Recover through
+Odin using the documented verified userdata backup; the stock bootloader and lk2nd remain
+available. Runtime reflash acceptance must be recorded from the actual phone, separately
+from the helper's host-only dry run.
+
 `samsung-expressatt_rescue_defconfig` builds a RAM-only `boot.img` with the same kernel,
 USB identity ending in `-rescue`, SSH and disk inspection tools. A rescue boot changes
 no phone storage. The persistent image stores its root filesystem on userdata, so
