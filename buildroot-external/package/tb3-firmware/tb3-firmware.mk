@@ -5,6 +5,11 @@
 ################################################################################
 
 TB3_FIRMWARE_SITE = $(call qstrip,$(BR2_PACKAGE_TB3_FIRMWARE_DIR))
+# The directory is only set when the package is enabled, Buildroot needs a
+# site for every local package
+ifeq ($(TB3_FIRMWARE_SITE),)
+TB3_FIRMWARE_SITE = $(TB3_FIRMWARE_PKGDIR)
+endif
 TB3_FIRMWARE_SITE_METHOD = local
 TB3_FIRMWARE_LICENSE = proprietary
 
