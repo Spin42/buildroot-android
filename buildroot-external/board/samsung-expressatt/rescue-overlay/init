@@ -1,0 +1,24 @@
+#!/bin/sh
+# RAM-only rescue init, using the kit's shared USB and recovery helpers.
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+. /usr/lib/kit-common.sh
+
+kit_mount
+kit_signals
+kit_watchdog
+hostname expressatt-rescue
+kit_banner | while IFS= read -r l; do kit_say "$l"; done
+ls /sys/fs/pstore/* >/dev/null 2>&1 && kit_say "pstore has logs from the previous boot: /sys/fs/pstore"
+kit_start_usb
+
+(
+	while true; do
+		setsid sh -c 'exec sh </dev/tty0 >/dev/tty0 2>&1' 2>/dev/null || sh </dev/tty0 >/dev/tty0 2>&1
+		sleep 1
+	done
+) &
+
+while true; do
+	sleep 60 &
+	wait $!
+done

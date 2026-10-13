@@ -1,0 +1,8 @@
+# RAM-only rescue system; USB identity distinguishes it from first light.
+KIT_PORT=samsung-expressatt
+KIT_IMAGE=rescue
+KIT_SERIAL=08a571a0
+KIT_RETURN_MODE=download
+KIT_FAIL_REBOOT=60
+KIT_DEV_ADDR=02:4b:49:54:00:01
+KIT_HOST_ADDR=02:4b:49:54:00:02
