@@ -1,0 +1,23 @@
+#!/bin/sh
+. /usr/lib/kit-common.sh
+
+case "$1" in
+    start)
+        mkdir -p /sys/kernel/config /sys/fs/pstore
+        if ! mount -t configfs configfs /sys/kernel/config; then
+            kit_say "cannot mount configfs for USB gadget"
+            exit 1
+        fi
+        if ! mount -t pstore pstore /sys/fs/pstore; then
+            kit_say "pstore is unavailable"
+        fi
+        kit_watchdog
+        kit_start_usb
+        ;;
+    stop)
+        ;;
+    *)
+        echo "Usage: $0 {start|stop}" >&2
+        exit 1
+        ;;
+esac

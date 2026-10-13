@@ -1,0 +1,121 @@
+# Kernel options needed by the first-light and rescue systems (merge into board/<id>/linux.config).
+
+# The pmaports base config is a broad multi-v7 distribution kernel. BOOT on
+# this phone is only 10 MiB, so retain the Qualcomm platform and discard the
+# unrelated SoCs. Keep tristate support so unrelated distribution drivers stay
+# outside zImage; the post-build hook omits their modules from the initramfs.
+CONFIG_MODULES=y
+# CONFIG_ARCH_VIRT is not set
+# CONFIG_ARCH_AIROHA is not set
+# CONFIG_ARCH_HPE is not set
+# CONFIG_ARCH_SUNPLUS is not set
+# CONFIG_ARCH_UNIPHIER is not set
+# CONFIG_ARCH_ACTIONS is not set
+# CONFIG_ARCH_ALPINE is not set
+# CONFIG_ARCH_ARTPEC is not set
+# CONFIG_ARCH_ASPEED is not set
+# CONFIG_ARCH_MICROCHIP is not set
+# CONFIG_ARCH_AT91 is not set
+# CONFIG_ARCH_BCM is not set
+# CONFIG_ARCH_BERLIN is not set
+# CONFIG_ARCH_DIGICOLOR is not set
+# CONFIG_ARCH_EXYNOS is not set
+# CONFIG_ARCH_HIGHBANK is not set
+# CONFIG_ARCH_HISI is not set
+# CONFIG_ARCH_MXC is not set
+# CONFIG_ARCH_KEYSTONE is not set
+# CONFIG_ARCH_MEDIATEK is not set
+# CONFIG_ARCH_MESON is not set
+# CONFIG_ARCH_MILBEAUT is not set
+# CONFIG_ARCH_MMP is not set
+# CONFIG_ARCH_MVEBU is not set
+# CONFIG_ARCH_OMAP is not set
+# CONFIG_ARCH_OMAP3 is not set
+# CONFIG_ARCH_OMAP4 is not set
+# CONFIG_ARCH_OMAP2PLUS is not set
+# CONFIG_SOC_OMAP3430 is not set
+# CONFIG_SOC_TI81XX is not set
+# CONFIG_SOC_OMAP5 is not set
+# CONFIG_SOC_AM33XX is not set
+# CONFIG_SOC_AM43XX is not set
+# CONFIG_SOC_DRA7XX is not set
+# CONFIG_ARCH_ROCKCHIP is not set
+# CONFIG_ARCH_RENESAS is not set
+# CONFIG_ARCH_INTEL_SOCFPGA is not set
+# CONFIG_ARCH_SPEAR13XX is not set
+# CONFIG_ARCH_STI is not set
+# CONFIG_ARCH_STM32 is not set
+# CONFIG_ARCH_SUNXI is not set
+# CONFIG_ARCH_TEGRA is not set
+# CONFIG_ARCH_U8500 is not set
+# CONFIG_ARCH_VEXPRESS is not set
+# CONFIG_ARCH_VT8500 is not set
+# CONFIG_ARCH_WM8850 is not set
+# CONFIG_ARCH_ZYNQ is not set
+
+# First light only needs enough kernel to boot, print, expose a rescue shell,
+# and recover. Keep bulky diagnostic and peripheral subsystems out of BOOT.
+CONFIG_DEBUG_INFO_NONE=y
+# CONFIG_DEBUG_INFO is not set
+# CONFIG_DEBUG_INFO_DWARF5 is not set
+# CONFIG_FTRACE is not set
+# CONFIG_KPROBES is not set
+# CONFIG_SOUND is not set
+# CONFIG_MEDIA_SUPPORT is not set
+# CONFIG_WLAN is not set
+# CONFIG_BT is not set
+# CONFIG_NFC is not set
+# CONFIG_NETFILTER is not set
+# CONFIG_IPV6 is not set
+
+CONFIG_BLK_DEV_INITRD=y
+CONFIG_RD_GZIP=y
+CONFIG_DEVTMPFS=y
+CONFIG_DEVTMPFS_MOUNT=y
+CONFIG_FB=y
+CONFIG_FB_SIMPLE=y
+CONFIG_DRM_SIMPLEDRM=y
+CONFIG_FRAMEBUFFER_CONSOLE=y
+CONFIG_FRAMEBUFFER_CONSOLE_ROTATION=y
+CONFIG_VT=y
+CONFIG_VT_CONSOLE=y
+CONFIG_LOGO=y
+CONFIG_PRINTK_TIME=y
+CONFIG_MAGIC_SYSRQ=y
+CONFIG_PSTORE=y
+CONFIG_PSTORE_RAM=y
+CONFIG_PSTORE_CONSOLE=y
+CONFIG_PSTORE_PMSG=y
+CONFIG_CONFIGFS_FS=y
+CONFIG_USB_GADGET=y
+CONFIG_USB_CONFIGFS=y
+CONFIG_USB_CONFIGFS_NCM=y
+CONFIG_USB_CONFIGFS_RNDIS=y
+CONFIG_USB_CONFIGFS_ECM=y
+CONFIG_TMPFS=y
+CONFIG_EXT4_FS=y
+CONFIG_EXT2_FS=y
+CONFIG_QCOM_PM8XXX_XOADC=y
+# ACM console of the kit gadget (ttyGS0)
+CONFIG_USB_CONFIGFS_ACM=y
+# Self-recovery: reboot 10 s after a panic, panic on a soft lockup, a hardware watchdog
+# (add the SoC driver, e.g. CONFIG_QCOM_WDT=y on Qualcomm)
+CONFIG_PANIC_TIMEOUT=10
+CONFIG_SOFTLOCKUP_DETECTOR=y
+CONFIG_BOOTPARAM_SOFTLOCKUP_PANIC=1
+CONFIG_WATCHDOG=y
+# reboot-mode: write the restart reason the bootloader reads (bootloader/download/recovery);
+# needs the SoC reboot driver (e.g. CONFIG_POWER_RESET_MSM=y) and a reboot-mode node in the DT
+CONFIG_POWER_RESET=y
+CONFIG_REBOOT_MODE=y
+CONFIG_SYSCON_REBOOT_MODE=y
+# MSM8960 device-specific recovery and USB-console requirements.
+CONFIG_QCOM_WDT=y
+CONFIG_USB_F_ACM=y
+CONFIG_USB_F_NCM=y
+CONFIG_USB_LIBCOMPOSITE=y
+
+# BTF is useful for kernel introspection, but first light does not need the
+# extra pahole host dependency or its debug metadata in the boot image.
+# CONFIG_DEBUG_INFO_BTF is not set
+# CONFIG_DEBUG_INFO_BTF_MODULES is not set
