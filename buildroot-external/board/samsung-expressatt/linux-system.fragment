@@ -1,0 +1,62 @@
+# Persistent WiFi uses loadable drivers so USB recovery starts before RIVA.
+CONFIG_HWSPINLOCK_QCOM=y
+CONFIG_QCOM_CLK_RPM=y
+CONFIG_QCOM_SCM=y
+CONFIG_QCOM_SMEM=y
+CONFIG_QCOM_SMSM=y
+CONFIG_RPMSG_QCOM_SMD=y
+CONFIG_WLAN=y
+CONFIG_WLAN_VENDOR_ATH=y
+CONFIG_RFKILL=m
+CONFIG_CFG80211=m
+CONFIG_MAC80211=m
+CONFIG_WCN36XX=m
+CONFIG_LIBARC4=m
+CONFIG_QRTR=m
+CONFIG_QCOM_QMI_HELPERS=m
+CONFIG_QCOM_SYSMON=m
+CONFIG_QCOM_RPROC_COMMON=m
+CONFIG_QCOM_PIL_INFO=m
+CONFIG_QCOM_MDT_LOADER=m
+CONFIG_QCOM_WCNSS_CTRL=m
+CONFIG_QCOM_WCNSS_PIL=m
+# CONFIG_AR5523 is not set
+# CONFIG_ATH10K is not set
+# CONFIG_ATH11K is not set
+# CONFIG_ATH12K is not set
+# CONFIG_ATH5K is not set
+# CONFIG_ATH5K_PCI is not set
+# CONFIG_ATH6KL is not set
+# CONFIG_ATH9K is not set
+# CONFIG_ATH9K_HTC is not set
+# CONFIG_BRCMFMAC is not set
+# CONFIG_BRCMSMAC is not set
+# CONFIG_GCC_PLUGINS is not set
+# CONFIG_IWLWIFI is not set
+# CONFIG_MT7601U is not set
+# CONFIG_MT7603E is not set
+# CONFIG_MT7615E is not set
+# CONFIG_MT7663S is not set
+# CONFIG_MT7663U is not set
+# CONFIG_MT76x0E is not set
+# CONFIG_MT76x0U is not set
+# CONFIG_MT76x2E is not set
+# CONFIG_MT76x2U is not set
+# CONFIG_MT7915E is not set
+# CONFIG_MT7921E is not set
+# CONFIG_MT7921U is not set
+# CONFIG_MT7925E is not set
+# CONFIG_MT7925U is not set
+# CONFIG_MT7996E is not set
+# CONFIG_MWIFIEX is not set
+# CONFIG_RT2X00 is not set
+# CONFIG_RTL8180 is not set
+# CONFIG_RTL8187 is not set
+# CONFIG_RTL8723BS is not set
+# CONFIG_RTL8XXXU is not set
+# CONFIG_RTW88 is not set
+# CONFIG_RTW89 is not set
+# CONFIG_WL1251 is not set
+# CONFIG_WL12XX is not set
+# CONFIG_WL18XX is not set
+# CONFIG_WLCORE is not set

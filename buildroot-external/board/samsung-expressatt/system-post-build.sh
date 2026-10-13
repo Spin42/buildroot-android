@@ -2,7 +2,7 @@
 set -eu
 target_dir=$1
 board_dir="${BR2_EXTERNAL_ANDROID_PATH}/board/samsung-expressatt"
-"$board_dir/post-build.sh" "$target_dir"
+"$board_dir/scripts/install-system-modules.sh" "$target_dir"
 
 for obsolete in "$target_dir/init" "$target_dir/etc/init.d/S50dropbear" "$target_dir/etc/init.d/S50telnet"; do
     if [ -e "$obsolete" ] || [ -L "$obsolete" ]; then

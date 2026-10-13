@@ -1,0 +1,52 @@
+#!/bin/sh
+. /usr/lib/kit-common.sh
+
+wifi_start() {
+    remaining=30
+    while :; do
+        if [ -n "$(cat /sys/kernel/config/usb_gadget/g1/UDC 2>/dev/null)" ] &&
+           [ -s /var/run/dropbear.pid ] &&
+           kill -0 "$(cat /var/run/dropbear.pid)" 2>/dev/null &&
+           pidof watchdog >/dev/null; then
+            break
+        fi
+        [ "$remaining" -gt 0 ] || { kit_say 'WiFi skipped: USB, SSH or watchdog not ready'; return 1; }
+        remaining=$((remaining - 1))
+        sleep 1
+    done
+
+    # Sysmon needs the QRTR socket family even though RIVA uses SMD transport.
+    for module in qrtr wcnss_ctrl wcn36xx qcom_wcnss_pil; do
+        if ! modprobe "$module"; then
+            kit_say "WiFi module failed: $module"
+            return 1
+        fi
+    done
+    remaining=30
+    while [ ! -e /sys/class/net/wlan0/flags ]; do
+        [ "$remaining" -gt 0 ] || { kit_say 'WiFi interface timed out'; return 1; }
+        remaining=$((remaining - 1))
+        sleep 1
+    done
+    if ! ip link set wlan0 up; then
+        kit_say 'WiFi link activation failed'
+        return 1
+    fi
+    flags=$(cat /sys/class/net/wlan0/flags) || return 1
+    case "$flags" in
+        0x*[!0-9a-fA-F]*|0x|'') kit_say 'WiFi interface flags invalid'; return 1 ;;
+        0x*) ;;
+        *) kit_say 'WiFi interface flags invalid'; return 1 ;;
+    esac
+    if [ "$((flags & 1))" -eq 0 ]; then
+        kit_say 'WiFi firmware did not bring wlan0 up'
+        return 1
+    fi
+    kit_say 'WiFi wlan0 is ready for scanning'
+}
+
+case "${1:-}" in
+    start) wifi_start ;;
+    stop) ip link set wlan0 down ;;
+    *) echo "Usage: $0 {start|stop}" >&2; exit 1 ;;
+esac

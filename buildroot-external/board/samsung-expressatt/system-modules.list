@@ -1,0 +1,13 @@
+net/rfkill/rfkill.ko
+net/wireless/cfg80211.ko
+lib/crypto/libarc4.ko
+net/mac80211/mac80211.ko
+drivers/soc/qcom/wcnss_ctrl.ko
+drivers/net/wireless/ath/wcn36xx/wcn36xx.ko
+net/qrtr/qrtr.ko
+drivers/soc/qcom/qmi_helpers.ko
+drivers/remoteproc/qcom_sysmon.ko
+drivers/remoteproc/qcom_common.ko
+drivers/remoteproc/qcom_pil_info.ko
+drivers/soc/qcom/mdt_loader.ko
+drivers/remoteproc/qcom_wcnss_pil.ko
