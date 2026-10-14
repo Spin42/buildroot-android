@@ -13,7 +13,9 @@ KEY_DIR="${RAUC_KEY_DIR:-${BASE_DIR}/rauc-keys}"
 
 if [ ! -f "${KEY_DIR}/key.pem" ]; then
 	mkdir -p "${KEY_DIR}"
-	openssl req -x509 -newkey rsa:4096 -nodes -days 3650 \
+	# Valid from the epoch: the phone clock may not be set when a bundle is installed
+	"${HOST_DIR}/bin/openssl" req -x509 -newkey rsa:4096 -nodes \
+		-not_before 19700101000000Z -not_after 20991231235959Z \
 		-subj "/O=Fairphone 2 development/CN=rauc" \
 		-keyout "${KEY_DIR}/key.pem" -out "${KEY_DIR}/cert.pem"
 	echo "Generated a RAUC development key in ${KEY_DIR}"
