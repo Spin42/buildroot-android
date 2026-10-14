@@ -1,0 +1,630 @@
+From a4ea8daea0fb0f9c3ed0128ce53abc4e4d692906 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Mon, 12 Oct 2026 00:51:44 +0200
+Subject: [PATCH 20/26] power: supply: add Qualcomm BMS1 fuel gauge driver
+
+Add a driver for the BMS1 fuel gauge of PM8941 and PM8226. The hardware
+latches the battery open circuit voltage at power-on and whenever the
+current stays low, and restarts its 36-bit coulomb counter with each
+latch. The state of charge is the charge the OCV implies, from the
+monitored-battery OCV tables, minus the charge counted since.
+
+The register map and conversions follow the vendor qpnp-bms driver. The
+OCV register holds a VADC code of VBAT_SNS, trimmed against the 625 mV
+and 1.25 V references, not millivolts as the unmerged 2018 qcom_bms
+series assumed.
+
+Exposes capacity, charge now and since the last OCV, OCV, voltage,
+current, temperature and the design limits. Unusable charge at cutoff,
+FCC learning and the IADC gain trim are not implemented.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/power/supply/Kconfig    |  13 +
+ drivers/power/supply/Makefile   |   1 +
+ drivers/power/supply/qcom_bms.c | 560 ++++++++++++++++++++++++++++++++
+ 3 files changed, 574 insertions(+)
+ create mode 100644 drivers/power/supply/qcom_bms.c
+
+diff --git a/drivers/power/supply/Kconfig b/drivers/power/supply/Kconfig
+index 79ddb006e2da..024813e9a58a 100644
+--- a/drivers/power/supply/Kconfig
++++ b/drivers/power/supply/Kconfig
+@@ -214,6 +214,19 @@ config BATTERY_QCOM_BATTMGR
+ 	  which is used on modern Qualcomm platforms to provide battery and
+ 	  power supply information.
+ 
++config BATTERY_QCOM_BMS
++	tristate "Qualcomm BMS1 fuel gauge support"
++	depends on MFD_SPMI_PMIC || COMPILE_TEST
++	depends on IIO
++	help
++	  Say Y to add support for the Battery Monitoring System (BMS1)
++	  fuel gauge found in Qualcomm PMICs such as PM8941 and PM8226. It
++	  computes the state of charge from the open circuit voltage the
++	  hardware latches and its coulomb counter.
++
++	  To compile this driver as module, choose M here: the
++	  module will be called qcom_bms.
++
+ config BATTERY_OLPC
+ 	tristate "One Laptop Per Child battery"
+ 	depends on OLPC_EC
+diff --git a/drivers/power/supply/Makefile b/drivers/power/supply/Makefile
+index 4f5f8e3507f8..97eb5effa415 100644
+--- a/drivers/power/supply/Makefile
++++ b/drivers/power/supply/Makefile
+@@ -37,6 +37,7 @@ obj-$(CONFIG_BATTERY_LEGO_EV3)	+= lego_ev3_battery.o
+ obj-$(CONFIG_BATTERY_LENOVO_YOGA_C630) += lenovo_yoga_c630_battery.o
+ obj-$(CONFIG_BATTERY_PMU)	+= pmu_battery.o
+ obj-$(CONFIG_BATTERY_QCOM_BATTMGR)	+= qcom_battmgr.o
++obj-$(CONFIG_BATTERY_QCOM_BMS)	+= qcom_bms.o
+ obj-$(CONFIG_BATTERY_OLPC)	+= olpc_battery.o
+ obj-$(CONFIG_BATTERY_SAMSUNG_SDI)	+= samsung-sdi-battery.o
+ obj-$(CONFIG_BATTERY_COLLIE)	+= collie_battery.o
+diff --git a/drivers/power/supply/qcom_bms.c b/drivers/power/supply/qcom_bms.c
+new file mode 100644
+index 000000000000..ffe6294e38d4
+--- /dev/null
++++ b/drivers/power/supply/qcom_bms.c
+@@ -0,0 +1,560 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Qualcomm Battery Monitoring System (BMS1) fuel gauge driver
++ * (PM8941, PM8226).
++ *
++ * The BMS1 block latches an open circuit voltage (OCV) when the battery
++ * current stays low long enough (and once at power-on), and integrates
++ * the voltage across an external sense resistor in a 36-bit coulomb
++ * counter (CC) that the hardware restarts whenever it latches a new OCV.
++ * State of charge is therefore the charge implied by the OCV, looked up
++ * in the monitored-battery OCV-to-capacity tables, minus the charge the
++ * CC has counted since.
++ *
++ * Register layout and conversion constants follow the vendor qpnp-bms
++ * driver; the CC/OCV approach follows the qcom_bms series by Craig Tatlor.
++ */
++
++#include <linux/cleanup.h>
++#include <linux/delay.h>
++#include <linux/errno.h>
++#include <linux/iio/consumer.h>
++#include <linux/math64.h>
++#include <linux/minmax.h>
++#include <linux/mod_devicetable.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/platform_device.h>
++#include <linux/power_supply.h>
++#include <linux/property.h>
++#include <linux/regmap.h>
++
++#define BMS_PERPH_TYPE			0x04
++#define BMS_PERPH_SUBTYPE		0x05
++#define  BMS_TYPE			0x0d
++#define  BMS_BMS1_SUBTYPE		0x01
++
++#define BMS1_CC_DATA_CTL		0x42
++#define  BMS1_HOLD_OREG_DATA		BIT(0)
++
++#define BMS1_CC_DATA0			0x8a	/* 5 bytes, signed 36-bit */
++#define BMS1_OCV_FOR_SOC_DATA0		0x90	/* 2 bytes, VADC code */
++#define BMS1_VSENSE_AVG_DATA0		0x98	/* 2 bytes, signed */
++#define BMS1_VBAT_AVG_DATA0		0x9e	/* 2 bytes, VADC code */
++
++/* IADC1_BMS peripheral (second reg entry) */
++#define IADC1_BMS_ADC_CH_SEL_CTL	0x48
++#define  IADC1_BMS_CH_SEL_MASK		GENMASK(2, 0)
++#define  IADC1_BMS_CH_INTERNAL_RSENSE	0x0
++#define  IADC1_BMS_CH_EXTERNAL_RSENSE	0x1
++
++/*
++ * OCV and VBAT_AVG are raw VADC codes of VBAT_SNS, which the PMIC divides
++ * by three before the converter: 97.656 uV per bit above 0x6000, trimmed
++ * against the 625 mV and 1.25 V references.
++ */
++#define VADC_INTRINSIC_OFFSET		0x6000
++#define VADC_UV_PER_BIT_MUL		97656
++#define VADC_UV_PER_BIT_DIV		1000
++#define VADC_CALIB_UV			625000
++#define VBAT_PRESCALE			3
++
++/* Vsense (CC and VSENSE_AVG): 5.42535 uV per bit */
++#define CC_RESOLUTION_N			542535
++#define CC_RESOLUTION_D			100000
++/* The CC accumulates once per 56 ticks of the 32764 Hz sleep clock */
++#define CC_READING_TICKS		56
++#define SLEEP_CLK_HZ			32764
++#define SECONDS_PER_HOUR		3600
++
++/* The OCV register holds a value below this until the first latch */
++#define BMS_MIN_OCV_UV			2000000
++#define BMS_DEFAULT_TEMP_DECIDEGC	250
++
++struct qcom_bms {
++	struct device *dev;
++	struct regmap *regmap;
++	unsigned int base;
++	unsigned int iadc_base;		/* 0 when not described */
++	u32 rsense_uohm;
++
++	struct power_supply *psy;
++	struct power_supply_battery_info *batt_info;
++
++	struct iio_channel *vbat;	/* optional, VBAT_SNS */
++	struct iio_channel *batt_therm;	/* optional */
++	struct iio_channel *ref_625mv;	/* optional, with ref_1250mv */
++	struct iio_channel *ref_1250mv;
++
++	struct mutex lock; /* serialises the output-hold sequence */
++
++	u16 ocv_raw;			/* last OCV code seen */
++	int ocv_uv;
++};
++
++/* --- Conversions --- */
++
++static int bms_vadc_code_to_uv(struct qcom_bms *bms, u16 code)
++{
++	int uv, v0625 = 0, v1250 = 0, raw;
++	s64 num, den;
++
++	if (code <= VADC_INTRINSIC_OFFSET)
++		return 0;
++
++	uv = (code - VADC_INTRINSIC_OFFSET) * VADC_UV_PER_BIT_MUL /
++	     VADC_UV_PER_BIT_DIV;
++
++	if (bms->ref_625mv && bms->ref_1250mv &&
++	    iio_read_channel_raw(bms->ref_625mv, &raw) >= 0 &&
++	    raw > VADC_INTRINSIC_OFFSET) {
++		v0625 = (raw - VADC_INTRINSIC_OFFSET) * VADC_UV_PER_BIT_MUL /
++			VADC_UV_PER_BIT_DIV;
++		if (iio_read_channel_raw(bms->ref_1250mv, &raw) >= 0 &&
++		    raw > VADC_INTRINSIC_OFFSET)
++			v1250 = (raw - VADC_INTRINSIC_OFFSET) *
++				VADC_UV_PER_BIT_MUL / VADC_UV_PER_BIT_DIV;
++	}
++
++	if (v0625 && v1250 > v0625) {
++		num = (s64)(uv - v0625) * VADC_CALIB_UV;
++		den = v1250 - v0625;
++		uv = VADC_CALIB_UV + div_s64(num, den);
++	}
++
++	return uv * VBAT_PRESCALE;
++}
++
++static s64 bms_vsense_to_uv(s64 raw)
++{
++	return div_s64(raw * CC_RESOLUTION_N, CC_RESOLUTION_D);
++}
++
++/* Charge counted by the CC, in uAh; positive = taken out of the battery */
++static s64 bms_cc_to_uah(struct qcom_bms *bms, s64 raw)
++{
++	s64 uv, pvh;
++
++	uv = bms_vsense_to_uv(raw);
++	/* uV * s -> pVh; split the 1e6 factor to stay inside 64 bits */
++	pvh = div_s64(uv * CC_READING_TICKS * 100000,
++		      SLEEP_CLK_HZ * SECONDS_PER_HOUR) * 10;
++
++	return div_s64(pvh, bms->rsense_uohm);
++}
++
++/* --- Register access --- */
++
++static int bms_hold(struct qcom_bms *bms, bool hold)
++{
++	int ret;
++
++	ret = regmap_update_bits(bms->regmap, bms->base + BMS1_CC_DATA_CTL,
++				 BMS1_HOLD_OREG_DATA,
++				 hold ? BMS1_HOLD_OREG_DATA : 0);
++	/* Two sleep-clock cycles before the output registers are frozen */
++	if (!ret && hold)
++		usleep_range(100, 200);
++
++	return ret;
++}
++
++static int bms_read_le(struct qcom_bms *bms, unsigned int reg, u8 *buf,
++		       size_t len)
++{
++	return regmap_bulk_read(bms->regmap, bms->base + reg, buf, len);
++}
++
++/* Read the latched OCV code and the CC since then, coherently */
++static int bms_read_ocv_cc(struct qcom_bms *bms, u16 *ocv_raw, s64 *cc_raw)
++{
++	u8 buf[5];
++	u64 cc;
++	int ret, ret2;
++
++	guard(mutex)(&bms->lock);
++
++	ret = bms_hold(bms, true);
++	if (ret)
++		return ret;
++
++	ret = bms_read_le(bms, BMS1_OCV_FOR_SOC_DATA0, buf, 2);
++	if (ret)
++		goto release;
++	*ocv_raw = buf[0] | buf[1] << 8;
++
++	ret = bms_read_le(bms, BMS1_CC_DATA0, buf, 5);
++	if (ret)
++		goto release;
++	cc = (u64)buf[0] | (u64)buf[1] << 8 | (u64)buf[2] << 16 |
++	     (u64)buf[3] << 24 | (u64)buf[4] << 32;
++	*cc_raw = sign_extend64(cc, 35);
++
++release:
++	ret2 = bms_hold(bms, false);
++	return ret ?: ret2;
++}
++
++static int bms_read_avg16(struct qcom_bms *bms, unsigned int reg, u16 *val)
++{
++	u8 buf[2];
++	int ret, ret2;
++
++	guard(mutex)(&bms->lock);
++
++	ret = bms_hold(bms, true);
++	if (ret)
++		return ret;
++
++	ret = bms_read_le(bms, reg, buf, 2);
++	ret2 = bms_hold(bms, false);
++	if (ret || ret2)
++		return ret ?: ret2;
++
++	*val = buf[0] | buf[1] << 8;
++	return 0;
++}
++
++/* --- Measurements --- */
++
++static int bms_read_temp(struct qcom_bms *bms, int *decidegc)
++{
++	int ret, mdegc;
++
++	if (!bms->batt_therm)
++		return -ENODEV;
++
++	ret = iio_read_channel_processed(bms->batt_therm, &mdegc);
++	if (ret < 0)
++		return ret;
++
++	*decidegc = mdegc / 100;
++	return 0;
++}
++
++static int bms_temp_or_default(struct qcom_bms *bms)
++{
++	int t;
++
++	return bms_read_temp(bms, &t) ? BMS_DEFAULT_TEMP_DECIDEGC : t;
++}
++
++static int bms_read_current(struct qcom_bms *bms, int *ua)
++{
++	u16 raw;
++	s64 uv;
++	int ret;
++
++	ret = bms_read_avg16(bms, BMS1_VSENSE_AVG_DATA0, &raw);
++	if (ret)
++		return ret;
++
++	uv = bms_vsense_to_uv((s16)raw);
++	/* Hardware: positive = discharge; ABI: positive = charge */
++	*ua = -(int)div_s64(uv * 1000000, bms->rsense_uohm);
++	return 0;
++}
++
++static int bms_read_voltage(struct qcom_bms *bms, int *uv)
++{
++	u16 raw;
++	int ret;
++
++	if (bms->vbat) {
++		ret = iio_read_channel_processed(bms->vbat, uv);
++		return ret < 0 ? ret : 0;
++	}
++
++	/* Fallback: the BMS running average, same code format as the OCV */
++	ret = bms_read_avg16(bms, BMS1_VBAT_AVG_DATA0, &raw);
++	if (ret)
++		return ret;
++
++	*uv = bms_vadc_code_to_uv(bms, raw);
++	return *uv ? 0 : -ENODATA;
++}
++
++/*
++ * Refresh the OCV and return the charge counted since it was latched.
++ * The OCV code only changes when the hardware latches a new one, which
++ * also restarts the CC, so the pair read under one hold is consistent.
++ */
++static int bms_update(struct qcom_bms *bms, s64 *cc_uah)
++{
++	u16 ocv_raw;
++	s64 cc_raw;
++	int ret;
++
++	ret = bms_read_ocv_cc(bms, &ocv_raw, &cc_raw);
++	if (ret)
++		return ret;
++
++	if (ocv_raw != bms->ocv_raw || !bms->ocv_uv) {
++		bms->ocv_raw = ocv_raw;
++		bms->ocv_uv = bms_vadc_code_to_uv(bms, ocv_raw);
++		dev_dbg(bms->dev, "new OCV 0x%04x = %d uV\n", ocv_raw,
++			bms->ocv_uv);
++	}
++
++	*cc_uah = bms_cc_to_uah(bms, cc_raw);
++	return 0;
++}
++
++static int bms_get_charge_now(struct qcom_bms *bms, int *uah)
++{
++	int fcc = bms->batt_info->charge_full_design_uah;
++	int pc, temp;
++	s64 cc_uah;
++	int ret;
++
++	ret = bms_update(bms, &cc_uah);
++	if (ret)
++		return ret;
++
++	if (bms->ocv_uv < BMS_MIN_OCV_UV)
++		return -ENODATA;
++
++	temp = bms_temp_or_default(bms);
++	pc = power_supply_batinfo_ocv2cap(bms->batt_info, bms->ocv_uv, temp);
++	if (pc < 0)
++		return pc;
++
++	*uah = clamp_t(s64, div_s64((s64)fcc * pc, 100) - cc_uah, 0, fcc);
++	return 0;
++}
++
++static int bms_get_capacity(struct qcom_bms *bms, int *capacity)
++{
++	int fcc = bms->batt_info->charge_full_design_uah;
++	int uah, ret;
++
++	ret = bms_get_charge_now(bms, &uah);
++	if (ret)
++		return ret;
++
++	*capacity = DIV_ROUND_CLOSEST_ULL((u64)uah * 100, fcc);
++	return 0;
++}
++
++/* --- Power supply interface --- */
++
++static int bms_get_property(struct power_supply *psy,
++			    enum power_supply_property psp,
++			    union power_supply_propval *val)
++{
++	struct qcom_bms *bms = power_supply_get_drvdata(psy);
++	s64 cc_uah;
++	int ret;
++
++	if (psp == POWER_SUPPLY_PROP_TECHNOLOGY) {
++		val->intval = POWER_SUPPLY_TECHNOLOGY_LION;
++		return 0;
++	}
++
++	/* The battery description is parsed after registration */
++	if (!bms->batt_info)
++		return -ENODATA;
++
++	switch (psp) {
++	case POWER_SUPPLY_PROP_CAPACITY:
++		return bms_get_capacity(bms, &val->intval);
++	case POWER_SUPPLY_PROP_CHARGE_NOW:
++		return bms_get_charge_now(bms, &val->intval);
++	case POWER_SUPPLY_PROP_CHARGE_COUNTER:
++		/* Charge since the last OCV latch; ABI sign: in = positive */
++		ret = bms_update(bms, &cc_uah);
++		if (ret)
++			return ret;
++		val->intval = -(int)cc_uah;
++		return 0;
++	case POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN:
++		val->intval = bms->batt_info->charge_full_design_uah;
++		return 0;
++	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
++		return bms_read_voltage(bms, &val->intval);
++	case POWER_SUPPLY_PROP_VOLTAGE_OCV:
++		ret = bms_update(bms, &cc_uah);
++		if (ret)
++			return ret;
++		if (bms->ocv_uv < BMS_MIN_OCV_UV)
++			return -ENODATA;
++		val->intval = bms->ocv_uv;
++		return 0;
++	case POWER_SUPPLY_PROP_CURRENT_NOW:
++		return bms_read_current(bms, &val->intval);
++	case POWER_SUPPLY_PROP_TEMP:
++		return bms_read_temp(bms, &val->intval);
++	case POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN:
++		val->intval = bms->batt_info->voltage_max_design_uv;
++		return 0;
++	case POWER_SUPPLY_PROP_VOLTAGE_MIN_DESIGN:
++		val->intval = bms->batt_info->voltage_min_design_uv;
++		return 0;
++	default:
++		return -EINVAL;
++	}
++}
++
++static const enum power_supply_property bms_properties[] = {
++	POWER_SUPPLY_PROP_TECHNOLOGY,
++	POWER_SUPPLY_PROP_CAPACITY,
++	POWER_SUPPLY_PROP_CHARGE_NOW,
++	POWER_SUPPLY_PROP_CHARGE_COUNTER,
++	POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN,
++	POWER_SUPPLY_PROP_VOLTAGE_NOW,
++	POWER_SUPPLY_PROP_VOLTAGE_OCV,
++	POWER_SUPPLY_PROP_CURRENT_NOW,
++	POWER_SUPPLY_PROP_TEMP,
++	POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN,
++	POWER_SUPPLY_PROP_VOLTAGE_MIN_DESIGN,
++};
++
++static const struct power_supply_desc bms_psy_desc = {
++	.name = "qcom-bms",
++	.type = POWER_SUPPLY_TYPE_BATTERY,
++	.properties = bms_properties,
++	.num_properties = ARRAY_SIZE(bms_properties),
++	.get_property = bms_get_property,
++};
++
++/* --- Probe --- */
++
++static struct iio_channel *bms_get_optional_chan(struct device *dev,
++						 const char *name)
++{
++	struct iio_channel *chan = devm_iio_channel_get(dev, name);
++
++	if (IS_ERR(chan)) {
++		if (PTR_ERR(chan) == -EPROBE_DEFER)
++			return chan;
++		dev_dbg(dev, "no %s channel: %pe\n", name, chan);
++		return NULL;
++	}
++
++	return chan;
++}
++
++static void bms_check_iadc(struct qcom_bms *bms)
++{
++	unsigned int sel;
++
++	if (!bms->iadc_base ||
++	    regmap_read(bms->regmap, bms->iadc_base + IADC1_BMS_ADC_CH_SEL_CTL,
++			&sel))
++		return;
++
++	sel &= IADC1_BMS_CH_SEL_MASK;
++	if (sel != IADC1_BMS_CH_EXTERNAL_RSENSE)
++		dev_warn(bms->dev,
++			 "IADC senses channel %u, not the external resistor: current and CC are not trustworthy\n",
++			 sel);
++}
++
++static int qcom_bms_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct power_supply_config psy_cfg = {};
++	struct qcom_bms *bms;
++	unsigned int type, subtype;
++	u32 reg[2];
++	s64 cc_uah;
++	int n, ret;
++
++	bms = devm_kzalloc(dev, sizeof(*bms), GFP_KERNEL);
++	if (!bms)
++		return -ENOMEM;
++
++	bms->dev = dev;
++	mutex_init(&bms->lock);
++
++	bms->regmap = dev_get_regmap(dev->parent, NULL);
++	if (!bms->regmap)
++		return dev_err_probe(dev, -ENODEV, "no parent regmap\n");
++
++	n = device_property_count_u32(dev, "reg");
++	if (n < 1 || n > 2)
++		return dev_err_probe(dev, -EINVAL, "bad reg property\n");
++	ret = device_property_read_u32_array(dev, "reg", reg, n);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to read reg\n");
++	bms->base = reg[0];
++	bms->iadc_base = n > 1 ? reg[1] : 0;
++
++	ret = device_property_read_u32(dev, "shunt-resistor-micro-ohms",
++				       &bms->rsense_uohm);
++	if (ret || !bms->rsense_uohm)
++		return dev_err_probe(dev, -EINVAL,
++				     "shunt-resistor-micro-ohms is required\n");
++
++	ret = regmap_read(bms->regmap, bms->base + BMS_PERPH_TYPE, &type);
++	if (!ret)
++		ret = regmap_read(bms->regmap, bms->base + BMS_PERPH_SUBTYPE,
++				  &subtype);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to read peripheral type\n");
++	if (type != BMS_TYPE || subtype != BMS_BMS1_SUBTYPE)
++		return dev_err_probe(dev, -ENODEV,
++				     "not a BMS1 (type 0x%02x subtype 0x%02x)\n",
++				     type, subtype);
++
++	bms->vbat = bms_get_optional_chan(dev, "vbat");
++	if (IS_ERR(bms->vbat))
++		return PTR_ERR(bms->vbat);
++	bms->batt_therm = bms_get_optional_chan(dev, "batt-therm");
++	if (IS_ERR(bms->batt_therm))
++		return PTR_ERR(bms->batt_therm);
++	bms->ref_625mv = bms_get_optional_chan(dev, "ref-625mv");
++	if (IS_ERR(bms->ref_625mv))
++		return PTR_ERR(bms->ref_625mv);
++	bms->ref_1250mv = bms_get_optional_chan(dev, "ref-1250mv");
++	if (IS_ERR(bms->ref_1250mv))
++		return PTR_ERR(bms->ref_1250mv);
++
++	psy_cfg.drv_data = bms;
++	psy_cfg.fwnode = dev_fwnode(dev);
++
++	bms->psy = devm_power_supply_register(dev, &bms_psy_desc, &psy_cfg);
++	if (IS_ERR(bms->psy))
++		return dev_err_probe(dev, PTR_ERR(bms->psy),
++				     "failed to register power supply\n");
++
++	ret = power_supply_get_battery_info(bms->psy, &bms->batt_info);
++	if (ret)
++		return dev_err_probe(dev, ret, "no monitored-battery\n");
++	if (bms->batt_info->charge_full_design_uah <= 0 ||
++	    !bms->batt_info->ocv_table_size[0])
++		return dev_err_probe(dev, -EINVAL,
++				     "battery needs charge-full-design and OCV tables\n");
++
++	bms_check_iadc(bms);
++
++	ret = bms_update(bms, &cc_uah);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to read OCV and CC\n");
++
++	platform_set_drvdata(pdev, bms);
++
++	dev_info(dev, "BMS1: OCV 0x%04x = %d uV, CC %lld uAh since, rsense %u uOhm\n",
++		 bms->ocv_raw, bms->ocv_uv, cc_uah, bms->rsense_uohm);
++
++	return 0;
++}
++
++static const struct of_device_id qcom_bms_of_match[] = {
++	{ .compatible = "qcom,pm8941-bms" },
++	{}
++};
++MODULE_DEVICE_TABLE(of, qcom_bms_of_match);
++
++static struct platform_driver qcom_bms_driver = {
++	.driver = {
++		.name = "qcom-bms",
++		.of_match_table = qcom_bms_of_match,
++	},
++	.probe = qcom_bms_probe,
++};
++module_platform_driver(qcom_bms_driver);
++
++MODULE_DESCRIPTION("Qualcomm BMS1 fuel gauge driver");
++MODULE_AUTHOR("Marc Lainez <marc.lainez@gmail.com>");
++MODULE_LICENSE("GPL");

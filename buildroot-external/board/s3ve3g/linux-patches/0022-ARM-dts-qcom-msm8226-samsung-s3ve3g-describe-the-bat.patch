@@ -1,0 +1,97 @@
+From 8d9fc00d91e9811201f575748e21cc790ffa6c70 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Mon, 12 Oct 2026 01:04:45 +0200
+Subject: [PATCH 22/26] ARM: dts: qcom: msm8226-samsung-s3ve3g: describe the
+ battery, enable the BMS
+
+The OCV tables, design capacity and resistance are the vendor BMS
+profile this phone selects (samsung_2100mAH_data); the 10 mOhm sense
+resistor and the 3.4 V cutoff come from the vendor PMIC description.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ .../dts/qcom/qcom-msm8226-samsung-s3ve3g.dts  | 64 +++++++++++++++++++
+ 1 file changed, 64 insertions(+)
+
+diff --git a/arch/arm/boot/dts/qcom/qcom-msm8226-samsung-s3ve3g.dts b/arch/arm/boot/dts/qcom/qcom-msm8226-samsung-s3ve3g.dts
+index 67d613f6e3a5..12a5c7792c19 100644
+--- a/arch/arm/boot/dts/qcom/qcom-msm8226-samsung-s3ve3g.dts
++++ b/arch/arm/boot/dts/qcom/qcom-msm8226-samsung-s3ve3g.dts
+@@ -27,6 +27,63 @@ aliases {
+ 		serial0 = &blsp1_uart3;
+ 	};
+ 
++	/*
++	 * 2100 mAh, 4.35 V Li-ion. The OCV tables are the vendor BMS
++	 * profile for this phone (bms-batterydata-samsung-2100mah.c), one
++	 * table per ocv-capacity-celsius entry.
++	 */
++	battery: battery {
++		compatible = "simple-battery";
++		device-chemistry = "lithium-ion";
++		charge-full-design-microamp-hours = <2100000>;
++		voltage-min-design-microvolt = <3400000>;
++		voltage-max-design-microvolt = <4350000>;
++		constant-charge-voltage-max-microvolt = <4350000>;
++		charge-term-current-microamp = <200000>;
++		factory-internal-resistance-micro-ohms = <177000>;
++		ocv-capacity-celsius = <(-20) 0 25 40 60>;
++		ocv-capacity-table-0 = <4326000 100>, <4226000 95>, <4154000 90>, <4097000 85>,
++				       <4037000 80>, <3961000 75>, <3916000 70>, <3875000 65>,
++				       <3843000 60>, <3819000 55>, <3799000 50>, <3784000 45>,
++				       <3770000 40>, <3757000 35>, <3743000 30>, <3728000 25>,
++				       <3709000 20>, <3690000 16>, <3672000 13>, <3656000 11>,
++				       <3648000 10>, <3637000 9>, <3624000 8>, <3612000 7>,
++				       <3594000 6>, <3573000 5>, <3545000 4>, <3505000 3>,
++				       <3443000 2>, <3340000 1>, <3000000 0>;
++		ocv-capacity-table-1 = <4326000 100>, <4250000 95>, <4190000 90>, <4134000 85>,
++				       <4082000 80>, <4027000 75>, <3958000 70>, <3919000 65>,
++				       <3883000 60>, <3851000 55>, <3825000 50>, <3803000 45>,
++				       <3786000 40>, <3774000 35>, <3764000 30>, <3751000 25>,
++				       <3728000 20>, <3707000 16>, <3694000 13>, <3686000 11>,
++				       <3682000 10>, <3677000 9>, <3673000 8>, <3667000 7>,
++				       <3659000 6>, <3645000 5>, <3614000 4>, <3565000 3>,
++				       <3490000 2>, <3372000 1>, <3000000 0>;
++		ocv-capacity-table-2 = <4322000 100>, <4252000 95>, <4193000 90>, <4137000 85>,
++				       <4084000 80>, <4038000 75>, <3983000 70>, <3950000 65>,
++				       <3912000 60>, <3860000 55>, <3828000 50>, <3806000 45>,
++				       <3790000 40>, <3776000 35>, <3767000 30>, <3759000 25>,
++				       <3739000 20>, <3710000 16>, <3683000 13>, <3676000 11>,
++				       <3674000 10>, <3672000 9>, <3669000 8>, <3667000 7>,
++				       <3662000 6>, <3649000 5>, <3613000 4>, <3554000 3>,
++				       <3473000 2>, <3352000 1>, <3000000 0>;
++		ocv-capacity-table-3 = <4317000 100>, <4249000 95>, <4191000 90>, <4135000 85>,
++				       <4083000 80>, <4036000 75>, <3988000 70>, <3950000 65>,
++				       <3914000 60>, <3865000 55>, <3829000 50>, <3807000 45>,
++				       <3789000 40>, <3776000 35>, <3763000 30>, <3750000 25>,
++				       <3730000 20>, <3702000 16>, <3675000 13>, <3670000 11>,
++				       <3668000 10>, <3666000 9>, <3664000 8>, <3661000 7>,
++				       <3656000 6>, <3641000 5>, <3603000 4>, <3543000 3>,
++				       <3462000 2>, <3343000 1>, <3000000 0>;
++		ocv-capacity-table-4 = <4309000 100>, <4244000 95>, <4187000 90>, <4132000 85>,
++				       <4080000 80>, <4031000 75>, <3987000 70>, <3948000 65>,
++				       <3912000 60>, <3864000 55>, <3829000 50>, <3806000 45>,
++				       <3789000 40>, <3774000 35>, <3760000 30>, <3737000 25>,
++				       <3716000 20>, <3689000 16>, <3666000 13>, <3659000 11>,
++				       <3657000 10>, <3656000 9>, <3654000 8>, <3651000 7>,
++				       <3646000 6>, <3628000 5>, <3587000 4>, <3528000 3>,
++				       <3449000 2>, <3331000 1>, <3000000 0>;
++	};
++
+ 	chosen {
+ 		#address-cells = <1>;
+ 		#size-cells = <1>;
+@@ -194,6 +251,13 @@ reboot-mode {
+ 	};
+ };
+ 
++&pm8226_bms {
++	monitored-battery = <&battery>;
++	shunt-resistor-micro-ohms = <10000>;
++
++	status = "okay";
++};
++
+ &pronto {
+ 	vddmx-supply = <&pm8226_l3>;
+ 	vddpx-supply = <&pm8226_l6>;

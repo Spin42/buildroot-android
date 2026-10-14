@@ -1,0 +1,165 @@
+From 92f9f37c6d0af4639854822d32eea48b7723b7a8 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Mon, 12 Oct 2026 00:51:08 +0200
+Subject: [PATCH 16/26] power: supply: qcom_smbb: leave the input limit alone
+ without a battery
+
+With no cell the input limit is not a charge rate but the budget for the
+whole SoC, and the driver cannot reduce the load it feeds. Measured on a
+battery-less Fairphone 2 fixture, both directions were harmful: the 500 mA
+floor clamped the input below what the cores were drawing and reset the
+board mid-probe; 900 mA and 1.5 A pulled VBUS under the minimum input
+voltage and collapsed the input. Seed the cached limit from the register
+at probe, never lower it on a collapse without a battery, and ramp only
+during a charge cycle.
+
+Also guard smbb_charger_remove(), which cleared CTRL_EN unconditionally:
+on a board with no battery that removes the only supply, so an unbind, a
+deferred re-probe or an rmmod would switch the machine off.
+
+This is the driver part of the Fairphone 2 rig change that lowered the
+input undervoltage floor; boards with a battery are unaffected.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/power/supply/qcom_smbb.c | 85 +++++++++++++++++++++++++-------
+ 1 file changed, 66 insertions(+), 19 deletions(-)
+
+diff --git a/drivers/power/supply/qcom_smbb.c b/drivers/power/supply/qcom_smbb.c
+index a2cf1c4f71c1..96e6d79fac81 100644
+--- a/drivers/power/supply/qcom_smbb.c
++++ b/drivers/power/supply/qcom_smbb.c
+@@ -622,12 +622,17 @@ static bool smbb_battery_present(struct smbb_charger *chg)
+ #define SMBB_IUSB_FLOOR_UA	500000
+ /*
+  * Where to start the input limit when there is no battery and the input is
+- * therefore powering the SoC.  500 mA starves bring-up; 1.5 A collapses a plain
+- * host port (measured on the carrier rig 2026-08-04, "input collapsed at
+- * 1500000 uA" followed by UVLO).  900 mA is what USB 3 guarantees, so start
+- * there and let the ramp below discover whether this supply gives more.
++ * therefore powering the SoC.
++ *
++ * Start at the floor and let the rate-limited ramp find the truth.  Guessing
++ * higher does not help and can hurt: 1.5 A collapsed a host port outright, and
++ * so did the 900 mA that USB 3 nominally guarantees ("input collapsed at
++ * 900000 uA (hw 900000 uA)", measured on the carrier rig 2026-08-04 - the port,
++ * cable and connector together evidently deliver less).  What the original code
++ * got wrong was not the starting point but that it never ramped without a charge
++ * cycle, so a battery-less board stayed pinned at the floor forever.
+  */
+-#define SMBB_IUSB_NOBATT_UA	900000
++#define SMBB_IUSB_NOBATT_UA	SMBB_IUSB_FLOOR_UA
+ /*
+  * Minimum time between upward input-limit steps.  The supervisor is kicked
+  * immediately by every charger interrupt, so an unstable input produces a burst
+@@ -644,13 +649,18 @@ static bool smbb_battery_present(struct smbb_charger *chg)
+  * "input collapsed at 100000 uA" during a run where the register held something
+  * else entirely, which cost a debugging cycle on 2026-08-04.
+  */
+-static unsigned int smbb_iusb_hw_ua(struct smbb_charger *chg)
++static unsigned int smbb_iusb_hw_idx(struct smbb_charger *chg)
+ {
+ 	unsigned int idx = 0;
+ 
+ 	regmap_read(chg->regmap, chg->addr + SMBB_USB_IMAX, &idx);
+ 
+-	return smbb_imax_fn(idx);
++	return idx;
++}
++
++static unsigned int smbb_iusb_hw_ua(struct smbb_charger *chg)
++{
++	return smbb_imax_fn(smbb_iusb_hw_idx(chg));
+ }
+ 
+ static void smbb_set_iusb(struct smbb_charger *chg, unsigned int idx)
+@@ -791,7 +801,17 @@ static void smbb_engage_work(struct work_struct *work)
+ 		 * rig-envelope, which throttles on this collapse count); getting
+ 		 * the input to stay up is this driver's.
+ 		 */
+-		if (chg->iusb_idx > chg->iusb_floor_idx) {
++		if (!smbb_battery_present(chg)) {
++			/*
++			 * See the probe comment: with no cell the limit is the
++			 * system's budget and lowering it starves the load that
++			 * caused the sag.  Report it - rig-envelope throttles on
++			 * this count - and leave the register alone.
++			 */
++			dev_info(chg->dev,
++				 "input collapsed at %u uA with no battery: load must back off\n",
++				 smbb_iusb_hw_ua(chg));
++		} else if (chg->iusb_idx > chg->iusb_floor_idx) {
+ 			chg->iusb_learn_idx = chg->iusb_idx - 1;
+ 			dev_info(chg->dev,
+ 				 "input collapsed at %u uA (hw %u uA), limiting to %u uA\n",
+@@ -800,8 +820,7 @@ static void smbb_engage_work(struct work_struct *work)
+ 				 smbb_imax_fn(chg->iusb_learn_idx));
+ 			smbb_set_iusb(chg, chg->iusb_learn_idx);
+ 		}
+-	} else if ((charging || !smbb_battery_present(chg)) &&
+-		   chg->iusb_idx < chg->iusb_learn_idx &&
++	} else if (charging && chg->iusb_idx < chg->iusb_learn_idx &&
+ 		   time_after(jiffies, chg->last_ramp +
+ 					msecs_to_jiffies(SMBB_AICL_STEP_MS))) {
+ 		/*
+@@ -1712,15 +1731,26 @@ static int smbb_charger_probe(struct platform_device *pdev)
+ 	 * this supply cannot hold it.
+ 	 */
+ 	if (!smbb_battery_present(chg)) {
+-		unsigned int start = min(smbb_hw_lookup(SMBB_IUSB_NOBATT_UA,
+-							smbb_imax_fn),
+-					 chg->iusb_max_idx);
+-
++		/*
++		 * Do not touch it.  With no cell this limit is not a charge
++		 * rate, it is the budget for the whole SoC, and the driver
++		 * cannot reduce the load it is feeding - so every adjustment
++		 * this code used to make was harmful in one direction or the
++		 * other.  Measured on the carrier rig 2026-08-04: programming
++		 * the 500 mA floor here clamped the input below what four cores
++		 * plus udev were already drawing and the board reset mid-probe;
++		 * 900 mA and 1.5 A instead exceeded what the host port, cable
++		 * and carrier wiring can pass without VBUS falling under
++		 * qcom,minimum-input-voltage, so the input collapsed.  Mainline
++		 * programs the configured value once and leaves it, and boots
++		 * this fixture reliably.  Match that: seed the cache from the
++		 * register so the supervisor knows where it stands, and leave
++		 * load shedding to userspace, which can actually do it.
++		 */
++		chg->iusb_idx = smbb_iusb_hw_idx(chg);
++		chg->iusb_learn_idx = chg->iusb_idx;
+ 		dev_info(&pdev->dev,
+-			 "no battery at probe: input powers the system, starting at %u uA (ceiling %u uA)\n",
+-			 smbb_imax_fn(start), smbb_imax_fn(chg->iusb_max_idx));
+-		smbb_set_iusb(chg, start);
+-		dev_info(&pdev->dev, "input limit register now %u uA\n",
++			 "no battery at probe: input powers the system, leaving the configured limit at %u uA\n",
+ 			 smbb_iusb_hw_ua(chg));
+ 	} else {
+ 		smbb_set_iusb(chg, chg->iusb_floor_idx);
+@@ -1845,7 +1875,24 @@ static void smbb_charger_remove(struct platform_device *pdev)
+ 
+ 	cancel_delayed_work_sync(&chg->engage_work);
+ 	debugfs_remove_recursive(chg->debugfs);
+-	regmap_update_bits(chg->regmap, chg->addr + SMBB_CHG_CTRL, CTRL_EN, 0);
++
++	/*
++	 * Leave the charge path armed when it is the system's supply.
++	 *
++	 * On this PMIC the input reaches VPH through the charge path, so on a
++	 * board with no cell, clearing CTRL_EN here removes the only source of
++	 * power: an unbind, a deferred re-probe or an rmmod switches the machine
++	 * off.  This is the same defect that was fixed in probe, where it reset
++	 * the board on every boot with PON reporting UVLO.  With a battery fitted
++	 * the original behaviour is kept - stopping a charge cycle on unbind is
++	 * correct, and the pack carries the system regardless.
++	 */
++	if (smbb_battery_present(chg))
++		regmap_update_bits(chg->regmap, chg->addr + SMBB_CHG_CTRL,
++				   CTRL_EN, 0);
++	else
++		dev_info(chg->dev,
++			 "no battery: leaving the charge path armed on remove, it powers the system\n");
+ }
+ 
+ static const struct of_device_id smbb_charger_id_table[] = {

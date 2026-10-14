@@ -1,0 +1,40 @@
+From bd70e23824c27f4246774a233bb931391c26e67a Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Sat, 1 Aug 2026 08:44:54 +0200
+Subject: [PATCH 17/26] iio: adc: qcom-spmi-vadc: report VBAT_SNS as a
+ processed voltage
+
+The VBAT_SNS channel is declared VADC_CHAN_NO_SCALE, so the driver
+exposes only the raw ADC code even though the table already carries the
+channel's 1/3 pre-scale (index 1) and the generic SCALE_DEFAULT path
+converts such inputs to microvolts.  Userspace was left to re-implement
+the calibration by hand from the reference channels.
+
+Declare it VADC_CHAN_VOLT with SCALE_DEFAULT, like VSYS and VCOIN
+already are, so in_voltageX_input reports the battery voltage directly.
+Verified against a manual reference-channel calibration on a Fairphone 2
+(pm8941): both agree within 0.1%.
+
+The point of having this: on this board the SoC resets silently when a
+power rail misbehaves, and a fsync'd VBAT log is what distinguishes a
+battery/charger sag from an SoC-internal rail problem (it exonerated the
+battery for the msm8974 load-reset investigation).
+
+Assisted-by: Claude:claude-opus-4-8
+---
+ drivers/iio/adc/qcom-spmi-vadc.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/iio/adc/qcom-spmi-vadc.c b/drivers/iio/adc/qcom-spmi-vadc.c
+index 00a7f0982025..54b8d4267120 100644
+--- a/drivers/iio/adc/qcom-spmi-vadc.c
++++ b/drivers/iio/adc/qcom-spmi-vadc.c
+@@ -564,7 +564,7 @@ static const struct vadc_channels vadc_chans[] = {
+ 	VADC_CHAN_NO_SCALE(SPARE1_03, 1)
+ 	VADC_CHAN_NO_SCALE(USB_ID_MV, 1)
+ 	VADC_CHAN_VOLT(VCOIN, 1, SCALE_DEFAULT)
+-	VADC_CHAN_NO_SCALE(VBAT_SNS, 1)
++	VADC_CHAN_VOLT(VBAT_SNS, 1, SCALE_DEFAULT)
+ 	VADC_CHAN_VOLT(VSYS, 1, SCALE_DEFAULT)
+ 	VADC_CHAN_TEMP(DIE_TEMP, 0, SCALE_PMIC_THERM)
+ 	VADC_CHAN_VOLT(REF_625MV, 0, SCALE_DEFAULT)

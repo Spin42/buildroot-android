@@ -1,0 +1,2 @@
+# Host key: /etc/dropbear/dropbear_ed25519_host_key, the same fixed key as the rescue image.
+DROPBEAR_ARGS=""

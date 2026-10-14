@@ -1,0 +1,148 @@
+From 6445ba13870e44f6e332ec67e46a3f5217c3b339 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Tue, 4 Aug 2026 09:28:11 +0200
+Subject: [PATCH 09/26] power: supply: qcom_smbb: drive the supervisor from
+ hardware state
+
+The cached status word is only as good as the interrupt edges that
+maintain it, and on this hardware those edges go missing: a cable unplug
+and replug on a Fairphone 2 left both the chg-fast and usbin-valid
+interrupt counters at zero while the cached bits still claimed a running
+fast-charge cycle.  A supervisor that believes that will never re-arm the
+charge path, which is the one thing it exists to do.
+
+Read the real-time interrupt status registers instead - one per
+sub-block, offset 0x10, with the same bit assignments the DT uses for the
+named interrupts - and base the engagement decisions on those.  The
+cached word keeps serving the power-supply properties as before.
+
+The debugfs file now prints the hardware view next to the cached bits and
+dumps the four status registers, so a mismatch between the two is
+directly visible instead of having to be inferred from interrupt counts.
+
+Assisted-by: Claude:claude-fable-5
+---
+ drivers/power/supply/qcom_smbb.c | 69 +++++++++++++++++++++++++++-----
+ 1 file changed, 59 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/power/supply/qcom_smbb.c b/drivers/power/supply/qcom_smbb.c
+index 68398cd7584d..7bec35e5ca80 100644
+--- a/drivers/power/supply/qcom_smbb.c
++++ b/drivers/power/supply/qcom_smbb.c
+@@ -32,6 +32,28 @@
+ #include <linux/seq_file.h>
+ #include <linux/workqueue.h>
+ 
++/*
++ * Real-time interrupt status registers, one per sub-block (offset 0x10 in
++ * each peripheral).  These are the authoritative live state: the driver's
++ * cached status word depends on edges being delivered, and on this hardware
++ * the fast-charge and usbin-valid interrupts do not always fire (a cable
++ * unplug/replug left both counters at zero while the cached bits still
++ * claimed a running cycle).  Bit assignments are the ones the DT uses for
++ * the named interrupts.
++ */
++#define SMBB_CHG_RT_STS		0x010
++#define CHG_RT_TRKL_ON		BIT(4)
++#define CHG_RT_FAST_ON		BIT(5)
++#define CHG_RT_CHG_DONE		BIT(7)
++#define SMBB_BAT_RT_STS		0x210
++#define BAT_RT_PRESENT		BIT(0)
++#define BAT_RT_TEMP_OK		BIT(1)
++#define SMBB_USB_RT_STS		0x310
++#define USB_RT_VALID		BIT(1)
++#define USB_RT_CHG_GONE		BIT(2)
++#define SMBB_DC_RT_STS		0x410
++#define DC_RT_VALID		BIT(1)
++
+ #define SMBB_CHG_VMAX		0x040
+ #define SMBB_CHG_VSAFE		0x041
+ #define SMBB_CHG_CFG		0x043
+@@ -468,20 +490,34 @@ static void smbb_clear_gates(struct smbb_charger *chg)
+ 	}
+ }
+ 
++/*
++ * Read the charge path straight out of the hardware.  Decisions here must
++ * not depend on the cached status word: see the RT_STS comment above.
++ */
++static void smbb_hw_state(struct smbb_charger *chg, bool *input,
++			  bool *charging, bool *bat_ready)
++{
++	unsigned int chgr = 0, usb = 0, dc = 0, bat = 0;
++
++	regmap_read(chg->regmap, chg->addr + SMBB_CHG_RT_STS, &chgr);
++	regmap_read(chg->regmap, chg->addr + SMBB_USB_RT_STS, &usb);
++	regmap_read(chg->regmap, chg->addr + SMBB_BAT_RT_STS, &bat);
++	if (!chg->dc_disabled)
++		regmap_read(chg->regmap, chg->addr + SMBB_DC_RT_STS, &dc);
++
++	*input = (usb & USB_RT_VALID) || (dc & DC_RT_VALID);
++	*charging = chgr & (CHG_RT_FAST_ON | CHG_RT_TRKL_ON);
++	*bat_ready = (bat & BAT_RT_PRESENT) && (bat & BAT_RT_TEMP_OK);
++}
++
+ static void smbb_engage_work(struct work_struct *work)
+ {
+ 	struct smbb_charger *chg = container_of(work, struct smbb_charger,
+ 						engage_work.work);
+-	unsigned long status;
+-	bool input, charging;
++	bool input, charging, bat_ready;
+ 	unsigned int delay = SMBB_ENGAGE_POLL_MS;
+ 
+-	mutex_lock(&chg->statlock);
+-	status = chg->status;
+-	mutex_unlock(&chg->statlock);
+-
+-	input = status & (STATUS_USBIN_VALID | STATUS_DCIN_VALID);
+-	charging = status & (STATUS_CHG_FAST | STATUS_CHG_TRKL);
++	smbb_hw_state(chg, &input, &charging, &bat_ready);
+ 
+ 	if (!input) {
+ 		chg->rearm_stage = 0;
+@@ -511,8 +547,7 @@ static void smbb_engage_work(struct work_struct *work)
+ 			chg->rearm_count);
+ 		break;
+ 	default:
+-		if (charging || !(status & STATUS_BAT_PRESENT) ||
+-		    !(status & STATUS_BAT_OK)) {
++		if (charging || !bat_ready) {
+ 			/* running, or the battery is in no state to charge */
+ 			regmap_update_bits(chg->regmap,
+ 					   chg->addr + SMBB_CHG_CTRL,
+@@ -986,6 +1021,10 @@ static const struct {
+ 	const char *name;
+ 	unsigned int off;
+ } smbb_debug_regs[] = {
++	{ "chg_rt_sts",   SMBB_CHG_RT_STS },
++	{ "usb_rt_sts",   SMBB_USB_RT_STS },
++	{ "bat_rt_sts",   SMBB_BAT_RT_STS },
++	{ "dc_rt_sts",    SMBB_DC_RT_STS },
+ 	{ "chg_ctrl",     SMBB_CHG_CTRL },
+ 	{ "chg_failed",   SMBB_CHG_FAILED },
+ 	{ "vmax",         SMBB_CHG_VMAX },
+@@ -1006,6 +1045,7 @@ static const struct {
+ static int smbb_state_show(struct seq_file *s, void *data)
+ {
+ 	struct smbb_charger *chg = s->private;
++	bool input, charging, bat_ready;
+ 	unsigned long status;
+ 	unsigned int val;
+ 	int i, rc;
+@@ -1026,6 +1066,15 @@ static int smbb_state_show(struct seq_file *s, void *data)
+ 	seq_printf(s, "supervisor    rearms=%u gate_clears=%u stage=%u\n",
+ 		   chg->rearm_count, chg->gate_clear_count, chg->rearm_stage);
+ 
++	/*
++	 * Hardware truth, for comparison with the cached bits above: a
++	 * mismatch means interrupt edges were missed or coalesced, which is
++	 * expected on this hardware and is why the supervisor reads these.
++	 */
++	smbb_hw_state(chg, &input, &charging, &bat_ready);
++	seq_printf(s, "hardware      input=%d charging=%d bat_ready=%d\n",
++		   input, charging, bat_ready);
++
+ 	for (i = 0; i < ARRAY_SIZE(smbb_debug_regs); ++i) {
+ 		rc = regmap_read(chg->regmap,
+ 				 chg->addr + smbb_debug_regs[i].off, &val);

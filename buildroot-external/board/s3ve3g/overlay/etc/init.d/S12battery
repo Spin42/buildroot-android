@@ -1,0 +1,16 @@
+#!/bin/sh
+# Fuel gauge: load the battery ADC and the PM8226 BMS1 driver by name, since module autoload is
+# off by default (S10mdev). qcom_bms reads the battery voltage and temperature through the VADC
+# and publishes /sys/class/power_supply/qcom-bms (capacity, voltage, current). The charger
+# (qcom_smbb) is built in and needs neither.
+case "$1" in
+start)
+	printf "Loading the fuel gauge: "
+	modprobe -a qcom_spmi_vadc qcom_bms && echo "OK" || echo "FAIL"
+	;;
+stop)
+	;;
+*)
+	echo "Usage: $0 {start|stop}"
+	exit 1
+esac

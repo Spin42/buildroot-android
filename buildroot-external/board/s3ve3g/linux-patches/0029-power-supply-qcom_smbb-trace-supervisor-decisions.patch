@@ -1,0 +1,178 @@
+From 870ad1779b064615b7119af59fa0e5b479b18a52 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Mon, 12 Oct 2026 07:33:49 +0200
+Subject: [PATCH 29/29] power: supply: qcom_smbb: trace supervisor decisions
+
+Log each supervisor decision with the charger, BAT_IF and USB status
+registers that gate a charge cycle, on change and once a minute. Reads
+only; qcom_smbb.trace=0 turns it off.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/power/supply/qcom_smbb.c | 88 ++++++++++++++++++++++++++++++++
+ 1 file changed, 88 insertions(+)
+
+diff --git a/drivers/power/supply/qcom_smbb.c b/drivers/power/supply/qcom_smbb.c
+index f9f1c86ef7f1..31adbf59377d 100644
+--- a/drivers/power/supply/qcom_smbb.c
++++ b/drivers/power/supply/qcom_smbb.c
+@@ -244,6 +244,11 @@ struct smbb_charger {
+ 	unsigned int arb_delay_ms;
+ 	unsigned long arb_next;
+ 
++	/* Supervisor trace, see smbb_trace() */
++	u8 trace_regs[20];
++	const char *trace_why;
++	unsigned long trace_next;
++
+ 	/*
+ 	 * Battery voltage, when the board provides it.  Without it the
+ 	 * supervisor cannot tell a charge path that needs prodding from a
+@@ -1003,6 +1008,80 @@ static bool smbb_arb_step(struct smbb_charger *chg, bool input,
+ 	return true;
+ }
+ 
++/*
++ * Read-only trace of every supervisor decision with the registers that
++ * decide whether a cycle can run.  A line is printed when the snapshot or
++ * the decision changes, and at least once a minute.  Writable at runtime
++ * through /sys/module/qcom_smbb/parameters/trace.
++ */
++static bool smbb_trace_on = true;
++module_param_named(trace, smbb_trace_on, bool, 0644);
++MODULE_PARM_DESC(trace, "log charger supervisor decisions and state");
++
++#define SMBB_TRACE_PERIOD_MS	60000
++
++static const struct {
++	const char *name;
++	unsigned int off;
++} smbb_trace_regs[] = {
++	{ "chg_rt",	SMBB_CHG_RT_STS },
++	{ "chg_ctrl",	SMBB_CHG_CTRL },
++	{ "chg_failed",	SMBB_CHG_FAILED },
++	{ "chg_opt",	0x008 },
++	{ "atc_sts",	0x00a },
++	{ "vbat_sts",	0x00b },
++	{ "atc_ctrl",	0x04b },
++	{ "atc_failed",	0x04c },
++	{ "vbat_weak",	SMBB_CHG_VBAT_WEAK },
++	{ "ibat_atc_a",	0x054 },
++	{ "vin_min",	SMBB_CHG_VIN_MIN },
++	{ "buck_rt",	0x110 },
++	{ "bat_rt",	SMBB_BAT_RT_STS },
++	{ "bat_pres",	SMBB_BAT_PRES_STATUS },
++	{ "batfet4",	SMBB_BAT_BATFET_CTRL4 },
++	{ "usb_sts",	SMBB_USB_STATUS },
++	{ "usb_rt",	SMBB_USB_RT_STS },
++	{ "usb_imax",	SMBB_USB_IMAX },
++	{ "usb_susp",	SMBB_USB_SUSP },
++};
++
++static void smbb_trace(struct smbb_charger *chg, const char *why)
++{
++	u8 now[ARRAY_SIZE(chg->trace_regs)] = { 0 };
++	char buf[384];
++	unsigned int val;
++	int i, n = 0, uv = 0;
++
++	BUILD_BUG_ON(ARRAY_SIZE(smbb_trace_regs) > ARRAY_SIZE(chg->trace_regs));
++
++	if (!smbb_trace_on)
++		return;
++
++	for (i = 0; i < ARRAY_SIZE(smbb_trace_regs); ++i) {
++		if (!regmap_read(chg->regmap,
++				 chg->addr + smbb_trace_regs[i].off, &val))
++			now[i] = val;
++	}
++
++	if (why == chg->trace_why &&
++	    !memcmp(now, chg->trace_regs, sizeof(now)) &&
++	    time_before(jiffies, chg->trace_next))
++		return;
++
++	memcpy(chg->trace_regs, now, sizeof(now));
++	chg->trace_why = why;
++	chg->trace_next = jiffies + msecs_to_jiffies(SMBB_TRACE_PERIOD_MS);
++
++	for (i = 0; i < ARRAY_SIZE(smbb_trace_regs); ++i)
++		n += scnprintf(buf + n, sizeof(buf) - n, " %s=%02x",
++			       smbb_trace_regs[i].name, now[i]);
++	if (chg->vbat_chan)
++		iio_read_channel_processed(chg->vbat_chan, &uv);
++
++	dev_info(chg->dev, "trace: %s | vbat=%d mV arb=%u rearm=%u%s\n",
++		 why, uv / 1000, chg->arb_stage, chg->rearm_stage, buf);
++}
++
+ static void smbb_engage_work(struct work_struct *work)
+ {
+ 	struct smbb_charger *chg = container_of(work, struct smbb_charger,
+@@ -1034,6 +1113,7 @@ static void smbb_engage_work(struct work_struct *work)
+ 		smbb_batfet_lpm_update(chg);
+ 
+ 	if (smbb_arb_step(chg, input, &delay)) {
++		smbb_trace(chg, "arbiter owns the pass");
+ 		schedule_delayed_work(&chg->engage_work, msecs_to_jiffies(delay));
+ 		return;
+ 	}
+@@ -1042,6 +1122,7 @@ static void smbb_engage_work(struct work_struct *work)
+ 		/* keep the path off; nothing here should ever enable it */
+ 		regmap_update_bits(chg->regmap, chg->addr + SMBB_CHG_CTRL,
+ 				   CTRL_EN, 0);
++		smbb_trace(chg, "charging disabled by DT");
+ 		return;
+ 	}
+ 
+@@ -1081,6 +1162,7 @@ static void smbb_engage_work(struct work_struct *work)
+ 			dev_dbg(chg->dev, "input gone, supervisor idle\n");
+ 			chg->was_charging = false;
+ 		}
++		smbb_trace(chg, "no input");
+ 		return;	/* an insertion IRQ reschedules us */
+ 	}
+ 
+@@ -1167,6 +1249,7 @@ static void smbb_engage_work(struct work_struct *work)
+ 		chg->rearm_delay_ms = min(chg->rearm_delay_ms * 3,
+ 					  SMBB_REARM_MAX_MS);
+ 		delay = chg->rearm_delay_ms;
++		smbb_trace(chg, "re-arm: CTRL_EN back on");
+ 		break;
+ 	default:
+ 		/*
+@@ -1226,6 +1309,7 @@ static void smbb_engage_work(struct work_struct *work)
+ 					 "no battery present: powering the system from the input\n");
+ 				chg->no_batt_reported = true;
+ 			}
++			smbb_trace(chg, "no battery: path armed");
+ 			break;
+ 		}
+ 		if (!bat_ready) {
+@@ -1243,12 +1327,15 @@ static void smbb_engage_work(struct work_struct *work)
+ 			regmap_update_bits(chg->regmap,
+ 					   chg->addr + SMBB_CHG_CTRL,
+ 					   CTRL_EN, 0);
++			smbb_trace(chg, "battery not ready (absent or temp): path off");
+ 			break;
+ 		}
+ 		if (charging || done || smbb_battery_full(chg)) {
+ 			regmap_update_bits(chg->regmap,
+ 					   chg->addr + SMBB_CHG_CTRL,
+ 					   CTRL_EN, CTRL_EN);
++			smbb_trace(chg, charging ? "cycle running" :
++					done ? "cycle done" : "battery full");
+ 			break;
+ 		}
+ 		/*
+@@ -1260,6 +1347,7 @@ static void smbb_engage_work(struct work_struct *work)
+ 				   CTRL_EN, 0);
+ 		chg->rearm_stage = 1;
+ 		delay = SMBB_REARM_SETTLE_MS;
++		smbb_trace(chg, "input and battery ok, no cycle: re-arm, CTRL_EN off");
+ 		break;
+ 	}
+ 
+-- 
+2.43.0
+

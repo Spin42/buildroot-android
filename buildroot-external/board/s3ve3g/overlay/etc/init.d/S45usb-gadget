@@ -1,0 +1,15 @@
+#!/bin/sh
+# USB gadget (ACM + NCM, 10.0.42.1, unudhcpd, telnetd) in the background: the UDC may take
+# several seconds to appear. Result in /run/s3ve3g/usb-gadget.log.
+case "$1" in
+start)
+	echo "Starting the USB gadget in the background"
+	mkdir -p /run/s3ve3g
+	/usr/sbin/usb-gadget.sh > /run/s3ve3g/usb-gadget.log 2>&1 &
+	;;
+stop)
+	;;
+*)
+	echo "Usage: $0 {start|stop}"
+	exit 1
+esac

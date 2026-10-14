@@ -1,0 +1,96 @@
+From cea79d6b0f1876f739de1c353084ae6de81b40b9 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Sun, 11 Oct 2026 23:38:43 +0200
+Subject: [PATCH] ARM: dts: qcom: msm8226-samsung-s3ve3g: Reserve firmware
+ memory and enable charger
+
+The modem and MBA firmware are linked at fixed addresses (0x08400000 and 0x0c300000), and the stock kernel also keeps TrustZone apps, rmtfs/rfsa and the TIMA log out of RAM. Charger limits come from the stock battery data: 4.35 V float, 2 A safe current, 1 A fast charge, 500 mA USB input.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ .../dts/qcom/qcom-msm8226-samsung-s3ve3g.dts  | 62 +++++++++++++++++++
+ 1 file changed, 62 insertions(+)
+
+diff --git a/arch/arm/boot/dts/qcom/qcom-msm8226-samsung-s3ve3g.dts b/arch/arm/boot/dts/qcom/qcom-msm8226-samsung-s3ve3g.dts
+index 484b4bc83..9e1181b60 100644
+--- a/arch/arm/boot/dts/qcom/qcom-msm8226-samsung-s3ve3g.dts
++++ b/arch/arm/boot/dts/qcom/qcom-msm8226-samsung-s3ve3g.dts
+@@ -12,6 +12,8 @@
+ #include "pm8226.dtsi"
+ 
+ /delete-node/ &smem_region;
++/delete-node/ &mpss_region;
++/delete-node/ &mba_region;
+ 
+ / {
+ 	model = "Samsung Galaxy S III Neo";
+@@ -111,9 +113,69 @@ smem_region: smem@fa00000 {
+ 			reg = <0x0fa00000 0x100000>;
+ 			no-map;
+ 		};
++
++		/* modem.mdt is linked at 0x08400000-0x0c300000, not relocatable */
++		mpss_region: mpss@8400000 {
++			reg = <0x08400000 0x3f00000>;
++			no-map;
++		};
++
++		/* mba.mdt is linked at 0x0c300000 */
++		mba_region: mba@c300000 {
++			reg = <0x0c300000 0x100000>;
++			no-map;
++		};
++
++		/* TrustZone apps, together with wcnss/adsp up to 0x0f600000 */
++		reserved@cb00000 {
++			reg = <0x0cb00000 0x700000>;
++			no-map;
++		};
++
++		reserved@f500000 {
++			reg = <0x0f500000 0x100000>;
++			no-map;
++		};
++
++		reserved@fb00000 {
++			reg = <0x0fb00000 0x260000>;
++			no-map;
++		};
++
++		rfsa@fd60000 {
++			reg = <0x0fd60000 0x20000>;
++			no-map;
++		};
++
++		rmtfs@fd80000 {
++			compatible = "qcom,rmtfs-mem";
++			reg = <0x0fd80000 0x180000>;
++			no-map;
++
++			qcom,client-id = <1>;
++		};
++
++		/* TIMA logging */
++		reserved@10000000 {
++			reg = <0x10000000 0x600000>;
++			no-map;
++		};
+ 	};
+ };
+ 
++&smbb {
++	qcom,fast-charge-safe-voltage = <4350000>;
++	qcom,fast-charge-high-threshold-voltage = <4350000>;
++	qcom,fast-charge-safe-current = <2000000>;
++	qcom,fast-charge-current-limit = <1000000>;
++	qcom,auto-recharge-threshold-voltage = <4300000>;
++	qcom,minimum-input-voltage = <4300000>;
++	usb-charge-current-limit = <500000>;
++	qcom,disable-dc;
++
++	status = "okay";
++};
++
+ &blsp1_uart3 {
+ 	status = "okay";
+ };

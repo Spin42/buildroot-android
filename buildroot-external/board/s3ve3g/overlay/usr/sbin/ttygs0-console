@@ -1,0 +1,13 @@
+#!/bin/sh
+# Respawned by init: a root shell on the USB ACM port (ttyGS0, host /dev/ttyACM*), with the
+# banner and dmesg first. init starts this in a new session without a controlling tty, so
+# opening ttyGS0 here makes it the controlling tty and job control works.
+# Writes block until the host opens the port; nothing else waits on this process.
+while [ ! -c /dev/ttyGS0 ]; do sleep 2; done
+exec 0<>/dev/ttyGS0 1>&0 2>&0
+export TERM=vt100
+/usr/sbin/s3ve3g-banner
+echo "--- dmesg ---"
+dmesg
+echo "--- shell ---"
+exec /bin/sh -l

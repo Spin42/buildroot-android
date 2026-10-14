@@ -1,0 +1,4 @@
+#!/bin/sh
+# mdev hook for uevents carrying MODALIAS: load the matching module, only when autoload is on.
+[ -e /run/rescue/modautoload ] || exit 0
+[ -n "$MODALIAS" ] && exec modprobe -b -q "$MODALIAS"

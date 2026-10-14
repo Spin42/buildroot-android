@@ -1,0 +1,27 @@
+#!/bin/sh
+# WiFi and Bluetooth (WCNSS/Pronto): load the drivers by name, since module autoload is off by
+# default (S10mdev). qcom_wcnss_pil boots the Pronto core with the firmware S08firmware made
+# reachable; wcn36xx (wlan0) and btqcomsmd (hci0) bind once the core's SMD channels come up.
+# wlan0 stays down: nothing scans or connects until wpa_supplicant is started by hand
+# (/etc/wpa_supplicant.conf). No wcn36xx debug_mask: debug output on the framebuffer console
+# can stall the system during scans.
+# "s3ve3g.wcnss=off" on the kernel command line or /etc/s3ve3g/wcnss-off skips this.
+case "$1" in
+start)
+	if grep -qw 's3ve3g.wcnss=off' /proc/cmdline || [ -e /etc/s3ve3g/wcnss-off ]; then
+		echo "WCNSS: disabled"
+		exit 0
+	fi
+	if [ ! -e "$(cat /sys/module/firmware_class/parameters/path)/wcnss.mdt" ]; then
+		echo "WCNSS: no wcnss.mdt in the firmware path, not loading"
+		exit 0
+	fi
+	printf "Loading WCNSS (WiFi, Bluetooth): "
+	modprobe -a qcom_wcnss_pil wcn36xx btqcomsmd && echo "OK" || echo "FAIL"
+	;;
+stop)
+	;;
+*)
+	echo "Usage: $0 {start|stop}"
+	exit 1
+esac

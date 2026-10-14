@@ -1,0 +1,10 @@
+config BR2_PACKAGE_S3VE3G_FIRMWARE
+	bool "Samsung Galaxy S III Neo (s3ve3g) firmware"
+	help
+	  The WCNSS (Pronto) calibration file WCNSS_qcom_wlan_nv.bin for
+	  wcn36xx, from LineageOS android_device_samsung_msm8226-common
+	  (byte-identical to the stock one).
+
+	  The WCNSS firmware itself (wcnss.mdt, wcnss.b*) is not shipped:
+	  the board mounts the phone's apnhlos partition at boot and the
+	  kernel loads it from there.

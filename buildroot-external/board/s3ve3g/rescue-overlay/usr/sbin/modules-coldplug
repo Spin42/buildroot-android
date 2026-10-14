@@ -1,0 +1,16 @@
+#!/bin/sh
+# Load the modules matching the devices already present, then keep loading for new ones (mdev
+# calls /usr/sbin/modalias-load while /run/rescue/modautoload exists). modprobe -b honours the
+# blacklist in /etc/modprobe.d, which keeps msm.ko off the display.
+# Loading a driver can create more devices (an i2c bus, a remoteproc), hence the rounds.
+mkdir -p /run/rescue
+touch /run/rescue/modautoload
+before=""
+for round in 1 2 3 4 5; do
+	now=$(find /sys/devices -name modalias -exec cat {} + 2>/dev/null | sort -u)
+	[ "$now" = "$before" ] && break
+	echo "$now" | xargs -r modprobe -a -b -q
+	before=$now
+	sleep 1
+done
+echo "modules-coldplug: $(lsmod | tail -n +2 | wc -l) modules loaded after $round rounds"

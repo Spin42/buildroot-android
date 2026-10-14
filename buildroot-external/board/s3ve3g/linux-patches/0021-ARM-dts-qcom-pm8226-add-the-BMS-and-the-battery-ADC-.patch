@@ -1,0 +1,81 @@
+From f3b24e5b9aca84db86081bdba59ad057de6d7cfe Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Mon, 12 Oct 2026 01:04:45 +0200
+Subject: [PATCH 21/26] ARM: dts: qcom: pm8226: add the BMS and the battery ADC
+ channels
+
+Describe the BMS1 fuel gauge with its IADC, and the VBAT_SNS and battery
+thermistor VADC channels it reads. The thermistor is read ratiometrically
+with a 200 us settle time, as the vendor configuration does.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ arch/arm/boot/dts/qcom/pm8226.dtsi | 41 ++++++++++++++++++++++++++++++
+ 1 file changed, 41 insertions(+)
+
+diff --git a/arch/arm/boot/dts/qcom/pm8226.dtsi b/arch/arm/boot/dts/qcom/pm8226.dtsi
+index 41b66d15fbb7..39f95de712df 100644
+--- a/arch/arm/boot/dts/qcom/pm8226.dtsi
++++ b/arch/arm/boot/dts/qcom/pm8226.dtsi
+@@ -104,6 +104,10 @@ pm8226_vadc: adc@3100 {
+ 			#size-cells = <0>;
+ 			#io-channel-cells = <1>;
+ 
++			channel@6 {
++				reg = <VADC_VBAT_SNS>;
++				label = "vbat_sns";
++			};
+ 			channel@7 {
+ 				reg = <VADC_VSYS>;
+ 				qcom,pre-scaling = <1 3>;
+@@ -127,6 +131,13 @@ channel@e {
+ 			channel@f {
+ 				reg = <VADC_VDD_VADC>;
+ 			};
++			channel@30 {
++				reg = <VADC_LR_MUX1_BAT_THERM>;
++				label = "batt_therm";
++				/* Ratiometric against VDD_VADC, as the vendor reads it */
++				qcom,ratiometric;
++				qcom,hw-settle-time = <200>;
++			};
+ 		};
+ 
+ 		pm8226_iadc: adc@3600 {
+@@ -135,6 +146,36 @@ pm8226_iadc: adc@3600 {
+ 			interrupts = <0x0 0x36 0x0 IRQ_TYPE_EDGE_RISING>;
+ 		};
+ 
++		pm8226_bms: fuel-gauge@4000 {
++			compatible = "qcom,pm8226-bms", "qcom,pm8941-bms";
++			reg = <0x4000>, <0x3800>;
++			interrupts = <0x0 0x40 0x0 IRQ_TYPE_EDGE_RISING>,
++				     <0x0 0x40 0x1 IRQ_TYPE_EDGE_RISING>,
++				     <0x0 0x40 0x2 IRQ_TYPE_EDGE_RISING>,
++				     <0x0 0x40 0x3 IRQ_TYPE_EDGE_RISING>,
++				     <0x0 0x40 0x4 IRQ_TYPE_EDGE_RISING>,
++				     <0x0 0x40 0x5 IRQ_TYPE_EDGE_RISING>,
++				     <0x0 0x40 0x6 IRQ_TYPE_EDGE_RISING>,
++				     <0x0 0x40 0x7 IRQ_TYPE_EDGE_RISING>;
++			interrupt-names = "cc-thr",
++					  "ocv-for-r",
++					  "good-ocv",
++					  "charge-begin",
++					  "ocv-thr",
++					  "sw-cc-thr",
++					  "vsense-avg",
++					  "vsense-for-r";
++			io-channels = <&pm8226_vadc VADC_VBAT_SNS>,
++				      <&pm8226_vadc VADC_LR_MUX1_BAT_THERM>,
++				      <&pm8226_vadc VADC_REF_625MV>,
++				      <&pm8226_vadc VADC_REF_1250MV>;
++			io-channel-names = "vbat",
++					   "batt-therm",
++					   "ref-625mv",
++					   "ref-1250mv";
++			status = "disabled";
++		};
++
+ 		rtc@6000 {
+ 			compatible = "qcom,pm8941-rtc";
+ 			reg = <0x6000>, <0x6100>;

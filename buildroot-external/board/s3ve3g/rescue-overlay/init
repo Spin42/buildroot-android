@@ -1,0 +1,82 @@
+#!/bin/sh
+# Rescue /init: a RAM-only investigation system. It mounts no storage and writes to no block
+# device; everything it changes lives in tmpfs and disappears at reboot.
+# It reports like first light (screen, /dev/kmsg, USB) and adds ssh (dropbear, key or password
+# "root"), telnetd as a fallback, kmod with the modules in /lib/modules (loaded on demand only,
+# see /usr/sbin/modules-coldplug) and mdev as the hotplug helper.
+# Self-recovery: the watchdog pinger reboots a hung kernel, panic=10 a panicked one.
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+
+mount -t devtmpfs devtmpfs /dev 2>/dev/null
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mkdir -p /dev/pts /tmp /run
+mount -t devpts devpts /dev/pts
+mount -t tmpfs tmpfs /tmp
+mount -t tmpfs tmpfs /run
+mountpoint -q /sys/kernel/config || mount -t configfs configfs /sys/kernel/config
+# Read-only view of what the previous kernel left in ramoops (lk2nd.pass-ramoops).
+mount -t pstore -o ro pstore /sys/fs/pstore 2>/dev/null
+hostname s3ve3g-rescue
+ip link set lo up
+
+[ -e /dev/watchdog ] && watchdog -T 20 -t 5 /dev/watchdog
+
+# mdev handles uevents from now on: device node permissions and, when enabled, module loading.
+# The kernel reads firmware from /lib/firmware itself.
+mkdir -p /run/rescue
+echo /sbin/mdev > /proc/sys/kernel/hotplug
+mdev -s
+
+say() {
+	echo "$*" > /dev/tty0
+	echo "rescue: $*" > /dev/kmsg
+}
+
+banner() {
+	echo "=========================================="
+	echo "  s3ve3g rescue (RAM only)"
+	echo "=========================================="
+	uname -a
+	grep MemTotal /proc/meminfo
+	echo "fb0: $(cat /sys/class/graphics/fb0/name 2>/dev/null) $(cat /sys/class/graphics/fb0/virtual_size 2>/dev/null)"
+	echo "watchdog: $([ -e /dev/watchdog ] && echo pinged || echo absent)"
+	echo "modules: $(grep -c . /lib/modules/$(uname -r)/modules.dep 2>/dev/null) available, autoload $([ -e /run/rescue/modautoload ] && echo on || echo off)"
+	echo "pstore: $(ls /sys/fs/pstore 2>/dev/null | tr '\n' ' ')"
+	echo "cmdline: $(cat /proc/cmdline)"
+	echo "ssh root@10.0.42.1 (key, or password root); telnet 10.0.42.1"
+}
+
+# rescue.modules=auto on the kernel command line loads the drivers matching the hardware.
+if grep -qw 'rescue.modules=auto' /proc/cmdline; then
+	touch /run/rescue/modautoload
+	/usr/sbin/modules-coldplug > /run/rescue/coldplug.log 2>&1 &
+fi
+
+banner | while IFS= read -r l; do say "$l"; done
+
+# USB in the background: the UDC may take a few seconds to appear.
+(
+	if /usr/sbin/usb-gadget.sh > /run/rescue/usb-gadget.log 2>&1; then
+		dropbear -E -r /etc/rescue/dropbear_ed25519_host_key -p 22 2> /run/rescue/dropbear.log
+		telnetd -l /bin/sh -p 23
+	fi
+	say "$(tail -1 /run/rescue/usb-gadget.log)"
+	# ttyGS0: banner and dmesg once per session, then a shell. Writes block until the host opens
+	# the port, so this runs apart from PID 1's loop.
+	while [ -e /dev/ttyGS0 ]; do
+		{ banner; echo "--- dmesg ---"; dmesg; echo "--- shell ---"; } > /dev/ttyGS0 2>&1
+		setsid sh -c 'exec /bin/sh -i <>/dev/ttyGS0 >&0 2>&0'
+		sleep 1
+	done
+) &
+
+# The screen line ticks every 5 s; the kernel log gets one line a minute so ramoops stays readable.
+n=0
+while true; do
+	line="rescue alive: $(date '+%Y-%m-%d %H:%M:%S') uptime $(cut -d' ' -f1 /proc/uptime)s"
+	echo "$line" > /dev/tty0
+	[ $((n % 12)) -eq 0 ] && echo "rescue: $line" > /dev/kmsg
+	n=$((n + 1))
+	sleep 5
+done
