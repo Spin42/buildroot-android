@@ -10,7 +10,7 @@ Two configurations use it:
 
 | Configuration | userdata | Updates |
 |---|---|---|
-| `fairphone2_uboot_defconfig` | the root filesystem, ext3, written directly (`sdcard.img`), as with lk2nd | reflash |
+| `fairphone2_uboot_defconfig` | the root filesystem, ext3, written directly (`sdcard.img`), booted with `/boot/boot.scr` | reflash |
 | `fairphone2_uboot_rauc_defconfig` | a disk image with its own partition table: boot script, root filesystems A and B, RAUC state, data | RAUC A/B bundles |
 
 ## What U-Boot does on this phone
@@ -24,7 +24,15 @@ It reuses what LK leaves running and drives:
 - reset, power off and reboot to the bootloader's fastboot mode.
 
 Boot: during the first five seconds, Volume Up opens the boot menu and Volume Down starts U-Boot fastboot. Otherwise U-Boot boots
-the first system it finds (standard boot on the eMMC partitions, then the image in userdata) and opens the menu if there is none.
+the first system it finds and opens the menu if there is none:
+
+1. standard boot on the eMMC partitions (`boot_targets=mmc0`, `bootmeths=script extlinux`): a `boot.scr` in `/` or `/boot`;
+   `fairphone2_uboot` installs `board/fairphone2/uboot/boot.cmd` as `/boot/boot.scr` in its root filesystem;
+2. the image in userdata (`blkmap`): the `boot.scr` of its first partition, as in `fairphone2_uboot_rauc`.
+
+U-Boot loads the kernel, device tree and initramfs at fixed addresses in lowmem (`kernel_addr_r`, `fdt_addr_r`,
+`ramdisk_addr_r` from `0x12000000`) and boots them in place: Linux does not start when they are loaded between
+`0x04000000` and `0x08000000` or from the top of RAM.
 The menu offers Boot, USB disk (userdata), USB fastboot, USB serial console, Reboot to bootloader fastboot, Reboot and Power
 off. Volume Up/Down move, Power selects, and any key leaves the USB modes.
 
@@ -81,8 +89,8 @@ state in `/dev/loop0p4` (`/etc/fw_env.config`). `S99rauc-mark-good` marks the bo
 Update:
 
 ```
-scp output/images/update.raucb root@10.0.42.1:/data/
-ssh root@10.0.42.1 rauc install /data/update.raucb
+scp output/images/update.raucb root@10.0.42.1:/tmp/
+ssh root@10.0.42.1 rauc install /tmp/update.raucb
 ssh root@10.0.42.1 reboot
 ```
 
