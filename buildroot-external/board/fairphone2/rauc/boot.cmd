@@ -55,5 +55,5 @@ echo "RAUC: booting slot ${rauc_slot} (attempts left: A ${BOOT_A_LEFT}, B ${BOOT
 load blkmap ${ud_dev}:${rauc_part} ${kernel_addr_r} /boot/zImage
 load blkmap ${ud_dev}:${rauc_part} ${fdt_addr_r} /boot/qcom-msm8974pro-fairphone-fp2.dtb
 load blkmap ${ud_dev}:${rauc_part} ${ramdisk_addr_r} /boot/initramfs.cpio.gz
-setenv bootargs "rauc.slot=${rauc_slot} msm.vram=192m msm.allow_vram_carveout=1 fbcon=rotate:1 fbcon=font:TER16x32 quiet"
+setenv bootargs "rauc.slot=${rauc_slot} msm.vram=192m msm.allow_vram_carveout=1 fbcon=rotate:1 fbcon=font:TER16x32 quiet panic=10"
 bootz ${kernel_addr_r} ${ramdisk_addr_r}:${filesize} ${fdt_addr_r}
