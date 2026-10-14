@@ -1,0 +1,32 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Mon, 12 Oct 2026 17:18:45 +0200
+Subject: [PATCH] usb: gadget: f_mass_storage: honour UMS_ABORT_KEYED while
+ idle
+
+While the host does not send commands the gadget only checks for Ctrl+C,
+so with UMS_ABORT_KEYED the documented 'any key' only worked between
+transfers. Phones have no Ctrl+C key.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/usb/gadget/f_mass_storage.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/drivers/usb/gadget/f_mass_storage.c b/drivers/usb/gadget/f_mass_storage.c
+index 76ee08dc..fa7b7408 100644
+--- a/drivers/usb/gadget/f_mass_storage.c
++++ b/drivers/usb/gadget/f_mass_storage.c
+@@ -673,6 +673,12 @@ static int sleep_thread(struct fsg_common *common)
+ 			if (ctrlc())
+ 				return -EPIPE;
+ 
++			/* Any key ends it too, phones have no Ctrl+C */
++			if (IS_ENABLED(CONFIG_CMD_UMS_ABORT_KEYED) && tstc()) {
++				getchar();
++				return -EPIPE;
++			}
++
+ 			/* Check cable connection */
+ 			if (!g_dnl_board_usb_cable_connected())
+ 				return -EIO;

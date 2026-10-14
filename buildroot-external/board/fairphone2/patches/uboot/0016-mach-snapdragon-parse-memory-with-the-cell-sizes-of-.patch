@@ -1,0 +1,85 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Wed, 14 Oct 2026 00:46:11 +0200
+Subject: [PATCH] mach-snapdragon: parse /memory with the cell sizes of the
+ root node
+
+32-bit SoCs describe memory with one address and one size cell, not two.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ arch/arm/mach-snapdragon/dram.c | 37 ++++++++++++++++++++-------------
+ 1 file changed, 22 insertions(+), 15 deletions(-)
+
+diff --git a/arch/arm/mach-snapdragon/dram.c b/arch/arm/mach-snapdragon/dram.c
+index 8228bc75..4153e9a9 100644
+--- a/arch/arm/mach-snapdragon/dram.c
++++ b/arch/arm/mach-snapdragon/dram.c
+@@ -8,6 +8,7 @@
+ 
+ #include <asm-generic/unaligned.h>
+ #include <dm.h>
++#include <fdt_support.h>
+ #include <log.h>
+ #include <sort.h>
+ #include <soc/qcom/smem.h>
+@@ -146,14 +147,14 @@ static int qcom_parse_memory_smem(phys_addr_t *ram_end)
+ 	return j;
+ }
+ 
+-static void qcom_parse_memory_dt(const fdt64_t *fdt, int *banks, phys_addr_t *ram_end)
++static void qcom_parse_memory_dt(const void *fdt, int *banks, phys_addr_t *ram_end)
+ {
+-	int offset;
+-	const fdt64_t *memory;
+-	int memsize;
++	const fdt32_t *memory;
++	int offset, memsize, ac, sc, cells;
+ 	int i, j;
+ 
+ 	*ram_end = 0;
++	*banks = 0;
+ 
+ 	offset = fdt_path_offset(fdt, "/memory");
+ 	if (offset < 0)
+@@ -163,23 +164,29 @@ static void qcom_parse_memory_dt(const fdt64_t *fdt, int *banks, phys_addr_t *ra
+ 	if (!memory)
+ 		return;
+ 
+-	*banks = min(memsize / (2 * sizeof(u64)), (ulong)CONFIG_NR_DRAM_BANKS);
++	ac = fdt_address_cells(fdt, 0);
++	sc = fdt_size_cells(fdt, 0);
++	if (ac < 1 || sc < 1)
++		return;
++	cells = ac + sc;
++
++	*banks = min(memsize / (cells * (int)sizeof(fdt32_t)), CONFIG_NR_DRAM_BANKS);
+ 
+-	if (memsize / sizeof(u64) > CONFIG_NR_DRAM_BANKS * 2)
++	if (memsize / (cells * (int)sizeof(fdt32_t)) > CONFIG_NR_DRAM_BANKS)
+ 		log_err("Provided more than the max of %d memory banks\n", CONFIG_NR_DRAM_BANKS);
+ 
+-	if (*banks > CONFIG_NR_DRAM_BANKS)
+-		log_err("Provided more memory banks than we can handle\n");
++	for (i = 0, j = 0; i < *banks; i++) {
++		const fdt32_t *cell = memory + i * cells;
+ 
+-	for (i = 0, j = 0; i < *banks * 2; i += 2, j++) {
+-		prevbl_ddr_banks[j].start = get_unaligned_be64(&memory[i]);
+-		prevbl_ddr_banks[j].size = get_unaligned_be64(&memory[i + 1]);
+-		if (!prevbl_ddr_banks[j].size) {
+-			j--;
++		prevbl_ddr_banks[j].start = fdt_read_number(cell, ac);
++		prevbl_ddr_banks[j].size = fdt_read_number(cell + ac, sc);
++		if (!prevbl_ddr_banks[j].size)
+ 			continue;
+-		}
+-		*ram_end = max(*ram_end, prevbl_ddr_banks[j].start + prevbl_ddr_banks[j].size);
++		*ram_end = max(*ram_end, (phys_addr_t)(prevbl_ddr_banks[j].start +
++						       prevbl_ddr_banks[j].size));
++		j++;
+ 	}
++	*banks = j;
+ }
+ 
+ /**

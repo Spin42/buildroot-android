@@ -1,0 +1,21 @@
+#!/bin/sh
+#
+# Mark the booted RAUC slot as good once the system is up, which resets its
+# boot attempts in the U-Boot environment.
+
+case "$1" in
+start)
+	printf "Marking the booted RAUC slot good: "
+	if rauc status mark-good > /dev/null 2>&1; then
+		echo "OK"
+	else
+		echo "FAIL"
+	fi
+	;;
+stop|restart|reload)
+	;;
+*)
+	echo "Usage: $0 {start|stop|restart|reload}"
+	exit 1
+	;;
+esac

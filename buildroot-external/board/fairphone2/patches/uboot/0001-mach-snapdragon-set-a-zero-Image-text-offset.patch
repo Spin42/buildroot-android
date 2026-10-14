@@ -1,0 +1,27 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Mon, 12 Oct 2026 14:50:57 +0200
+Subject: [PATCH] mach-snapdragon: set a zero Image text offset
+
+U-Boot is position independent with TEXT_BASE 0, so the 0x80000000
+base made text_offset negative. Bootloaders that place the image at a
+2 MiB aligned base plus text_offset then load it at a bogus address.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ arch/arm/mach-snapdragon/Kconfig | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/arm/mach-snapdragon/Kconfig b/arch/arm/mach-snapdragon/Kconfig
+index ddded002..11a0ecab 100644
+--- a/arch/arm/mach-snapdragon/Kconfig
++++ b/arch/arm/mach-snapdragon/Kconfig
+@@ -24,7 +24,7 @@ config SYS_MALLOC_LEN
+ 	default 0x800000
+ 
+ config LNX_KRNL_IMG_TEXT_OFFSET_BASE
+-	default 0x80000000
++	default TEXT_BASE
+ 
+ config SPL_SHARES_INIT_SP_ADDR
+ 	# override the default from common/spl/Kconfig

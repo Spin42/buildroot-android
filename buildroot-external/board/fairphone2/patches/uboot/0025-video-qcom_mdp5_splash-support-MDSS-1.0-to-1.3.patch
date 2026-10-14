@@ -1,0 +1,112 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Wed, 14 Oct 2026 00:46:12 +0200
+Subject: [PATCH] video: qcom_mdp5_splash: support MDSS 1.0 to 1.3
+
+Pick the register layout from the MDSS version: the MDP block of MSM8974
+and APQ8084 sits at 0x100 with older CTL and pipe offsets.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/video/qcom_mdp5_splash.c | 44 +++++++++++++++++++++++++-------
+ 1 file changed, 35 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/video/qcom_mdp5_splash.c b/drivers/video/qcom_mdp5_splash.c
+index 7fee79a1..051b8ff2 100644
+--- a/drivers/video/qcom_mdp5_splash.c
++++ b/drivers/video/qcom_mdp5_splash.c
+@@ -20,8 +20,9 @@
+ #include <linux/delay.h>
+ #include <linux/sizes.h>
+ 
+-/* Offsets from the MDSS base ("mdss_phys") */
+-#define MDP5_CTL0			0x2000
++#define MDSS_HW_VERSION			0x00
++#define MDSS_HW_VERSION_MINOR		GENMASK(27, 16)
++
+ #define CTL_LAYER0			0x00
+ #define CTL_TOP				0x14
+ #define CTL_TOP_CMD_MODE		BIT(17)
+@@ -47,15 +48,32 @@
+ 
+ struct mdp5_pipe {
+ 	const char *name;
+-	u32 offset;
+ 	u32 flush_bit;
+ };
+ 
+ /* Only pipes that exist on every MDP5 revision: other offsets may trap */
+ static const struct mdp5_pipe mdp5_pipes[] = {
+-	{ "VIG0", 0x05000, BIT(0) },
+-	{ "RGB0", 0x15000, BIT(3) },
+-	{ "DMA0", 0x25000, BIT(11) },
++	{ "VIG0", BIT(0) },
++	{ "RGB0", BIT(3) },
++	{ "DMA0", BIT(11) },
++};
++
++/* Offsets from the MDSS base ("mdss_phys") */
++struct mdp5_layout {
++	u32 ctl0;
++	u32 pipe[ARRAY_SIZE(mdp5_pipes)];
++};
++
++/* MDSS 1.0 to 1.3 (MSM8974, APQ8084) */
++static const struct mdp5_layout mdp5_layout_v1_0 = {
++	.ctl0 = 0x00600,
++	.pipe = { 0x01200, 0x01e00, 0x02a00 },
++};
++
++/* MDSS 1.6 and later (MSM8916, MSM8953, ...) */
++static const struct mdp5_layout mdp5_layout_v1_6 = {
++	.ctl0 = 0x02000,
++	.pipe = { 0x05000, 0x15000, 0x25000 },
+ };
+ 
+ struct mdp5_splash_priv {
+@@ -130,6 +148,7 @@ static int mdp5_splash_probe(struct udevice *dev)
+ 	struct video_uc_plat *plat = dev_get_uclass_plat(dev);
+ 	struct video_priv *uc_priv = dev_get_uclass_priv(dev);
+ 	struct mdp5_splash_priv *priv = dev_get_priv(dev);
++	const struct mdp5_layout *layout;
+ 	const struct mdp5_pipe *pipe = NULL;
+ 	u32 img_size, stride, format, bpp, width, height, addr = 0;
+ 	phys_addr_t base;
+@@ -141,8 +160,13 @@ static int mdp5_splash_probe(struct udevice *dev)
+ 	if (base == FDT_ADDR_T_NONE)
+ 		return -EINVAL;
+ 
++	if (FIELD_GET(MDSS_HW_VERSION_MINOR, readl(base + MDSS_HW_VERSION)) < 6)
++		layout = &mdp5_layout_v1_0;
++	else
++		layout = &mdp5_layout_v1_6;
++
+ 	for (i = 0; i < ARRAY_SIZE(mdp5_pipes); i++) {
+-		addr = readl(base + mdp5_pipes[i].offset + SSPP_SRC_ADDR0);
++		addr = readl(base + layout->pipe[i] + SSPP_SRC_ADDR0);
+ 		if (addr) {
+ 			pipe = &mdp5_pipes[i];
+ 			break;
+@@ -154,10 +178,10 @@ static int mdp5_splash_probe(struct udevice *dev)
+ 		return -ENODEV;
+ 	}
+ 
+-	priv->ctl = (void __iomem *)(base + MDP5_CTL0);
++	priv->ctl = (void __iomem *)(base + layout->ctl0);
+ 	priv->cmd_mode = readl(priv->ctl + CTL_TOP) & CTL_TOP_CMD_MODE;
+ 
+-	regs = (void __iomem *)(base + pipe->offset);
++	regs = (void __iomem *)(base + layout->pipe[i]);
+ 	img_size = readl(regs + SSPP_SRC_IMG_SIZE);
+ 	stride = readl(regs + SSPP_SRC_YSTRIDE) & 0xffff;
+ 	format = readl(regs + SSPP_SRC_FORMAT);
+@@ -176,7 +200,9 @@ static int mdp5_splash_probe(struct udevice *dev)
+ 	}
+ 
+ 	size = ALIGN(max(stride, width * 4) * height, SZ_4K);
++#ifdef CONFIG_ARM64
+ 	mmu_map_region(addr, size, false);
++#endif
+ 	invalidate_dcache_range(addr, addr + size);
+ 
+ 	if (bpp == 3) {

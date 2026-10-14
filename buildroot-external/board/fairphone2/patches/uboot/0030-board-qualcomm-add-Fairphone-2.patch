@@ -1,0 +1,557 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Wed, 14 Oct 2026 00:46:12 +0200
+Subject: [PATCH] board: qualcomm: add Fairphone 2
+
+U-Boot is chainloaded by the stock LK or lk2nd from the boot partition and takes over the display, eMMC, keys and USB they leave set up. Like lk2nd, it gives the OS device tree the compatible of the panel fitted, which the generic Fairphone 2 panel node lacks.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ .../qcom-msm8974pro-fairphone-fp2-u-boot.dtsi |  34 +++++
+ board/qualcomm/MAINTAINERS                    |  11 ++
+ board/qualcomm/debug-msm8974.config           |   8 ++
+ board/qualcomm/fairphone-fp2.env              | 125 ++++++++++++++++++
+ board/qualcomm/fairphone-fp2/Makefile         |   3 +
+ board/qualcomm/fairphone-fp2/fairphone-fp2.c  |  85 ++++++++++++
+ configs/fairphone-fp2_defconfig               |  90 +++++++++++++
+ doc/board/qualcomm/fairphone-fp2.rst          | 109 +++++++++++++++
+ doc/board/qualcomm/index.rst                  |   1 +
+ 9 files changed, 466 insertions(+)
+ create mode 100644 arch/arm/dts/qcom-msm8974pro-fairphone-fp2-u-boot.dtsi
+ create mode 100644 board/qualcomm/debug-msm8974.config
+ create mode 100644 board/qualcomm/fairphone-fp2.env
+ create mode 100644 board/qualcomm/fairphone-fp2/Makefile
+ create mode 100644 board/qualcomm/fairphone-fp2/fairphone-fp2.c
+ create mode 100644 configs/fairphone-fp2_defconfig
+ create mode 100644 doc/board/qualcomm/fairphone-fp2.rst
+
+diff --git a/arch/arm/dts/qcom-msm8974pro-fairphone-fp2-u-boot.dtsi b/arch/arm/dts/qcom-msm8974pro-fairphone-fp2-u-boot.dtsi
+new file mode 100644
+index 00000000..a02bddb4
+--- /dev/null
++++ b/arch/arm/dts/qcom-msm8974pro-fairphone-fp2-u-boot.dtsi
+@@ -0,0 +1,34 @@
++// SPDX-License-Identifier: GPL-2.0
++
++#include <dt-bindings/arm/qcom,ids.h>
++
++/ {
++	/*
++	 * Match the entry of the stock LK, as lk2nd does, so it selects this
++	 * DTB when U-Boot is packed into an Android boot image.
++	 */
++	qcom,msm-id = <QCOM_ID_APQ8074PRO_AA 0x10000>,
++		      <QCOM_ID_APQ8074PRO_AB 0x10000>,
++		      <QCOM_ID_MSM8274PRO_AA 0x10000>,
++		      <QCOM_ID_MSM8274PRO_AB 0x10000>,
++		      <QCOM_ID_MSM8674PRO_AA 0x10000>,
++		      <QCOM_ID_MSM8674PRO_AB 0x10000>,
++		      <QCOM_ID_MSM8974PRO_AA 0x10000>,
++		      <QCOM_ID_MSM8974PRO_AB 0x10000>;
++	qcom,board-id = <QCOM_BOARD_ID_MTP 0>;
++};
++
++/* No camera key on production phones: the line reads as pressed */
++&{/gpio-keys/key-camera-snapshot} {
++	status = "disabled";
++};
++
++/* Take over the display that LK leaves running */
++&mdss {
++	status = "okay";
++};
++
++/* Console on the debug UART pads, from before relocation */
++&blsp1_uart2 {
++	bootph-all;
++};
+diff --git a/board/qualcomm/MAINTAINERS b/board/qualcomm/MAINTAINERS
+index fd8db785..037b182a 100644
+--- a/board/qualcomm/MAINTAINERS
++++ b/board/qualcomm/MAINTAINERS
+@@ -23,6 +23,17 @@ M:	Varadarajan Narayanan <quic_varada@quicinc.com>
+ S:	Maintained
+ N:	qcs9100
+ 
++FAIRPHONE 2
++M:	Marc Lainez <marc.lainez@gmail.com>
++S:	Maintained
++F:	arch/arm/dts/qcom-msm8974pro-fairphone-fp2-u-boot.dtsi
++F:	board/qualcomm/debug-msm8974.config
++F:	board/qualcomm/fairphone-fp2.env
++F:	board/qualcomm/fairphone-fp2/
++F:	configs/fairphone-fp2_defconfig
++F:	doc/board/qualcomm/fairphone-fp2.rst
++N:	msm8974
++
+ FAIRPHONE 3 / 3+
+ M:	Marc Lainez <marc.lainez@gmail.com>
+ S:	Maintained
+diff --git a/board/qualcomm/debug-msm8974.config b/board/qualcomm/debug-msm8974.config
+new file mode 100644
+index 00000000..1ac28754
+--- /dev/null
++++ b/board/qualcomm/debug-msm8974.config
+@@ -0,0 +1,8 @@
++# Most MSM8974 phones have no reachable UART: keep the console in a RAM
++# buffer that the previous bootloader (e.g. lk2nd "fastboot oem debug readl")
++# can read back after a warm reset.
++CONFIG_DEBUG_UART=y
++CONFIG_DEBUG_UART_ANNOUNCE=y
++CONFIG_DEBUG_UART_RAMLOG=y
++CONFIG_DEBUG_UART_BASE=0x68000000
++CONFIG_DEBUG_UART_CLOCK=0
+diff --git a/board/qualcomm/fairphone-fp2.env b/board/qualcomm/fairphone-fp2.env
+new file mode 100644
+index 00000000..eabd9ddc
+--- /dev/null
++++ b/board/qualcomm/fairphone-fp2.env
+@@ -0,0 +1,125 @@
++# Fairphone 2
++#
++# The console is on the display (over the boot splash left by LK), on the
++# debug UART pads (115200 8N1) and, on request, on a USB serial gadget (CDC
++# ACM). A key on the UART during the boot delay stops autoboot.
++# In menus, Volume Up/Down move and Power selects.
++
++stdin=serial,button-kbd
++stdout=serial,vidconsole
++stderr=serial,vidconsole
++bootdelay=3
++bootretry=-1
++
++# Fixed load addresses, in lowmem for the 32-bit kernel and used in place.
++# Linux does not start when the kernel, device tree or initramfs is loaded
++# between 0x04000000 and 0x08000000, nor from the top of RAM.
++kernel_addr_r=0x12000000
++fdt_addr_r=0x13f00000
++ramdisk_addr_r=0x14000000
++fdt_high=0xffffffff
++initrd_high=0xffffffff
++
++# Standard boot: a boot.scr, else an extlinux.conf, on the eMMC partitions
++boot_targets=mmc0
++bootmeths=script extlinux
++
++fastboot=fastboot usb 0
++
++# USB Ethernet dongle (ASIX, RTL8152/8153, SMSC95xx, MCS7830) on a powered
++# hub: "usb start", then e.g. "dhcp" and "tftpboot ${kernel_addr_r} zImage".
++
++# Reboot into the fastboot mode of LK (restart reason in IMEM)
++lk_fastboot=mw.l 0xfe80565c 0x77665500; reset
++
++# PM8941 PON: make dropping PS_HOLD a shutdown instead of a reset
++poweroff_pmic=pmic dev pm8941@0; \
++	pmic write 0x85b 0x00; \
++	pmic write 0x85a 0x04; \
++	pmic write 0x85b 0x80; \
++	reset
++
++# Move the console to USB serial as well and stay in U-Boot. Output is held
++# until a host opens the port (e.g. minicom -D /dev/ttyACM0).
++usb_console=setenv bootdelay -1; \
++	setenv stdin serial,button-kbd,usbacm; \
++	setenv stdout serial,vidconsole,usbacm; \
++	setenv stderr serial,vidconsole,usbacm; \
++	echo "U-Boot console on USB serial"
++
++# Press Volume Up during the first five seconds of U-Boot for the boot menu,
++# Volume Down for U-Boot fastboot.
++key_poll=setenv key_action; \
++	echo "Volume Up: boot menu, Volume Down: fastboot"; \
++	setenv stdout nulldev; \
++	for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25; do \
++		if test -z "${key_action}"; then \
++			if button volume_up; then setenv key_action menu; fi; \
++			if button volume_down; then setenv key_action fastboot_mode; fi; \
++			sleep 0.2; \
++		fi; \
++	done; \
++	setenv stdout serial,vidconsole; \
++	if test -n "${key_action}"; then run ${key_action}; fi
++# Without a display (headless=1, set by the board code), only the boot delay
++# remains, for a key on the serial console.
++preboot=if test -z "${headless}"; then cls; run key_poll; fi
++
++# The userdata partition as its own block device: images written there by
++# the OS (e.g. with fwup or RAUC) carry their own partition table.
++map_userdata=if test -z "${ud_dev}"; then \
++	part start mmc 0 userdata ud_start && \
++	part size mmc 0 userdata ud_size && \
++	blkmap create userdata && \
++	blkmap map userdata 0 ${ud_size} linear mmc 0 ${ud_start} && \
++	blkmap get userdata dev ud_dev; fi
++
++# Boot the image in userdata with the boot.scr or extlinux.conf of its first
++# partition (a boot.scr may choose between A/B slots, e.g. for RAUC), or,
++# when userdata holds a bare filesystem, its /boot/boot.scr (with the
++# variables standard boot sets) or, like lk2nd, its extlinux.conf. Standard
++# boot itself only scans the first partition of the eMMC, none are bootable.
++boot_userdata=run map_userdata; \
++	if test -e blkmap ${ud_dev}:1 /boot.scr; then \
++		load blkmap ${ud_dev}:1 ${scriptaddr} /boot.scr && source ${scriptaddr}; \
++	fi; \
++	if test -e blkmap ${ud_dev}:1 /extlinux/extlinux.conf; then \
++		sysboot blkmap ${ud_dev}:1 any ${scriptaddr} /extlinux/extlinux.conf; \
++	fi; \
++	part number mmc 0 userdata ud_part; \
++	if test -e mmc 0:${ud_part} /boot/boot.scr; then \
++		setenv devtype mmc; setenv devnum 0; \
++		setenv distro_bootpart ${ud_part}; setenv prefix /boot/; \
++		load mmc 0:${ud_part} ${scriptaddr} /boot/boot.scr && source ${scriptaddr}; \
++	fi; \
++	sysboot mmc 0:${ud_part} any ${scriptaddr} /extlinux/extlinux.conf
++
++boot_os=bootflow scan -b; run boot_userdata
++
++# Expose only userdata, never the whole eMMC with the bootloaders, as a USB
++# disk. Ejecting it on the host or any key, Power included, ends it.
++ums_mode=run map_userdata && \
++	echo "USB disk: userdata. Eject it or press any key to leave"; \
++	ums 0 blkmap ${ud_dev}
++
++fastboot_mode=echo "USB fastboot. Press any key to leave"; run fastboot
++
++# From the USB serial console: hand USB over to another function, then
++# show the boot menu.
++console_local=setenv stdin serial,button-kbd; \
++	setenv stdout serial,vidconsole; \
++	setenv stderr serial,vidconsole
++ums_userdata=run console_local; run ums_mode; run menu
++fastboot_usb=run console_local; run fastboot_mode; run menu
++
++# Boot menu, entered with Volume Up. The USB modes come back to it.
++menu=setenv bootdelay -1; bootmenu -1
++bootmenu_0=Boot=run boot_os; run menu
++bootmenu_1=USB disk (userdata)=run ums_mode; run menu
++bootmenu_2=USB fastboot=run fastboot_mode; run menu
++bootmenu_3=USB serial console=run usb_console
++bootmenu_4=Reboot to bootloader fastboot=run lk_fastboot
++bootmenu_5=Reboot=reset
++bootmenu_6=Power off=run poweroff_pmic
++
++bootcmd=run boot_os; run menu
+diff --git a/board/qualcomm/fairphone-fp2/Makefile b/board/qualcomm/fairphone-fp2/Makefile
+new file mode 100644
+index 00000000..d41fe478
+--- /dev/null
++++ b/board/qualcomm/fairphone-fp2/Makefile
+@@ -0,0 +1,3 @@
++# SPDX-License-Identifier: GPL-2.0+
++
++obj-y := fairphone-fp2.o
+diff --git a/board/qualcomm/fairphone-fp2/fairphone-fp2.c b/board/qualcomm/fairphone-fp2/fairphone-fp2.c
+new file mode 100644
+index 00000000..024f9f25
+--- /dev/null
++++ b/board/qualcomm/fairphone-fp2/fairphone-fp2.c
+@@ -0,0 +1,85 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * Fairphone 2
++ */
++
++#include <dm.h>
++#include <env.h>
++#include <dm/device-internal.h>
++#include <dm/uclass-internal.h>
++#include <fdt_support.h>
++#include <init.h>
++#include <log.h>
++#include <asm/io.h>
++#include <linux/bitops.h>
++#include <linux/libfdt.h>
++
++/* MMCC: power domain and bus clock of the display subsystem */
++#define MMCC_MDSS_GDSCR		0xfd8c2304
++#define GDSC_PWR_ON		BIT(31)
++#define MMCC_MDSS_AHB_CBCR	0xfd8c2308
++#define CBCR_CLK_OFF		BIT(31)
++
++/* CTL0 of the MDP in MDSS 1.2 */
++#define MDP5_CTL0_TOP		0xfd900614
++#define CTL_TOP_CMD_MODE	BIT(17)
++
++/*
++ * LK only powers and clocks the display subsystem when it drives a panel,
++ * e.g. not on a bare mainboard. Reading its registers otherwise hangs the
++ * bus and resets the phone.
++ */
++static bool fp2_display_on(void)
++{
++	return (readl(MMCC_MDSS_GDSCR) & GDSC_PWR_ON) &&
++	       !(readl(MMCC_MDSS_AHB_CBCR) & CBCR_CLK_OFF);
++}
++
++void qcom_board_init(void)
++{
++	struct udevice *dev;
++
++	if (fp2_display_on())
++		return;
++
++	log_info("Display: not set up by LK, console on serial only\n");
++	if (!uclass_find_first_device(UCLASS_VIDEO, &dev) && dev)
++		device_unbind(dev);
++}
++
++/* Without a display, the environment skips the key menu meant for the screen */
++void qcom_late_init(void)
++{
++	if (!fp2_display_on())
++		env_set("headless", "1");
++}
++
++/*
++ * The Fairphone 2 has either an OTM1902B command mode panel or an S6D6FA1
++ * video mode one, both described by the generic "fairphone,fp2-panel" node
++ * of the Linux device tree. Like lk2nd, give the OS the compatible of the
++ * panel LK set up, which the mode of the display controller tells apart.
++ */
++int ft_board_setup(void *blob, struct bd_info *bd)
++{
++	const char *panel;
++	u32 top;
++	int node;
++
++	node = fdt_node_offset_by_compatible(blob, -1, "fairphone,fp2-panel");
++	if (node < 0 || !fp2_display_on())
++		return 0;
++
++	top = readl(MDP5_CTL0_TOP);
++	if (!top)
++		return 0;
++
++	if (top & CTL_TOP_CMD_MODE)
++		panel = "fairphone,fp2-panel-otm1902b";
++	else
++		panel = "fairphone,fp2-panel-s6d6fa1";
++
++	log_info("Panel: %s\n", panel);
++
++	return fdt_setprop_string(blob, node, "compatible", panel);
++}
+diff --git a/configs/fairphone-fp2_defconfig b/configs/fairphone-fp2_defconfig
+new file mode 100644
+index 00000000..a7b78994
+--- /dev/null
++++ b/configs/fairphone-fp2_defconfig
+@@ -0,0 +1,90 @@
++CONFIG_ARM=y
++CONFIG_SYS_BOARD="fairphone-fp2"
++CONFIG_SYS_CONFIG_NAME="qcom"
++CONFIG_SKIP_LOWLEVEL_INIT=y
++CONFIG_SYS_DCACHE_OFF=y
++CONFIG_ARCH_SNAPDRAGON=y
++CONFIG_TEXT_BASE=0x00008000
++CONFIG_NR_DRAM_BANKS=8
++CONFIG_HAS_CUSTOM_SYS_INIT_SP_ADDR=y
++CONFIG_CUSTOM_SYS_INIT_SP_ADDR=0x00400000
++CONFIG_DEFAULT_DEVICE_TREE="qcom/qcom-msm8974pro-fairphone-fp2"
++CONFIG_SYS_LOAD_ADDR=0x10000000
++CONFIG_SNAPDRAGON_ARMV7=y
++CONFIG_BUTTON_CMD=y
++CONFIG_BOOTSTD_FULL=y
++CONFIG_BOOTDELAY=3
++CONFIG_OF_BOARD_SETUP=y
++CONFIG_USE_PREBOOT=y
++CONFIG_CONSOLE_RECORD=y
++CONFIG_CONSOLE_RECORD_OUT_SIZE=0x6000
++CONFIG_SYS_CBSIZE=512
++CONFIG_LOG_MAX_LEVEL=7
++CONFIG_LOG_DEFAULT_LEVEL=6
++# CONFIG_DISPLAY_CPUINFO is not set
++CONFIG_DISPLAY_BOARDINFO_LATE=y
++CONFIG_CMD_BOOTMENU=y
++CONFIG_CMD_MEMINFO=y
++CONFIG_CMD_CLK=y
++CONFIG_CMD_FASTBOOT_ABORT_KEYED=y
++CONFIG_CMD_GPIO=y
++CONFIG_CMD_MMC=y
++CONFIG_CMD_READ=y
++CONFIG_CMD_USB=y
++CONFIG_CMD_USB_MASS_STORAGE=y
++CONFIG_CMD_UMS_ABORT_KEYED=y
++CONFIG_CMD_WRITE=y
++CONFIG_CMD_PAUSE=y
++CONFIG_CMD_SYSBOOT=y
++CONFIG_CMD_PMIC=y
++CONFIG_CMD_LOG=y
++CONFIG_PARTITION_TYPE_GUID=y
++CONFIG_OF_UPSTREAM_BUILD_VENDOR=y
++CONFIG_ENV_USE_DEFAULT_ENV_TEXT_FILE=y
++CONFIG_ENV_DEFAULT_ENV_TEXT_FILE="board/qualcomm/fairphone-fp2.env"
++CONFIG_NET_RANDOM_ETHADDR=y
++CONFIG_BLKMAP=y
++CONFIG_BUTTON_REMAP_PHONE_KEYS=y
++CONFIG_BUTTON_QCOM_PMIC=y
++CONFIG_CLK=y
++CONFIG_CLK_STUB=y
++CONFIG_CLK_QCOM_MSM8974=y
++CONFIG_USB_FUNCTION_FASTBOOT=y
++CONFIG_FASTBOOT_BUF_ADDR=0x40000000
++CONFIG_FASTBOOT_BUF_SIZE=0x20000000
++CONFIG_FASTBOOT_FLASH=y
++CONFIG_FASTBOOT_FLASH_MMC_DEV=0
++CONFIG_FASTBOOT_CMD_OEM_CONSOLE=y
++CONFIG_QCOM_PMIC_GPIO=y
++CONFIG_DM_KEYBOARD=y
++CONFIG_BUTTON_KEYBOARD=y
++CONFIG_SYS_MMC_MAX_BLK_COUNT=16384
++CONFIG_MMC_SDHCI=y
++CONFIG_MMC_SDHCI_MSM=y
++CONFIG_PINCTRL=y
++CONFIG_DM_PMIC=y
++CONFIG_PMIC_QCOM=y
++# CONFIG_REQUIRE_SERIAL_CONSOLE is not set
++CONFIG_MSM_SERIAL=y
++CONFIG_SPMI_MSM=y
++CONFIG_USB=y
++# CONFIG_DM_USB_GADGET is not set
++CONFIG_USB_EHCI_HCD=y
++CONFIG_USB_EHCI_MSM=y
++CONFIG_USB_HOST_ETHER=y
++CONFIG_USB_ETHER_ASIX=y
++CONFIG_USB_ETHER_ASIX88179=y
++CONFIG_USB_ETHER_MCS7830=y
++CONFIG_USB_ETHER_RTL8152=y
++CONFIG_USB_ETHER_SMSC95XX=y
++CONFIG_USB_GADGET=y
++CONFIG_USB_GADGET_MANUFACTURER="Fairphone"
++CONFIG_CI_UDC=y
++CONFIG_USB_FUNCTION_ACM=y
++CONFIG_VIDEO=y
++# CONFIG_VIDEO_FONT_8X16 is not set
++CONFIG_VIDEO_FONT_16X32=y
++CONFIG_SYS_WHITE_ON_BLACK=y
++CONFIG_VIDEO_QCOM_MDP5_SPLASH=y
++CONFIG_PANIC_HANG=y
++# CONFIG_TOOLS_MKEFICAPSULE is not set
+diff --git a/doc/board/qualcomm/fairphone-fp2.rst b/doc/board/qualcomm/fairphone-fp2.rst
+new file mode 100644
+index 00000000..26d87057
+--- /dev/null
++++ b/doc/board/qualcomm/fairphone-fp2.rst
+@@ -0,0 +1,109 @@
++.. SPDX-License-Identifier: GPL-2.0+
++.. sectionauthor:: Marc Lainez <marc.lainez@gmail.com>
++
++Fairphone 2
++===========
++
++The Fairphone 2 is a smartphone based on the 32-bit Qualcomm MSM8974AB
++(Snapdragon 801) SoC, with 2 GiB of RAM and 32 GiB of eMMC.
++
++U-Boot runs as a second stage bootloader: the stock LK bootloader (or lk2nd)
++loads it from the ``boot`` partition as an Android boot image, like a 32-bit
++Linux kernel. It takes the place lk2nd usually has on this phone.
++
++U-Boot reuses what LK leaves running: the display, the eMMC and the PMICs.
++It drives the eMMC, the PM8941 keys, the display console (through the MDP
++pipe LK scans out, including command mode panels) and USB in device mode.
++
++Building
++--------
++
++::
++
++  $ export CROSS_COMPILE=<armv7 toolchain prefix>
++  $ make O=.output fairphone-fp2_defconfig
++  $ make O=.output -j$(nproc)
++
++``u-boot.bin`` starts with a zImage header whose end address field points
++right after the code, where the device tree is appended. LK finds the device
++tree there, as it does for a zImage with an appended device tree. Pack it
++into an Android boot image loaded at ``0x8000``, with the device tree copied
++to ``0x01e00000``::
++
++  $ printf '\0' > .output/ramdisk.img
++  $ mkbootimg --kernel .output/u-boot.bin --ramdisk .output/ramdisk.img \
++        --base 0x00000000 --kernel_offset 0x00008000 \
++        --ramdisk_offset 0x02000000 --tags_offset 0x01e00000 \
++        --pagesize 2048 --output u-boot-fp2.img
++
++The device tree carries the ``qcom,msm-id`` and ``qcom,board-id`` values the
++stock LK uses to select it.
++
++Most units have no reachable UART. ``board/qualcomm/debug-msm8974.config``
++keeps the console in a RAM buffer instead, which the previous bootloader can
++read back after a warm reset (``fastboot oem debug readl`` in lk2nd).
++
++Installation
++------------
++
++The bootloader has to be unlocked. Try U-Boot from RAM first, from the
++fastboot mode of LK or lk2nd::
++
++  $ fastboot boot u-boot-fp2.img
++
++Then install it to the boot partition::
++
++  $ fastboot flash boot u-boot-fp2.img
++
++Usage
++-----
++
++The console is on the display, cleared when U-Boot starts, and on the debug
++UART pads (BLSP1 UART2, 115200 8N1, set up by LK). Pressing a key on the UART
++during the three second boot delay stops autoboot at the U-Boot prompt. In
++menus, Volume Up and Volume Down move and Power selects.
++
++USB host mode works with a powered hub (the phone does not supply VBUS): a
++USB Ethernet dongle (ASIX AX88772/AX88179, Realtek RTL8152/8153, SMSC95xx,
++MCS7830) is found by ``usb start``, then ``dhcp`` and ``tftpboot`` can be
++used, e.g. ``tftpboot ${kernel_addr_r} zImage``.
++
++On a board without a panel LK leaves the display subsystem off: U-Boot then
++leaves it alone, sets ``headless=1`` and skips the screen and key menu, only
++the boot delay remains on the UART.
++
++Without a key pressed, U-Boot boots the first operating system it finds:
++
++* standard boot (a ``boot.scr``, else an ``extlinux.conf``) on the first
++  partition of the eMMC, the only one it scans as none is marked bootable,
++* an image with its own partition table written to the ``userdata``
++  partition, booted with the ``boot.scr`` or the ``extlinux.conf`` of its
++  first partition. A ``boot.scr`` can choose between A/B slots of that
++  image, for instance for RAUC,
++* a bare filesystem written to the ``userdata`` partition, booted with its
++  ``/boot/boot.scr`` (with the variables standard boot sets: ``devtype``,
++  ``devnum``, ``distro_bootpart``, ``prefix``) or, as lk2nd does, its
++  ``extlinux.conf``.
++
++If nothing can be booted, the boot menu opens.
++
++During the first five seconds of U-Boot:
++
++* press Volume Up for the boot menu,
++* press Volume Down for U-Boot fastboot.
++
++The boot menu offers:
++
++* Boot,
++* USB disk (userdata): a USB mass storage device that exposes only the
++  ``userdata`` partition, never the whole eMMC with the bootloaders,
++* USB fastboot,
++* USB serial console (``minicom -D /dev/ttyACM0`` on the host),
++* Reboot to bootloader fastboot (LK or lk2nd), Reboot and Power off.
++
++Any key, Power included, leaves the USB disk and fastboot modes and returns
++to the menu. Ejecting the disk on the host also ends the USB disk mode.
++
++From the USB serial console, ``run ums_userdata`` and ``run fastboot_usb``
++switch USB to the USB disk and fastboot modes, and ``run lk_fastboot``
++reboots into the fastboot mode of LK.
+diff --git a/doc/board/qualcomm/index.rst b/doc/board/qualcomm/index.rst
+index a3b50cac..cc0de581 100644
+--- a/doc/board/qualcomm/index.rst
++++ b/doc/board/qualcomm/index.rst
+@@ -10,6 +10,7 @@ Qualcomm
+    debugging
+    dragonboard410c
+    dragonwing
++   fairphone-fp2
+    fairphone-fp3
+    rb3gen2
+    rubikpi3

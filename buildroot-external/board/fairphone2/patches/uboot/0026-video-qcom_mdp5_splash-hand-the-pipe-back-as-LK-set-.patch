@@ -1,0 +1,109 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Wed, 14 Oct 2026 06:22:54 +0200
+Subject: [PATCH] video: qcom_mdp5_splash: hand the pipe back as LK set it up
+
+Converting a 24 bpp splash to XRGB8888 changes the format, unpack pattern
+and stride of the pipe. On MDSS 1.2 (MSM8974) the shared memory pool was
+sized by LK for the original format and Linux hangs while starting from
+the converted pipe. Pack the buffer back and restore the pipe registers
+when U-Boot hands over to the OS.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/video/qcom_mdp5_splash.c | 58 +++++++++++++++++++++++++++++---
+ 1 file changed, 53 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/video/qcom_mdp5_splash.c b/drivers/video/qcom_mdp5_splash.c
+index 051b8ff2..bdda89b4 100644
+--- a/drivers/video/qcom_mdp5_splash.c
++++ b/drivers/video/qcom_mdp5_splash.c
+@@ -80,6 +80,14 @@ struct mdp5_splash_priv {
+ 	void __iomem *ctl;
+ 	bool cmd_mode;
+ 	ulong last_kick;
++	/* Pipe setup LK left, restored for the OS when U-Boot converted it */
++	void __iomem *pipe;
++	u32 flush_bit;
++	bool converted;
++	u32 npixels;
++	u32 format;
++	u32 unpack;
++	u32 ystride;
+ };
+ 
+ /* Minimum time between two frames pushed to a command mode panel */
+@@ -99,6 +107,21 @@ static void mdp5_expand_rgb888(void *fb, u32 npixels)
+ 		dst[i] = src[3 * i] | src[3 * i + 1] << 8 | src[3 * i + 2] << 16;
+ }
+ 
++/* Pack an XRGB8888 buffer back to 24 bpp in place, walking forwards */
++static void mdp5_pack_rgb888(void *fb, u32 npixels)
++{
++	const u32 *src = fb;
++	u8 *dst = fb;
++	u32 i, px;
++
++	for (i = 0; i < npixels; i++) {
++		px = src[i];
++		dst[3 * i] = px;
++		dst[3 * i + 1] = px >> 8;
++		dst[3 * i + 2] = px >> 16;
++	}
++}
++
+ /*
+  * Push a frame to a command mode panel. This runs before the uclass flushes
+  * the cache, so flush the framebuffer here first.
+@@ -131,14 +154,31 @@ static int mdp5_splash_sync(struct udevice *dev)
+  */
+ static int mdp5_splash_remove(struct udevice *dev)
+ {
++	struct video_uc_plat *plat = dev_get_uclass_plat(dev);
+ 	struct mdp5_splash_priv *priv = dev_get_priv(dev);
+ 
+-	if (!priv->cmd_mode)
+-		return 0;
++	if (priv->cmd_mode) {
++		mdelay(MDP5_KICK_MS);
++		mdp5_splash_kick(dev);
++		mdelay(MDP5_KICK_MS);
++	}
+ 
+-	mdelay(MDP5_KICK_MS);
+-	mdp5_splash_kick(dev);
+-	mdelay(MDP5_KICK_MS);
++	/*
++	 * Hand the pipe over as LK set it up: the MDP of older SoCs sized its
++	 * shared memory pool for that format, and the OS starts from it.
++	 */
++	if (priv->converted) {
++		mdp5_pack_rgb888((void *)plat->base, priv->npixels);
++		flush_dcache_range(plat->base, ALIGN(plat->base + plat->size, SZ_4K));
++		writel(priv->format, priv->pipe + SSPP_SRC_FORMAT);
++		writel(priv->unpack, priv->pipe + SSPP_SRC_UNPACK_PATTERN);
++		writel(priv->ystride, priv->pipe + SSPP_SRC_YSTRIDE);
++		writel(priv->flush_bit, priv->ctl + CTL_FLUSH);
++		if (priv->cmd_mode) {
++			writel(1, priv->ctl + CTL_START);
++			mdelay(MDP5_KICK_MS);
++		}
++	}
+ 
+ 	return 0;
+ }
+@@ -206,6 +246,14 @@ static int mdp5_splash_probe(struct udevice *dev)
+ 	invalidate_dcache_range(addr, addr + size);
+ 
+ 	if (bpp == 3) {
++		priv->pipe = regs;
++		priv->flush_bit = pipe->flush_bit;
++		priv->format = format;
++		priv->unpack = readl(regs + SSPP_SRC_UNPACK_PATTERN);
++		priv->ystride = readl(regs + SSPP_SRC_YSTRIDE);
++		priv->npixels = stride / 3 * height;
++		priv->converted = true;
++
+ 		mdp5_expand_rgb888((void *)(uintptr_t)addr, stride / 3 * height);
+ 		stride = stride / 3 * 4;
+ 		flush_dcache_range(addr, addr + size);

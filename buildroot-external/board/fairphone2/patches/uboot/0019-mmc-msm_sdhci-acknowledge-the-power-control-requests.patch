@@ -1,0 +1,142 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Wed, 14 Oct 2026 00:46:11 +0200
+Subject: [PATCH] mmc: msm_sdhci: acknowledge the power control requests
+
+On controllers with an MCI block, changes of the bus power and I/O voltage
+raise a power control request that software has to acknowledge, as Linux
+does in sdhci_msm_handle_pwr_irq(). Without that the controller stalls,
+seen as random hangs during eMMC initialisation on MSM8974.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/mmc/Kconfig     |  1 +
+ drivers/mmc/msm_sdhci.c | 77 ++++++++++++++++++++++++++++++++++++++++-
+ 2 files changed, 77 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/mmc/Kconfig b/drivers/mmc/Kconfig
+index b3731dfe..0e18a815 100644
+--- a/drivers/mmc/Kconfig
++++ b/drivers/mmc/Kconfig
+@@ -688,6 +688,7 @@ config MMC_SDHCI_F_SDH30
+ config MMC_SDHCI_MSM
+ 	bool "Qualcomm SDHCI controller"
+ 	depends on MMC_SDHCI && ARCH_SNAPDRAGON
++	select MMC_SDHCI_IO_ACCESSORS
+ 	help
+ 	  Enables support for SDHCI 2.0 controller present on some Qualcomm
+ 	  Snapdragon devices. This device is compatible with eMMC v4.5 and
+diff --git a/drivers/mmc/msm_sdhci.c b/drivers/mmc/msm_sdhci.c
+index 4d02e9b6..006cb7e7 100644
+--- a/drivers/mmc/msm_sdhci.c
++++ b/drivers/mmc/msm_sdhci.c
+@@ -35,6 +35,18 @@
+ 
+ #define CORE_VENDOR_SPEC_POR_VAL 0xa9c
+ 
++/* Power control handshake of the SDCC with an MCI block */
++#define SDCC_MCI_PWRCTL_STATUS	0xdc
++#define SDCC_MCI_PWRCTL_MASK	0xe0
++#define SDCC_MCI_PWRCTL_CLEAR	0xe4
++#define SDCC_MCI_PWRCTL_CTL	0xe8
++#define CORE_PWRCTL_BUS_OFF	BIT(0)
++#define CORE_PWRCTL_BUS_ON	BIT(1)
++#define CORE_PWRCTL_IO_LOW	BIT(2)
++#define CORE_PWRCTL_IO_HIGH	BIT(3)
++#define CORE_PWRCTL_BUS_SUCCESS	BIT(0)
++#define CORE_PWRCTL_IO_SUCCESS	BIT(2)
++
+ #define CORE_DLL_PDN		BIT(29)
+ #define CORE_DLL_RST		BIT(30)
+ 
+@@ -173,11 +185,70 @@ static int msm_sdhci_config_dll(struct sdhci_host *host, u32 clock, bool enable)
+ 	return 0;
+ }
+ 
++/*
++ * Bus power and I/O voltage changes, requested through the SDHCI power
++ * control and software reset registers, wait for software to acknowledge
++ * them. Without that the controller stalls.
++ */
++static void msm_sdc_pwrctl_ack(struct msm_sdhc *prv, unsigned int timeout_us)
++{
++	u32 status, ctl = 0;
++
++	do {
++		status = readl(prv->base + SDCC_MCI_PWRCTL_STATUS);
++		if (status)
++			break;
++		udelay(1);
++	} while (timeout_us--);
++
++	if (!status)
++		return;
++
++	writel(status, prv->base + SDCC_MCI_PWRCTL_CLEAR);
++	if (status & (CORE_PWRCTL_BUS_ON | CORE_PWRCTL_BUS_OFF))
++		ctl |= CORE_PWRCTL_BUS_SUCCESS;
++	if (status & (CORE_PWRCTL_IO_HIGH | CORE_PWRCTL_IO_LOW))
++		ctl |= CORE_PWRCTL_IO_SUCCESS;
++	writel(ctl, prv->base + SDCC_MCI_PWRCTL_CTL);
++}
++
++static void msm_sdhci_write_b(struct sdhci_host *host, u8 val, int reg)
++{
++	struct msm_sdhc *prv = container_of(host, struct msm_sdhc, host);
++
++	writeb(val, host->ioaddr + reg);
++	if (reg == SDHCI_POWER_CONTROL ||
++	    (reg == SDHCI_SOFTWARE_RESET && (val & SDHCI_RESET_ALL)))
++		msm_sdc_pwrctl_ack(prv, 10000);
++}
++
++static void msm_sdhci_write_w(struct sdhci_host *host, u16 val, int reg)
++{
++	struct msm_sdhc *prv = container_of(host, struct msm_sdhc, host);
++	u16 old = 0;
++
++	if (reg == SDHCI_HOST_CONTROL2)
++		old = readw(host->ioaddr + reg);
++
++	writew(val, host->ioaddr + reg);
++
++	/* Switching the I/O voltage is also a power control request */
++	if (reg == SDHCI_HOST_CONTROL2 && ((old ^ val) & SDHCI_CTRL_VDD_180))
++		msm_sdc_pwrctl_ack(prv, 10000);
++}
++
+ struct sdhci_ops msm_sdhci_ops = {
+ 	.config_dll = &msm_sdhci_config_dll,
+ 	.set_control_reg = &sdhci_set_control_reg,
+ };
+ 
++struct sdhci_ops msm_sdhci_mci_ops = {
++	.config_dll = &msm_sdhci_config_dll,
++	.set_control_reg = &sdhci_set_control_reg,
++	.write_b = &msm_sdhci_write_b,
++	.write_w = &msm_sdhci_write_w,
++};
++
+ static int msm_sdc_probe(struct udevice *dev)
+ {
+ 	struct mmc_uclass_priv *upriv = dev_get_uclass_priv(dev);
+@@ -223,6 +294,10 @@ static int msm_sdc_probe(struct udevice *dev)
+ 		ret = msm_sdc_mci_init(prv);
+ 		if (ret)
+ 			return ret;
++
++		/* Report all requests and drop any the previous bootloader left */
++		writel(0xf, prv->base + SDCC_MCI_PWRCTL_MASK);
++		msm_sdc_pwrctl_ack(prv, 0);
+ 	}
+ 
+ 	if (!var_info->mci_removed)
+@@ -260,7 +335,7 @@ static int msm_sdc_probe(struct udevice *dev)
+ 
+ 	host->mmc = &plat->mmc;
+ 	host->mmc->dev = dev;
+-	host->ops = &msm_sdhci_ops;
++	host->ops = var_info->mci_removed ? &msm_sdhci_ops : &msm_sdhci_mci_ops;
+ 	ret = sdhci_setup_cfg(&plat->cfg, host, 0, 0);
+ 	if (ret)
+ 		return ret;

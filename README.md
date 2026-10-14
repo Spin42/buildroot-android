@@ -26,6 +26,12 @@ Make sure lk2nd is flashed on the boot partition.
 6. With your phone plugged to your computer via USB, you should see a new network interface, it should be assigned the 10.0.42.2 ip automatically (the fp2 will be 10.0.42.1)
 7. Type `ssh root@10.0.42.1`, password is `root`
 
+### With U-Boot instead of lk2nd
+
+`fairphone2_uboot_defconfig` builds U-Boot together with the system and produces `output/images/u-boot-fp2.img` for the boot
+partition. `fairphone2_uboot_rauc_defconfig` adds A/B updates with RAUC, with both root filesystems inside the userdata
+partition. See [docs/fairphone2_uboot.md](./docs/fairphone2_uboot.md).
+
 ## Google Nexus 7 (grouper)
 
 Replace the stock bootloader with Uboot. Follow the instructions [here](https://docs.u-boot.org/en/latest/board/asus/grouper.html)

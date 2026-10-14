@@ -1,0 +1,71 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Wed, 14 Oct 2026 00:46:11 +0200
+Subject: [PATCH] spmi: msm: support the v1 PMIC arbiter
+
+The v1 arbiter (MSM8974) has no peripheral to channel table: all accesses
+go through the channel of the execution environment in the core region,
+the command carrying the slave and peripheral IDs.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/spmi/spmi-msm.c | 25 ++++++++++++++++++++++---
+ 1 file changed, 22 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/spmi/spmi-msm.c b/drivers/spmi/spmi-msm.c
+index 9c908013..3994acd0 100644
+--- a/drivers/spmi/spmi-msm.c
++++ b/drivers/spmi/spmi-msm.c
+@@ -29,6 +29,7 @@
+ #define APID_MAP_OFFSET_V7 (0x2000)
+ #define ARB_CHANNEL_OFFSET(n) (0x4 * (n))
+ #define SPMI_CH_OFFSET(chnl) ((chnl) * 0x8000)
++#define SPMI_V1_CH_OFFSET(chnl) (0x800 + (chnl) * 0x80)
+ #define SPMI_V5_OBS_CH_OFFSET(chnl) ((chnl) * 0x80)
+ #define SPMI_V7_OBS_CH_OFFSET(chnl) ((chnl) * 0x20)
+ #define SPMI_V5_RW_CH_OFFSET(chnl) ((chnl) * 0x10000)
+@@ -126,7 +127,7 @@ static int msm_spmi_write(struct udevice *dev, int usid, int pid, int off,
+ 
+ 	switch (priv->arb_ver) {
+ 	case V1:
+-		ch_offset = SPMI_CH_OFFSET(channel);
++		ch_offset = SPMI_V1_CH_OFFSET(channel);
+ 
+ 		reg = pmic_arb_fmt_cmd_v1(SPMI_CMD_EXT_REG_WRITE_LONG,
+ 					  usid, pid, off);
+@@ -195,7 +196,7 @@ static int msm_spmi_read(struct udevice *dev, int usid, int pid, int off)
+ 
+ 	switch (priv->arb_ver) {
+ 	case V1:
+-		ch_offset = SPMI_CH_OFFSET(channel);
++		ch_offset = SPMI_V1_CH_OFFSET(channel);
+ 
+ 		/* Prepare read command */
+ 		reg = pmic_arb_fmt_cmd_v1(SPMI_CMD_EXT_REG_READ_LONG,
+@@ -306,7 +307,25 @@ static int msm_spmi_probe(struct udevice *dev)
+ 
+ 	hw_ver = readl(core_addr + PMIC_ARB_VERSION);
+ 
+-	if (hw_ver < PMIC_ARB_VERSION_V3_MIN) {
++	if (hw_ver < PMIC_ARB_VERSION_V2_MIN) {
++		u32 channel = 0;
++		int sid, pid;
++
++		/*
++		 * v1 has no peripheral to channel mapping: every access goes
++		 * through the EE channel in the core region, the command
++		 * carrying the slave and peripheral IDs.
++		 */
++		priv->arb_ver = V1;
++		priv->spmi_chnls = core_addr;
++		priv->spmi_obs = core_addr;
++		dev_read_u32(dev, "qcom,channel", &channel);
++		for (sid = 0; sid < SPMI_MAX_SLAVES; sid++)
++			for (pid = 0; pid < SPMI_MAX_PERIPH; pid++)
++				priv->channel_map[sid][pid] = channel | SPMI_CHANNEL_VALID;
++		dev_dbg(dev, "PMIC Arb Version-1 (%#x)\n", hw_ver);
++		return 0;
++	} else if (hw_ver < PMIC_ARB_VERSION_V3_MIN) {
+ 		priv->arb_ver = V2;
+ 		priv->arb_chnl = core_addr + APID_MAP_OFFSET_V1_V2_V3;
+ 		priv->max_channels = SPMI_MAX_CHANNELS;

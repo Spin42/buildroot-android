@@ -1,0 +1,121 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Wed, 14 Oct 2026 00:46:11 +0200
+Subject: [PATCH] serial: add a debug UART that writes to RAM
+
+Many phones have no reachable UART. Keep the debug output, and the console
+output once it is up, in a RAM buffer that the previous bootloader can read
+back after a warm reset.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ common/console.c               |  7 ++++++
+ drivers/serial/Kconfig         | 10 +++++++++
+ drivers/serial/Makefile        |  1 +
+ drivers/serial/serial_ramlog.c | 39 ++++++++++++++++++++++++++++++++++
+ 4 files changed, 57 insertions(+)
+ create mode 100644 drivers/serial/serial_ramlog.c
+
+diff --git a/common/console.c b/common/console.c
+index 54d12494..4dc38728 100644
+--- a/common/console.c
++++ b/common/console.c
+@@ -724,6 +724,10 @@ void putc(const char c)
+ 
+ 	console_record_putc(c);
+ 
++	/* the RAM log also keeps everything once the console is up */
++	if (IS_ENABLED(CONFIG_DEBUG_UART_RAMLOG) && (gd->flags & GD_FLG_SERIAL_READY))
++		printch(c);
++
+ 	/* sandbox can send characters to stdout before it has a console */
+ 	if (IS_ENABLED(CONFIG_SANDBOX) && !(gd->flags & GD_FLG_SERIAL_READY)) {
+ 		os_putc(c);
+@@ -765,6 +769,9 @@ void puts(const char *s)
+ 
+ 	console_record_puts(s);
+ 
++	if (IS_ENABLED(CONFIG_DEBUG_UART_RAMLOG) && (gd->flags & GD_FLG_SERIAL_READY))
++		printascii(s);
++
+ 	/* sandbox can send characters to stdout before it has a console */
+ 	if (IS_ENABLED(CONFIG_SANDBOX) && !(gd->flags & GD_FLG_SERIAL_READY)) {
+ 		os_puts(s);
+diff --git a/drivers/serial/Kconfig b/drivers/serial/Kconfig
+index ffc58d66..fc60cf5a 100644
+--- a/drivers/serial/Kconfig
++++ b/drivers/serial/Kconfig
+@@ -526,6 +526,16 @@ config DEBUG_UART_GOLDFISH
+ 	  start up driver model. The driver will be available until the real
+ 	  driver model serial is running.
+ 
++# Last, so that it never becomes the default of boards that leave the choice
++config DEBUG_UART_RAMLOG
++	bool "Debug output to a RAM buffer"
++	help
++	  Write the debug UART output to a buffer in RAM at DEBUG_UART_BASE
++	  instead of a UART. The buffer survives a warm reset, so the previous
++	  bootloader can read it back on boards without an accessible UART.
++	  The first word holds a magic value and the second the number of
++	  characters written.
++
+ endchoice
+ 
+ config DEBUG_UART_BASE
+diff --git a/drivers/serial/Makefile b/drivers/serial/Makefile
+index 44fb2170..2fae4df1 100644
+--- a/drivers/serial/Makefile
++++ b/drivers/serial/Makefile
+@@ -44,6 +44,7 @@ obj-$(CONFIG_PIC32_SERIAL) += serial_pic32.o
+ obj-$(CONFIG_BCM283X_MU_SERIAL) += serial_bcm283x_mu.o
+ obj-$(CONFIG_BCM283X_PL011_SERIAL) += serial_bcm283x_pl011.o
+ obj-$(CONFIG_MSM_SERIAL) += serial_msm.o
++obj-$(CONFIG_DEBUG_UART_RAMLOG) += serial_ramlog.o
+ obj-$(CONFIG_MSM_GENI_SERIAL) += serial_msm_geni.o
+ obj-$(CONFIG_MXS_AUART_SERIAL) += serial_mxs.o
+ obj-$(CONFIG_MVEBU_A3700_UART) += serial_mvebu_a3700.o
+diff --git a/drivers/serial/serial_ramlog.c b/drivers/serial/serial_ramlog.c
+new file mode 100644
+index 00000000..0c72f6ac
+--- /dev/null
++++ b/drivers/serial/serial_ramlog.c
+@@ -0,0 +1,39 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * Debug UART that appends to a buffer in RAM, for boards without a usable
++ * UART. Layout at CONFIG_DEBUG_UART_BASE: magic, character count, then the
++ * characters.
++ */
++
++#include <debug_uart.h>
++#include <linux/types.h>
++
++#define RAMLOG_MAGIC	0x474f4c52	/* "RLOG" */
++#define RAMLOG_SIZE	0x100000
++
++struct ramlog {
++	u32 magic;
++	u32 len;
++	u32 reserved[2];
++	char buf[];
++};
++
++static inline void _debug_uart_init(void)
++{
++	struct ramlog *log = (struct ramlog *)CONFIG_DEBUG_UART_BASE;
++
++	if (log->magic != RAMLOG_MAGIC || log->len >= RAMLOG_SIZE) {
++		log->magic = RAMLOG_MAGIC;
++		log->len = 0;
++	}
++}
++
++static inline void _debug_uart_putc(int ch)
++{
++	struct ramlog *log = (struct ramlog *)CONFIG_DEBUG_UART_BASE;
++
++	if (log->len < RAMLOG_SIZE - sizeof(*log))
++		log->buf[log->len++] = ch;
++}
++
++DEBUG_UART_FUNCS

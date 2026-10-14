@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Mon, 12 Oct 2026 14:51:20 +0200
+Subject: [PATCH] sysreset: psci: fall back to other drivers if the reset
+ returns
+
+The MSM8953 firmware returns from PSCI SYSTEM_RESET without resetting.
+Reporting -EINPROGRESS stopped the walk, so the PS_HOLD driver that does
+work was never tried.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/sysreset/sysreset_psci.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/sysreset/sysreset_psci.c b/drivers/sysreset/sysreset_psci.c
+index 89b4f2dc..adf65cde 100644
+--- a/drivers/sysreset/sysreset_psci.c
++++ b/drivers/sysreset/sysreset_psci.c
+@@ -27,7 +27,12 @@ static int psci_sysreset_request(struct udevice *dev, enum sysreset_t type)
+ 		return -EPROTONOSUPPORT;
+ 	}
+ 
+-	return -EINPROGRESS;
++	/*
++	 * SYSTEM_RESET and SYSTEM_OFF do not return on success. Some firmware
++	 * returns anyway without resetting, give the other sysreset drivers a
++	 * chance in that case.
++	 */
++	return -EIO;
+ }
+ 
+ static struct sysreset_ops psci_sysreset_ops = {

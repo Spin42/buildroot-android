@@ -1,0 +1,77 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Wed, 14 Oct 2026 00:46:12 +0200
+Subject: [PATCH] mach-snapdragon: fall back to the eMMC serial number
+
+LK passes androidboot.serialno only to Android. Use the product serial
+number of the eMMC like LK does, so fastboot reports the same serial.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ arch/arm/mach-snapdragon/board.c | 37 ++++++++++++++++++++++++--------
+ 1 file changed, 28 insertions(+), 9 deletions(-)
+
+diff --git a/arch/arm/mach-snapdragon/board.c b/arch/arm/mach-snapdragon/board.c
+index 138b3822..a502a717 100644
+--- a/arch/arm/mach-snapdragon/board.c
++++ b/arch/arm/mach-snapdragon/board.c
+@@ -23,6 +23,7 @@
+ #include <linux/sizes.h>
+ #include <lmb.h>
+ #include <malloc.h>
++#include <mmc.h>
+ #include <soc/qcom/smem.h>
+ #include <sort.h>
+ #include <time.h>
+@@ -245,24 +246,42 @@ static const char *get_cmdline(void)
+ 	return cmdline;
+ }
+ 
+-void qcom_set_serialno(void)
++/* Like LK, fall back to the product serial number of the eMMC */
++static void qcom_set_serialno_from_mmc(void)
+ {
+-	const char *cmdline;
+-	char serial[32];
++	struct mmc *mmc;
++	char serial[16];
+ 
+-	if (!qcom_socinfo_init())
++	if (!IS_ENABLED(CONFIG_MMC))
+ 		return;
+ 
+-	cmdline = get_cmdline();
+-
+-	if (!cmdline) {
+-		log_debug("Failed to get bootargs\n");
++	mmc = find_mmc_device(0);
++	if (!mmc || mmc_init(mmc) || IS_SD(mmc))
+ 		return;
++
++	snprintf(serial, sizeof(serial), "%x",
++		 (mmc->cid[2] & 0xffff) << 16 | mmc->cid[3] >> 16);
++	env_set("serial#", serial);
++}
++
++void qcom_set_serialno(void)
++{
++	const char *cmdline;
++	char serial[32] = "";
++
++	if (qcom_socinfo_init()) {
++		cmdline = get_cmdline();
++		if (cmdline)
++			get_cmdline_option(cmdline, "androidboot.serialno=",
++					   serial, sizeof(serial));
++		else
++			log_debug("Failed to get bootargs\n");
+ 	}
+ 
+-	get_cmdline_option(cmdline, "androidboot.serialno=", serial, sizeof(serial));
+ 	if (serial[0] != '\0')
+ 		env_set("serial#", serial);
++	else
++		qcom_set_serialno_from_mmc();
+ }
+ 
+ /* Sets up the "board", and "soc" environment variables as well as constructing the devicetree

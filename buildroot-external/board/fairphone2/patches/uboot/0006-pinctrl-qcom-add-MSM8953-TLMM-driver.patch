@@ -1,0 +1,620 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Mon, 12 Oct 2026 14:51:06 +0200
+Subject: [PATCH] pinctrl: qcom: add MSM8953 TLMM driver
+
+The per-pin function table is generated from the Linux driver, so every
+function can be muxed on the pins that support it.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/pinctrl/qcom/Kconfig           |   8 +
+ drivers/pinctrl/qcom/Makefile          |   1 +
+ drivers/pinctrl/qcom/pinctrl-msm8953.c | 567 +++++++++++++++++++++++++
+ 3 files changed, 576 insertions(+)
+ create mode 100644 drivers/pinctrl/qcom/pinctrl-msm8953.c
+
+diff --git a/drivers/pinctrl/qcom/Kconfig b/drivers/pinctrl/qcom/Kconfig
+index 7dd3782c..ab10d2c2 100644
+--- a/drivers/pinctrl/qcom/Kconfig
++++ b/drivers/pinctrl/qcom/Kconfig
+@@ -62,6 +62,14 @@ config PINCTRL_QCOM_MILOS
+ 	  Say Y here to enable support for pinctrl on the Snapdragon Milos SoC,
+ 	  as well as the associated GPIO driver.
+ 
++config PINCTRL_QCOM_MSM8953
++	bool "Qualcomm MSM8953 Pinctrl"
++	default y if PINCTRL_QCOM_GENERIC
++	select PINCTRL_QCOM
++	help
++	  Say Y here to enable support for pinctrl on the Snapdragon MSM8953,
++	  SDM450 and SDM632 SoCs, as well as the associated GPIO driver.
++
+ config PINCTRL_QCOM_QCM2290
+ 	bool "Qualcomm QCM2290 Pinctrl"
+ 	default y if PINCTRL_QCOM_GENERIC
+diff --git a/drivers/pinctrl/qcom/Makefile b/drivers/pinctrl/qcom/Makefile
+index a7a9ad03..402f9fe9 100644
+--- a/drivers/pinctrl/qcom/Makefile
++++ b/drivers/pinctrl/qcom/Makefile
+@@ -9,6 +9,7 @@ obj-$(CONFIG_PINCTRL_QCOM_IPQ5424) += pinctrl-ipq5424.o
+ obj-$(CONFIG_PINCTRL_QCOM_IPQ9574) += pinctrl-ipq9574.o
+ obj-$(CONFIG_PINCTRL_QCOM_APQ8096) += pinctrl-apq8096.o
+ obj-$(CONFIG_PINCTRL_QCOM_MILOS) += pinctrl-milos.o
++obj-$(CONFIG_PINCTRL_QCOM_MSM8953) += pinctrl-msm8953.o
+ obj-$(CONFIG_PINCTRL_QCOM_QCM2290) += pinctrl-qcm2290.o
+ obj-$(CONFIG_PINCTRL_QCOM_QCS404) += pinctrl-qcs404.o
+ obj-$(CONFIG_PINCTRL_QCOM_QCS615) += pinctrl-qcs615.o
+diff --git a/drivers/pinctrl/qcom/pinctrl-msm8953.c b/drivers/pinctrl/qcom/pinctrl-msm8953.c
+new file mode 100644
+index 00000000..1f5a03cf
+--- /dev/null
++++ b/drivers/pinctrl/qcom/pinctrl-msm8953.c
+@@ -0,0 +1,567 @@
++// SPDX-License-Identifier: GPL-2.0+
++/*
++ * Qualcomm MSM8953 TLMM pinctrl (MSM8953, SDM450, SDM632)
++ *
++ * The pin function table is derived from the Linux pinctrl-msm8953 driver.
++ */
++
++#include <dm.h>
++#include "pinctrl-qcom.h"
++
++#define MAX_PIN_NAME_LEN 32
++static char pin_name[MAX_PIN_NAME_LEN] __section(".data");
++
++#define MSM8953_GPIO_COUNT 142
++
++static const char * const msm8953_functions[] = {
++	"gpio",
++	"adsp_ext",
++	"atest_bbrx0",
++	"atest_bbrx1",
++	"atest_char",
++	"atest_char0",
++	"atest_char1",
++	"atest_char2",
++	"atest_char3",
++	"atest_gpsadc_dtest0_native",
++	"atest_gpsadc_dtest1_native",
++	"atest_tsens",
++	"atest_wlan0",
++	"atest_wlan1",
++	"bimc_dte0",
++	"bimc_dte1",
++	"blsp1_spi",
++	"blsp3_spi",
++	"blsp6_spi",
++	"blsp7_spi",
++	"blsp_i2c1",
++	"blsp_i2c2",
++	"blsp_i2c3",
++	"blsp_i2c4",
++	"blsp_i2c5",
++	"blsp_i2c6",
++	"blsp_i2c7",
++	"blsp_i2c8",
++	"blsp_spi1",
++	"blsp_spi2",
++	"blsp_spi3",
++	"blsp_spi4",
++	"blsp_spi5",
++	"blsp_spi6",
++	"blsp_spi7",
++	"blsp_spi8",
++	"blsp_uart2",
++	"blsp_uart4",
++	"blsp_uart5",
++	"blsp_uart6",
++	"cam_mclk",
++	"cci_async",
++	"cci_i2c",
++	"cci_timer0",
++	"cci_timer1",
++	"cci_timer2",
++	"cci_timer3",
++	"cci_timer4",
++	"cdc_pdm0",
++	"cri_trng",
++	"cri_trng0",
++	"cri_trng1",
++	"dac_calib0",
++	"dac_calib1",
++	"dac_calib10",
++	"dac_calib11",
++	"dac_calib12",
++	"dac_calib13",
++	"dac_calib14",
++	"dac_calib15",
++	"dac_calib16",
++	"dac_calib17",
++	"dac_calib18",
++	"dac_calib19",
++	"dac_calib2",
++	"dac_calib20",
++	"dac_calib21",
++	"dac_calib22",
++	"dac_calib23",
++	"dac_calib24",
++	"dac_calib25",
++	"dac_calib3",
++	"dac_calib4",
++	"dac_calib5",
++	"dac_calib6",
++	"dac_calib7",
++	"dac_calib8",
++	"dac_calib9",
++	"dbg_out",
++	"ddr_bist",
++	"dmic0_clk",
++	"dmic0_data",
++	"ebi_cdc",
++	"ebi_ch0",
++	"ext_lpass",
++	"gcc_gp1_clk_a",
++	"gcc_gp1_clk_b",
++	"gcc_gp2_clk_a",
++	"gcc_gp2_clk_b",
++	"gcc_gp3_clk_a",
++	"gcc_gp3_clk_b",
++	"gcc_plltest",
++	"gcc_tlmm",
++	"gsm0_tx",
++	"gsm1_tx",
++	"ldo_en",
++	"ldo_update",
++	"lpass_slimbus",
++	"lpass_slimbus0",
++	"lpass_slimbus1",
++	"m_voc",
++	"mdp_vsync",
++	"modem_tsync",
++	"mss_lte",
++	"nav_pps",
++	"nav_pps_in_a",
++	"nav_pps_in_b",
++	"nav_tsync",
++	"pa_indicator",
++	"pbs0",
++	"pbs1",
++	"pbs2",
++	"pri_mi2s",
++	"pri_mi2s_mclk_a",
++	"pri_mi2s_mclk_b",
++	"pri_mi2s_ws",
++	"prng_rosc",
++	"pwr_crypto_enabled_a",
++	"pwr_crypto_enabled_b",
++	"pwr_modem_enabled_a",
++	"pwr_modem_enabled_b",
++	"pwr_nav_enabled_a",
++	"pwr_nav_enabled_b",
++	"qdss_cti_trig_in_a0",
++	"qdss_cti_trig_in_a1",
++	"qdss_cti_trig_in_b0",
++	"qdss_cti_trig_in_b1",
++	"qdss_cti_trig_out_a0",
++	"qdss_cti_trig_out_a1",
++	"qdss_cti_trig_out_b0",
++	"qdss_cti_trig_out_b1",
++	"qdss_traceclk_a",
++	"qdss_traceclk_b",
++	"qdss_tracectl_a",
++	"qdss_tracectl_b",
++	"qdss_tracedata_a",
++	"qdss_tracedata_b",
++	"sd_write",
++	"sec_mi2s",
++	"sec_mi2s_mclk_a",
++	"sec_mi2s_mclk_b",
++	"ssbi_wtr1",
++	"tsens_max",
++	"uim1_clk",
++	"uim1_data",
++	"uim1_present",
++	"uim1_reset",
++	"uim2_clk",
++	"uim2_data",
++	"uim2_present",
++	"uim2_reset",
++	"uim_batt",
++	"wcss_bt",
++	"wcss_fm",
++	"wcss_wlan",
++	"wcss_wlan0",
++	"wcss_wlan1",
++	"wcss_wlan2",
++	"wsa_io",
++};
++
++enum {
++	FN_gpio,
++	FN_adsp_ext,
++	FN_atest_bbrx0,
++	FN_atest_bbrx1,
++	FN_atest_char,
++	FN_atest_char0,
++	FN_atest_char1,
++	FN_atest_char2,
++	FN_atest_char3,
++	FN_atest_gpsadc_dtest0_native,
++	FN_atest_gpsadc_dtest1_native,
++	FN_atest_tsens,
++	FN_atest_wlan0,
++	FN_atest_wlan1,
++	FN_bimc_dte0,
++	FN_bimc_dte1,
++	FN_blsp1_spi,
++	FN_blsp3_spi,
++	FN_blsp6_spi,
++	FN_blsp7_spi,
++	FN_blsp_i2c1,
++	FN_blsp_i2c2,
++	FN_blsp_i2c3,
++	FN_blsp_i2c4,
++	FN_blsp_i2c5,
++	FN_blsp_i2c6,
++	FN_blsp_i2c7,
++	FN_blsp_i2c8,
++	FN_blsp_spi1,
++	FN_blsp_spi2,
++	FN_blsp_spi3,
++	FN_blsp_spi4,
++	FN_blsp_spi5,
++	FN_blsp_spi6,
++	FN_blsp_spi7,
++	FN_blsp_spi8,
++	FN_blsp_uart2,
++	FN_blsp_uart4,
++	FN_blsp_uart5,
++	FN_blsp_uart6,
++	FN_cam_mclk,
++	FN_cci_async,
++	FN_cci_i2c,
++	FN_cci_timer0,
++	FN_cci_timer1,
++	FN_cci_timer2,
++	FN_cci_timer3,
++	FN_cci_timer4,
++	FN_cdc_pdm0,
++	FN_cri_trng,
++	FN_cri_trng0,
++	FN_cri_trng1,
++	FN_dac_calib0,
++	FN_dac_calib1,
++	FN_dac_calib10,
++	FN_dac_calib11,
++	FN_dac_calib12,
++	FN_dac_calib13,
++	FN_dac_calib14,
++	FN_dac_calib15,
++	FN_dac_calib16,
++	FN_dac_calib17,
++	FN_dac_calib18,
++	FN_dac_calib19,
++	FN_dac_calib2,
++	FN_dac_calib20,
++	FN_dac_calib21,
++	FN_dac_calib22,
++	FN_dac_calib23,
++	FN_dac_calib24,
++	FN_dac_calib25,
++	FN_dac_calib3,
++	FN_dac_calib4,
++	FN_dac_calib5,
++	FN_dac_calib6,
++	FN_dac_calib7,
++	FN_dac_calib8,
++	FN_dac_calib9,
++	FN_dbg_out,
++	FN_ddr_bist,
++	FN_dmic0_clk,
++	FN_dmic0_data,
++	FN_ebi_cdc,
++	FN_ebi_ch0,
++	FN_ext_lpass,
++	FN_gcc_gp1_clk_a,
++	FN_gcc_gp1_clk_b,
++	FN_gcc_gp2_clk_a,
++	FN_gcc_gp2_clk_b,
++	FN_gcc_gp3_clk_a,
++	FN_gcc_gp3_clk_b,
++	FN_gcc_plltest,
++	FN_gcc_tlmm,
++	FN_gsm0_tx,
++	FN_gsm1_tx,
++	FN_ldo_en,
++	FN_ldo_update,
++	FN_lpass_slimbus,
++	FN_lpass_slimbus0,
++	FN_lpass_slimbus1,
++	FN_m_voc,
++	FN_mdp_vsync,
++	FN_modem_tsync,
++	FN_mss_lte,
++	FN_nav_pps,
++	FN_nav_pps_in_a,
++	FN_nav_pps_in_b,
++	FN_nav_tsync,
++	FN_pa_indicator,
++	FN_pbs0,
++	FN_pbs1,
++	FN_pbs2,
++	FN_pri_mi2s,
++	FN_pri_mi2s_mclk_a,
++	FN_pri_mi2s_mclk_b,
++	FN_pri_mi2s_ws,
++	FN_prng_rosc,
++	FN_pwr_crypto_enabled_a,
++	FN_pwr_crypto_enabled_b,
++	FN_pwr_modem_enabled_a,
++	FN_pwr_modem_enabled_b,
++	FN_pwr_nav_enabled_a,
++	FN_pwr_nav_enabled_b,
++	FN_qdss_cti_trig_in_a0,
++	FN_qdss_cti_trig_in_a1,
++	FN_qdss_cti_trig_in_b0,
++	FN_qdss_cti_trig_in_b1,
++	FN_qdss_cti_trig_out_a0,
++	FN_qdss_cti_trig_out_a1,
++	FN_qdss_cti_trig_out_b0,
++	FN_qdss_cti_trig_out_b1,
++	FN_qdss_traceclk_a,
++	FN_qdss_traceclk_b,
++	FN_qdss_tracectl_a,
++	FN_qdss_tracectl_b,
++	FN_qdss_tracedata_a,
++	FN_qdss_tracedata_b,
++	FN_sd_write,
++	FN_sec_mi2s,
++	FN_sec_mi2s_mclk_a,
++	FN_sec_mi2s_mclk_b,
++	FN_ssbi_wtr1,
++	FN_tsens_max,
++	FN_uim1_clk,
++	FN_uim1_data,
++	FN_uim1_present,
++	FN_uim1_reset,
++	FN_uim2_clk,
++	FN_uim2_data,
++	FN_uim2_present,
++	FN_uim2_reset,
++	FN_uim_batt,
++	FN_wcss_bt,
++	FN_wcss_fm,
++	FN_wcss_wlan,
++	FN_wcss_wlan0,
++	FN_wcss_wlan1,
++	FN_wcss_wlan2,
++	FN_wsa_io,
++};
++
++/* Functions selectable on each GPIO, in mux order starting at 1 */
++static const u8 msm8953_pin_functions[MSM8953_GPIO_COUNT][9] = {
++	[0] = { FN_blsp_spi1 },
++	[1] = { FN_blsp_spi1, FN_adsp_ext },
++	[2] = { FN_blsp_spi1, FN_blsp_i2c1, FN_prng_rosc, 0, 0, 0, FN_qdss_cti_trig_out_b0 },
++	[3] = { FN_blsp_spi1, FN_blsp_i2c1, 0, 0, 0, FN_qdss_cti_trig_out_a1 },
++	[4] = { FN_blsp_spi2, FN_blsp_uart2, FN_ldo_update, 0, FN_dac_calib0 },
++	[5] = { FN_blsp_spi2, FN_blsp_uart2, FN_ldo_en },
++	[6] = { FN_blsp_spi2, FN_blsp_uart2, FN_blsp_i2c2, FN_gcc_gp1_clk_b },
++	[7] = { FN_blsp_spi2, FN_blsp_uart2, FN_blsp_i2c2, 0, FN_atest_gpsadc_dtest0_native },
++	[8] = { FN_blsp_spi3, 0, 0, FN_qdss_tracedata_b },
++	[9] = { FN_blsp_spi3, FN_pwr_modem_enabled_b, 0, 0, FN_qdss_tracedata_b },
++	[10] = { FN_blsp_spi3, FN_blsp_i2c3, FN_gcc_gp2_clk_b },
++	[11] = { FN_blsp_spi3, FN_blsp_i2c3, FN_gcc_gp3_clk_b },
++	[12] = {
++		FN_blsp_spi4, FN_blsp_uart4, FN_pwr_nav_enabled_b, 0, 0, FN_qdss_tracedata_b, 0,
++		FN_dac_calib1
++	},
++	[13] = {
++		FN_blsp_spi4, FN_blsp_uart4, FN_pwr_crypto_enabled_b, 0, 0, 0, FN_qdss_tracedata_b,
++		0, FN_dac_calib2
++	},
++	[14] = { FN_blsp_spi4, FN_blsp_uart4, FN_blsp_i2c4 },
++	[15] = { FN_blsp_spi4, FN_blsp_uart4, FN_blsp_i2c4 },
++	[16] = { FN_blsp_spi5, FN_blsp_uart5, 0, 0, FN_qdss_traceclk_a, 0, FN_atest_bbrx1 },
++	[17] = { FN_blsp_spi5, FN_blsp_uart5, FN_m_voc, FN_qdss_cti_trig_in_a0, 0, FN_atest_bbrx0 },
++	[18] = {
++		FN_blsp_spi5, FN_blsp_uart5, FN_blsp_i2c5, FN_qdss_tracectl_a, 0,
++		FN_atest_gpsadc_dtest1_native
++	},
++	[19] = { FN_blsp_spi5, FN_blsp_uart5, FN_blsp_i2c5, FN_qdss_tracedata_a },
++	[20] = { FN_blsp_spi6, FN_blsp_uart6, 0, 0, 0, FN_qdss_tracectl_b, 0, FN_dac_calib15 },
++	[21] = {
++		FN_blsp_spi6, FN_blsp_uart6, FN_m_voc, 0, 0, 0, FN_qdss_cti_trig_in_b0, 0,
++		FN_dac_calib16
++	},
++	[22] = { FN_blsp_spi6, FN_blsp_uart6, FN_blsp_i2c6, FN_qdss_traceclk_b, 0, FN_atest_wlan0 },
++	[23] = {
++		FN_blsp_spi6, FN_blsp_uart6, FN_blsp_i2c6, FN_qdss_tracedata_b, 0, FN_atest_wlan1
++	},
++	[24] = { FN_mdp_vsync },
++	[25] = { FN_mdp_vsync, FN_pri_mi2s_mclk_a, FN_sec_mi2s_mclk_a, FN_qdss_cti_trig_out_b1 },
++	[26] = { FN_cam_mclk, 0, 0, 0, FN_qdss_tracedata_a },
++	[27] = { FN_cam_mclk, 0, 0, 0, FN_qdss_tracedata_a },
++	[28] = { FN_cam_mclk, 0, 0, 0, FN_qdss_tracedata_a, 0, FN_dac_calib3 },
++	[29] = {
++		FN_cci_i2c, FN_pwr_modem_enabled_a, 0, 0, 0, FN_qdss_tracedata_a, 0, FN_dac_calib4
++	},
++	[30] = { FN_cci_i2c, 0, 0, 0, FN_qdss_tracedata_a, 0, FN_dac_calib19 },
++	[31] = { FN_cci_i2c, 0, 0, 0, FN_qdss_tracedata_a },
++	[32] = { FN_cci_i2c, 0, 0, 0, FN_qdss_tracedata_a },
++	[33] = { FN_cci_timer0, 0, 0, 0, 0, FN_qdss_tracedata_a },
++	[34] = { FN_cci_timer1, 0, 0, 0, 0, FN_qdss_tracedata_a },
++	[35] = { FN_cci_timer2, FN_blsp1_spi, FN_pwr_nav_enabled_a, 0, 0, 0, FN_qdss_tracedata_a },
++	[36] = {
++		FN_cci_timer3, FN_blsp1_spi, 0, FN_pwr_crypto_enabled_a, 0, 0, 0,
++		FN_qdss_tracedata_a
++	},
++	[38] = { FN_cci_async, 0, FN_qdss_tracedata_a },
++	[39] = { 0, 0, 0, FN_qdss_tracedata_a, 0, FN_dac_calib5 },
++	[40] = { 0, 0, FN_qdss_tracedata_a, 0, FN_dac_calib6 },
++	[41] = {
++		FN_cci_timer4, FN_blsp3_spi, FN_gcc_gp1_clk_b, 0, 0, FN_qdss_cti_trig_out_a0, 0,
++		FN_dac_calib7
++	},
++	[42] = { FN_gcc_gp1_clk_a, FN_qdss_tracedata_b, 0, FN_dac_calib8 },
++	[43] = { FN_gcc_gp2_clk_a, FN_qdss_tracedata_b, 0, FN_dac_calib9 },
++	[44] = { FN_gcc_gp3_clk_a, FN_qdss_tracedata_b, 0, FN_dac_calib10 },
++	[45] = { 0, FN_qdss_tracedata_b, 0, FN_dac_calib11 },
++	[46] = { FN_qdss_tracedata_b, 0, FN_dac_calib12 },
++	[47] = { FN_blsp6_spi, FN_qdss_tracedata_b, 0, FN_dac_calib13 },
++	[48] = { FN_blsp6_spi, 0, FN_qdss_cti_trig_in_b1, 0, FN_dac_calib14 },
++	[49] = { FN_uim_batt },
++	[50] = { FN_blsp3_spi, FN_sd_write, 0, 0, 0, FN_qdss_tracedata_a },
++	[51] = { FN_uim1_data },
++	[52] = { FN_uim1_clk },
++	[53] = { FN_uim1_reset },
++	[54] = { FN_uim1_present },
++	[55] = { FN_uim2_data },
++	[56] = { FN_uim2_clk },
++	[57] = { FN_uim2_reset },
++	[58] = { FN_uim2_present },
++	[63] = { FN_atest_char3, FN_dbg_out, FN_bimc_dte0 },
++	[65] = { FN_bimc_dte0 },
++	[66] = { FN_sec_mi2s_mclk_b, FN_pri_mi2s, 0, FN_qdss_tracedata_b },
++	[67] = { FN_cdc_pdm0, FN_atest_char1, FN_ebi_cdc, 0, FN_dac_calib17 },
++	[68] = { FN_cdc_pdm0, FN_atest_char0 },
++	[69] = { FN_cdc_pdm0, FN_pri_mi2s_mclk_b, FN_ebi_cdc },
++	[70] = { FN_lpass_slimbus, FN_cdc_pdm0 },
++	[71] = { FN_lpass_slimbus0, FN_cdc_pdm0 },
++	[72] = { FN_lpass_slimbus1, FN_cdc_pdm0 },
++	[73] = { FN_cdc_pdm0 },
++	[74] = { FN_cdc_pdm0 },
++	[75] = { FN_wcss_bt, FN_atest_char2, 0, FN_ebi_ch0 },
++	[76] = { FN_wcss_wlan2 },
++	[77] = { FN_wcss_wlan1 },
++	[78] = { FN_wcss_wlan0 },
++	[79] = { FN_wcss_wlan },
++	[80] = { FN_wcss_wlan },
++	[81] = { FN_wcss_fm, FN_ext_lpass },
++	[82] = { FN_wcss_fm, FN_mss_lte },
++	[83] = { FN_wcss_bt, FN_mss_lte },
++	[84] = { FN_wcss_bt },
++	[85] = { FN_pbs0, FN_cri_trng0 },
++	[86] = { FN_pbs1, FN_cri_trng1, FN_qdss_tracedata_b },
++	[87] = { FN_pbs2, FN_cri_trng, FN_qdss_tracedata_b, FN_gcc_tlmm },
++	[88] = { FN_pri_mi2s, 0, 0, 0, FN_qdss_tracedata_b },
++	[89] = { FN_dmic0_clk, FN_blsp7_spi },
++	[90] = { FN_dmic0_data, FN_blsp7_spi },
++	[91] = { FN_pri_mi2s, 0, 0, 0, FN_qdss_cti_trig_in_a1 },
++	[92] = { FN_pri_mi2s_ws, 0, 0, 0, FN_qdss_tracedata_b },
++	[93] = { FN_pri_mi2s },
++	[94] = { FN_wsa_io, FN_pri_mi2s },
++	[95] = { FN_wsa_io, FN_pri_mi2s },
++	[96] = { FN_blsp_spi8 },
++	[97] = { FN_blsp_spi8 },
++	[98] = { FN_blsp_i2c8, FN_blsp_spi8, FN_gcc_plltest },
++	[99] = { FN_blsp_i2c8, FN_blsp_spi8, FN_gcc_plltest },
++	[111] = { 0, 0, FN_nav_pps_in_a },
++	[112] = { 0, FN_pa_indicator },
++	[113] = { 0, FN_nav_pps_in_b, FN_nav_pps, FN_modem_tsync, FN_nav_tsync },
++	[114] = { 0, FN_ssbi_wtr1 },
++	[115] = { 0, FN_gsm1_tx, 0, FN_dac_calib18 },
++	[117] = { FN_gsm0_tx },
++	[118] = { 0, FN_ebi_cdc },
++	[119] = { 0, FN_ebi_cdc },
++	[120] = { 0, FN_atest_char, FN_ebi_cdc, 0, FN_atest_tsens },
++	[121] = { 0, 0, 0, FN_bimc_dte1 },
++	[122] = { 0, 0, 0, FN_bimc_dte1 },
++	[123] = { 0, FN_ssbi_wtr1, FN_ebi_cdc },
++	[128] = { FN_cam_mclk, 0, FN_dac_calib20 },
++	[129] = { FN_ddr_bist, 0, FN_dac_calib21 },
++	[130] = { FN_ddr_bist, 0, FN_dac_calib22 },
++	[131] = { FN_ddr_bist, 0, FN_dac_calib23 },
++	[132] = { FN_ddr_bist, 0, FN_dac_calib24 },
++	[133] = { 0, FN_dac_calib25 },
++	[135] = { FN_sec_mi2s, FN_blsp_spi7, FN_blsp_i2c7 },
++	[136] = { FN_sec_mi2s, FN_blsp_spi7, FN_blsp_i2c7 },
++	[137] = { FN_sec_mi2s, FN_blsp_spi7 },
++	[138] = { FN_sec_mi2s, FN_blsp_spi7 },
++	[139] = { FN_tsens_max },
++};
++
++#define SDC_QDSD_PINGROUP(pg_name, ctl, pull, drv)	\
++	{						\
++		.name = pg_name,			\
++		.ctl_reg = ctl,				\
++		.io_reg = 0,				\
++		.pull_bit = pull,			\
++		.drv_bit = drv,				\
++		.oe_bit = -1,				\
++		.in_bit = -1,				\
++		.out_bit = -1,				\
++	}
++
++static const struct msm_special_pin_data msm8953_special_pins_data[] = {
++	SDC_QDSD_PINGROUP("qdsd_clk", 0x19c000, 3, 0),
++	SDC_QDSD_PINGROUP("qdsd_cmd", 0x19c000, 8, 5),
++	SDC_QDSD_PINGROUP("qdsd_data0", 0x19c000, 13, 10),
++	SDC_QDSD_PINGROUP("qdsd_data1", 0x19c000, 18, 15),
++	SDC_QDSD_PINGROUP("qdsd_data2", 0x19c000, 23, 20),
++	SDC_QDSD_PINGROUP("qdsd_data3", 0x19c000, 28, 25),
++	SDC_QDSD_PINGROUP("sdc1_clk", 0x10a000, 13, 6),
++	SDC_QDSD_PINGROUP("sdc1_cmd", 0x10a000, 11, 3),
++	SDC_QDSD_PINGROUP("sdc1_data", 0x10a000, 9, 0),
++	SDC_QDSD_PINGROUP("sdc1_rclk", 0x10a000, 15, 0),
++	SDC_QDSD_PINGROUP("sdc2_clk", 0x109000, 14, 6),
++	SDC_QDSD_PINGROUP("sdc2_cmd", 0x109000, 11, 3),
++	SDC_QDSD_PINGROUP("sdc2_data", 0x109000, 9, 0),
++};
++
++static const char *msm8953_get_function_name(struct udevice *dev,
++					     unsigned int selector)
++{
++	return msm8953_functions[selector];
++}
++
++static const char *msm8953_get_pin_name(struct udevice *dev,
++					unsigned int selector)
++{
++	if (selector >= MSM8953_GPIO_COUNT)
++		return msm8953_special_pins_data[selector - MSM8953_GPIO_COUNT].name;
++
++	snprintf(pin_name, MAX_PIN_NAME_LEN, "gpio%u", selector);
++	return pin_name;
++}
++
++static int msm8953_get_function_mux(unsigned int pin, unsigned int selector)
++{
++	int i;
++
++	if (selector == FN_gpio)
++		return 0;
++
++	if (pin >= MSM8953_GPIO_COUNT)
++		return -EINVAL;
++
++	for (i = 0; i < ARRAY_SIZE(msm8953_pin_functions[pin]); i++)
++		if (msm8953_pin_functions[pin][i] == selector)
++			return i + 1;
++
++	return -EINVAL;
++}
++
++static const struct msm_pinctrl_data msm8953_data = {
++	.pin_data = {
++		.pin_count = MSM8953_GPIO_COUNT + ARRAY_SIZE(msm8953_special_pins_data),
++		.special_pins_start = MSM8953_GPIO_COUNT,
++		.special_pins_data = msm8953_special_pins_data,
++	},
++	.functions_count = ARRAY_SIZE(msm8953_functions),
++	.get_function_name = msm8953_get_function_name,
++	.get_function_mux = msm8953_get_function_mux,
++	.get_pin_name = msm8953_get_pin_name,
++};
++
++static const struct udevice_id msm_pinctrl_ids[] = {
++	{ .compatible = "qcom,msm8953-pinctrl", .data = (ulong)&msm8953_data },
++	{ /* Sentinel */ }
++};
++
++U_BOOT_DRIVER(pinctrl_msm8953) = {
++	.name = "pinctrl_msm8953",
++	.id = UCLASS_NOP,
++	.of_match = msm_pinctrl_ids,
++	.ops = &msm_pinctrl_ops,
++	.bind = msm_pinctrl_bind,
++};

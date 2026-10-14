@@ -1,0 +1,101 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Wed, 14 Oct 2026 00:46:11 +0200
+Subject: [PATCH] gpio: qcom_pmic_gpio: support PM8941 and the pin bias
+
+Accept the 8 channel GPIO subtypes of PM8941, apply bias-pull-up/-down and
+bias-disable from pinctrl, and keep the bias of inputs instead of
+disabling the pull, which leaves keys floating.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/gpio/qcom_pmic_gpio.c | 41 ++++++++++++++++++++++++++++-------
+ 1 file changed, 33 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/gpio/qcom_pmic_gpio.c b/drivers/gpio/qcom_pmic_gpio.c
+index ad4a70dd..887b5ec3 100644
+--- a/drivers/gpio/qcom_pmic_gpio.c
++++ b/drivers/gpio/qcom_pmic_gpio.c
+@@ -56,6 +56,8 @@
+ #define REG_DIG_VIN_VIN0       0
+ 
+ #define REG_DIG_PULL_CTL       0x42
++#define REG_DIG_PULL_UP_30     0x0
++#define REG_DIG_PULL_DOWN      0x4
+ #define REG_DIG_PULL_NO_PU     0x5
+ 
+ #define REG_LV_MV_OUTPUT_CTL	0x44
+@@ -127,11 +129,13 @@ static int qcom_gpio_set_direction(struct udevice *dev, unsigned int offset,
+ 
+ 	_qcom_gpio_set_direction(dev, offset, input, value);
+ 
+-	/* Set the right pull (no pull) */
+-	ret = pmic_reg_write(plat->pmic, gpio_base + REG_DIG_PULL_CTL,
+-			     REG_DIG_PULL_NO_PU);
+-	if (ret < 0)
+-		return ret;
++	/* Outputs need no pull, inputs keep the bias they were configured with */
++	if (!input) {
++		ret = pmic_reg_write(plat->pmic, gpio_base + REG_DIG_PULL_CTL,
++				     REG_DIG_PULL_NO_PU);
++		if (ret < 0)
++			return ret;
++	}
+ 
+ 	/* Configure output pin drivers if needed */
+ 	if (!input) {
+@@ -309,6 +313,8 @@ static int qcom_gpio_probe(struct udevice *dev)
+ 	switch (val) {
+ 	case REG_SUBTYPE_GPIO_4CH:
+ 	case REG_SUBTYPE_GPIOC_4CH:
++	case REG_SUBTYPE_GPIO_8CH:
++	case REG_SUBTYPE_GPIOC_8CH:
+ 		plat->lv_mv_type = false;
+ 		break;
+ 	case REG_SUBTYPE_GPIO_LV:
+@@ -343,6 +349,7 @@ static int qcom_gpio_probe(struct udevice *dev)
+ 
+ static const struct udevice_id qcom_gpio_ids[] = {
+ 	{ .compatible = "qcom,pm8916-gpio" },
++	{ .compatible = "qcom,pm8941-gpio" },
+ 	{ .compatible = "qcom,pm8994-gpio" },	/* 22 GPIO's */
+ 	{ .compatible = "qcom,pms405-gpio" },
+ 	{ .compatible = "qcom,pm6125-gpio" },
+@@ -364,6 +371,9 @@ U_BOOT_DRIVER(qcom_pmic_gpio) = {
+ static const struct pinconf_param qcom_pmic_pinctrl_conf_params[] = {
+ 	{ "output-high", PIN_CONFIG_OUTPUT_ENABLE, 1 },
+ 	{ "output-low", PIN_CONFIG_OUTPUT, 0 },
++	{ "bias-disable", PIN_CONFIG_BIAS_DISABLE, 0 },
++	{ "bias-pull-up", PIN_CONFIG_BIAS_PULL_UP, 0 },
++	{ "bias-pull-down", PIN_CONFIG_BIAS_PULL_DOWN, 0 },
+ };
+ 
+ static int qcom_pmic_pinctrl_get_pins_count(struct udevice *dev)
+@@ -386,9 +396,24 @@ static const char *qcom_pmic_pinctrl_get_pin_name(struct udevice *dev, unsigned
+ static int qcom_pmic_pinctrl_pinconf_set(struct udevice *dev, unsigned int selector,
+ 					 unsigned int param, unsigned int arg)
+ {
+-	/* We only support configuring the pin as an output, either low or high */
+-	return _qcom_gpio_set_direction(dev, selector, false,
+-					param == PIN_CONFIG_OUTPUT_ENABLE);
++	struct qcom_pmic_gpio_data *plat = dev_get_plat(dev);
++	u32 gpio_base = plat->pid + REG_OFFSET(selector);
++
++	switch (param) {
++	case PIN_CONFIG_BIAS_DISABLE:
++		return pmic_reg_write(plat->pmic, gpio_base + REG_DIG_PULL_CTL,
++				      REG_DIG_PULL_NO_PU);
++	case PIN_CONFIG_BIAS_PULL_UP:
++		return pmic_reg_write(plat->pmic, gpio_base + REG_DIG_PULL_CTL,
++				      REG_DIG_PULL_UP_30);
++	case PIN_CONFIG_BIAS_PULL_DOWN:
++		return pmic_reg_write(plat->pmic, gpio_base + REG_DIG_PULL_CTL,
++				      REG_DIG_PULL_DOWN);
++	default:
++		/* Otherwise configure the pin as an output, either low or high */
++		return _qcom_gpio_set_direction(dev, selector, false,
++						param == PIN_CONFIG_OUTPUT_ENABLE);
++	}
+ }
+ 
+ static const char *qcom_pmic_pinctrl_get_function_name(struct udevice *dev, unsigned int selector)

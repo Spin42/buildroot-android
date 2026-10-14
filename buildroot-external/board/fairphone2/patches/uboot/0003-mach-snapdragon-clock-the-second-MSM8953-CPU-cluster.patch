@@ -1,0 +1,78 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Mon, 12 Oct 2026 14:50:57 +0200
+Subject: [PATCH] mach-snapdragon: clock the second MSM8953 CPU cluster from
+ GPLL0
+
+The Android bootloader leaves the mux of one A53 cluster on XO and Linux
+has no driver for it, so those cores run at 19.2 MHz.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ arch/arm/mach-snapdragon/board.c | 35 ++++++++++++++++++++++++++++++++
+ 1 file changed, 35 insertions(+)
+
+diff --git a/arch/arm/mach-snapdragon/board.c b/arch/arm/mach-snapdragon/board.c
+index 87adb100..a94c70a1 100644
+--- a/arch/arm/mach-snapdragon/board.c
++++ b/arch/arm/mach-snapdragon/board.c
+@@ -10,12 +10,14 @@
+ #define LOG_CATEGORY LOGC_BOARD
+ #define pr_fmt(fmt) "QCOM: " fmt
+ 
++#include <asm/io.h>
+ #include <asm/psci.h>
+ #include <dm/ofnode.h>
+ #include <env.h>
+ #include <fdt_support.h>
+ #include <init.h>
+ #include <linux/arm-smccc.h>
++#include <linux/delay.h>
+ #include <linux/errno.h>
+ #include <linux/psci.h>
+ #include <linux/sizes.h>
+@@ -149,11 +151,44 @@ void __weak qcom_board_init(void)
+ {
+ }
+ 
++#define MSM8953_APCS_C0_CMD_RCGR	0x0b011050
++#define MSM8953_APCS_C0_CFG_RCGR	0x0b011054
++#define APCS_RCGR_UPDATE		BIT(0)
++#define APCS_RCGR_SRC_GPLL0_DIV1	((4 << 8) | 1)
++
++/*
++ * The Android bootloader leaves one A53 cluster of the MSM8953 family running
++ * from XO. Linux has no driver for that mux, so move it to GPLL0 (800 MHz)
++ * like lk2nd does, otherwise those cores crawl along at 19.2 MHz.
++ */
++static void qcom_msm8953_cpu_clk_init(void)
++{
++	static const char * const compats[] = {
++		"qcom,msm8953", "qcom,sdm450", "qcom,sdm632",
++	};
++	int i, timeout = 1000;
++
++	for (i = 0; i < ARRAY_SIZE(compats); i++)
++		if (ofnode_device_is_compatible(ofnode_root(), compats[i]))
++			break;
++	if (i == ARRAY_SIZE(compats))
++		return;
++
++	clrsetbits_le32(MSM8953_APCS_C0_CFG_RCGR, GENMASK(10, 8) | GENMASK(4, 0),
++			APCS_RCGR_SRC_GPLL0_DIV1);
++	setbits_le32(MSM8953_APCS_C0_CMD_RCGR, APCS_RCGR_UPDATE);
++	while ((readl(MSM8953_APCS_C0_CMD_RCGR) & APCS_RCGR_UPDATE) && --timeout)
++		udelay(1);
++	if (!timeout)
++		log_warning("APCS cluster mux update timed out\n");
++}
++
+ int board_init(void)
+ {
+ #if CONFIG_IS_ENABLED(SYSRESET_PSCI)
+ 	show_psci_version();
+ #endif
++	qcom_msm8953_cpu_clk_init();
+ 	qcom_board_init();
+ 	return 0;
+ }
