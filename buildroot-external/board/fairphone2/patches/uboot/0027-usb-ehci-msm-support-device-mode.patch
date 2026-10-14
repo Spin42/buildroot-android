@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Marc Lainez <marc.lainez@gmail.com>
 Date: Wed, 14 Oct 2026 00:46:12 +0200
-Subject: [PATCH 26/28] usb: ehci-msm: support device mode
+Subject: [PATCH 27/29] usb: ehci-msm: support device mode
 
 Set the PHY up for device mode when ci_udc probes the controller for a
 gadget, program the TCSR PHY selection of SoCs with two HS PHYs, and find

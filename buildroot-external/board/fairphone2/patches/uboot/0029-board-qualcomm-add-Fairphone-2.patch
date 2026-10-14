@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Marc Lainez <marc.lainez@gmail.com>
 Date: Wed, 14 Oct 2026 00:46:12 +0200
-Subject: [PATCH 28/28] board: qualcomm: add Fairphone 2
+Subject: [PATCH 29/29] board: qualcomm: add Fairphone 2
 
 U-Boot is chainloaded by the stock LK or lk2nd from the boot partition and
 takes over the display, eMMC, keys and USB they leave set up.

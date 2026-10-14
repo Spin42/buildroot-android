@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Marc Lainez <marc.lainez@gmail.com>
 Date: Wed, 14 Oct 2026 00:46:11 +0200
-Subject: [PATCH 21/28] spmi: msm: pace and time out the status polling
+Subject: [PATCH 21/29] spmi: msm: pace and time out the status polling
 
 Reading the status register back to back hangs the v1 arbiter now and then.
 Wait 1 us between reads like Linux does, and give up after 10 ms instead of

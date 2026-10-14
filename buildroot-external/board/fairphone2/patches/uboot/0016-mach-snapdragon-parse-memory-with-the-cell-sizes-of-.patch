@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Marc Lainez <marc.lainez@gmail.com>
 Date: Wed, 14 Oct 2026 00:46:11 +0200
-Subject: [PATCH 16/28] mach-snapdragon: parse /memory with the cell sizes of
+Subject: [PATCH 16/29] mach-snapdragon: parse /memory with the cell sizes of
  the root node
 
 32-bit SoCs describe memory with one address and one size cell, not two.

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Marc Lainez <marc.lainez@gmail.com>
 Date: Mon, 12 Oct 2026 14:51:20 +0200
-Subject: [PATCH 09/28] sysreset: psci: fall back to other drivers if the reset
+Subject: [PATCH 09/29] sysreset: psci: fall back to other drivers if the reset
  returns
 
 The MSM8953 firmware returns from PSCI SYSTEM_RESET without resetting.

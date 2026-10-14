@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Marc Lainez <marc.lainez@gmail.com>
 Date: Mon, 12 Oct 2026 14:51:06 +0200
-Subject: [PATCH 05/28] clk: qcom: add MSM8953 GCC driver
+Subject: [PATCH 05/29] clk: qcom: add MSM8953 GCC driver
 
 Covers the UART, SDCC, USB 3.0 and PRNG clocks, the BCR resets and the
 USB 3.0 GDSC, which is what the MSM8953, SDM450 and SDM632 boards need.
