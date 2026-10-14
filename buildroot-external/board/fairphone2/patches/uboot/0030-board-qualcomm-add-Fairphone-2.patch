@@ -10,13 +10,13 @@ Assisted-by: Claude:claude-opus-5-5
  .../qcom-msm8974pro-fairphone-fp2-u-boot.dtsi |  34 +++++
  board/qualcomm/MAINTAINERS                    |  11 ++
  board/qualcomm/debug-msm8974.config           |   8 ++
- board/qualcomm/fairphone-fp2.env              | 122 ++++++++++++++++++
+ board/qualcomm/fairphone-fp2.env              | 125 ++++++++++++++++++
  board/qualcomm/fairphone-fp2/Makefile         |   3 +
  board/qualcomm/fairphone-fp2/fairphone-fp2.c  |  85 ++++++++++++
- configs/fairphone-fp2_defconfig               |  83 ++++++++++++
- doc/board/qualcomm/fairphone-fp2.rst          | 104 +++++++++++++++
+ configs/fairphone-fp2_defconfig               |  90 +++++++++++++
+ doc/board/qualcomm/fairphone-fp2.rst          | 109 +++++++++++++++
  doc/board/qualcomm/index.rst                  |   1 +
- 9 files changed, 451 insertions(+)
+ 9 files changed, 466 insertions(+)
  create mode 100644 arch/arm/dts/qcom-msm8974pro-fairphone-fp2-u-boot.dtsi
  create mode 100644 board/qualcomm/debug-msm8974.config
  create mode 100644 board/qualcomm/fairphone-fp2.env
@@ -103,10 +103,10 @@ index 00000000..1ac28754
 +CONFIG_DEBUG_UART_CLOCK=0
 diff --git a/board/qualcomm/fairphone-fp2.env b/board/qualcomm/fairphone-fp2.env
 new file mode 100644
-index 00000000..1ffa4879
+index 00000000..eabd9ddc
 --- /dev/null
 +++ b/board/qualcomm/fairphone-fp2.env
-@@ -0,0 +1,122 @@
+@@ -0,0 +1,125 @@
 +# Fairphone 2
 +#
 +# The console is on the display (over the boot splash left by LK), on the
@@ -134,6 +134,9 @@ index 00000000..1ffa4879
 +bootmeths=script extlinux
 +
 +fastboot=fastboot usb 0
++
++# USB Ethernet dongle (ASIX, RTL8152/8153, SMSC95xx, MCS7830) on a powered
++# hub: "usb start", then e.g. "dhcp" and "tftpboot ${kernel_addr_r} zImage".
 +
 +# Reboot into the fastboot mode of LK (restart reason in IMEM)
 +lk_fastboot=mw.l 0xfe80565c 0x77665500; reset
@@ -331,10 +334,10 @@ index 00000000..024f9f25
 +}
 diff --git a/configs/fairphone-fp2_defconfig b/configs/fairphone-fp2_defconfig
 new file mode 100644
-index 00000000..60fc38a2
+index 00000000..a7b78994
 --- /dev/null
 +++ b/configs/fairphone-fp2_defconfig
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,90 @@
 +CONFIG_ARM=y
 +CONFIG_SYS_BOARD="fairphone-fp2"
 +CONFIG_SYS_CONFIG_NAME="qcom"
@@ -379,6 +382,7 @@ index 00000000..60fc38a2
 +CONFIG_OF_UPSTREAM_BUILD_VENDOR=y
 +CONFIG_ENV_USE_DEFAULT_ENV_TEXT_FILE=y
 +CONFIG_ENV_DEFAULT_ENV_TEXT_FILE="board/qualcomm/fairphone-fp2.env"
++CONFIG_NET_RANDOM_ETHADDR=y
 +CONFIG_BLKMAP=y
 +CONFIG_BUTTON_REMAP_PHONE_KEYS=y
 +CONFIG_BUTTON_QCOM_PMIC=y
@@ -407,6 +411,12 @@ index 00000000..60fc38a2
 +# CONFIG_DM_USB_GADGET is not set
 +CONFIG_USB_EHCI_HCD=y
 +CONFIG_USB_EHCI_MSM=y
++CONFIG_USB_HOST_ETHER=y
++CONFIG_USB_ETHER_ASIX=y
++CONFIG_USB_ETHER_ASIX88179=y
++CONFIG_USB_ETHER_MCS7830=y
++CONFIG_USB_ETHER_RTL8152=y
++CONFIG_USB_ETHER_SMSC95XX=y
 +CONFIG_USB_GADGET=y
 +CONFIG_USB_GADGET_MANUFACTURER="Fairphone"
 +CONFIG_CI_UDC=y
@@ -420,10 +430,10 @@ index 00000000..60fc38a2
 +# CONFIG_TOOLS_MKEFICAPSULE is not set
 diff --git a/doc/board/qualcomm/fairphone-fp2.rst b/doc/board/qualcomm/fairphone-fp2.rst
 new file mode 100644
-index 00000000..ebfbe889
+index 00000000..26d87057
 --- /dev/null
 +++ b/doc/board/qualcomm/fairphone-fp2.rst
-@@ -0,0 +1,104 @@
+@@ -0,0 +1,109 @@
 +.. SPDX-License-Identifier: GPL-2.0+
 +.. sectionauthor:: Marc Lainez <marc.lainez@gmail.com>
 +
@@ -488,6 +498,11 @@ index 00000000..ebfbe889
 +UART pads (BLSP1 UART2, 115200 8N1, set up by LK). Pressing a key on the UART
 +during the three second boot delay stops autoboot at the U-Boot prompt. In
 +menus, Volume Up and Volume Down move and Power selects.
++
++USB host mode works with a powered hub (the phone does not supply VBUS): a
++USB Ethernet dongle (ASIX AX88772/AX88179, Realtek RTL8152/8153, SMSC95xx,
++MCS7830) is found by ``usb start``, then ``dhcp`` and ``tftpboot`` can be
++used, e.g. ``tftpboot ${kernel_addr_r} zImage``.
 +
 +On a board without a panel LK leaves the display subsystem off: U-Boot then
 +leaves it alone, sets ``headless=1`` and skips the screen and key menu, only
