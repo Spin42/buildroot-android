@@ -10,13 +10,13 @@ Assisted-by: Claude:claude-opus-5-5
  .../qcom-msm8974pro-fairphone-fp2-u-boot.dtsi |  29 +++++
  board/qualcomm/MAINTAINERS                    |  11 ++
  board/qualcomm/debug-msm8974.config           |   8 ++
- board/qualcomm/fairphone-fp2.env              | 112 ++++++++++++++++++
+ board/qualcomm/fairphone-fp2.env              | 119 ++++++++++++++++++
  board/qualcomm/fairphone-fp2/Makefile         |   3 +
  board/qualcomm/fairphone-fp2/fairphone-fp2.c  |  45 +++++++
- configs/fairphone-fp2_defconfig               |  82 +++++++++++++
- doc/board/qualcomm/fairphone-fp2.rst          |  96 +++++++++++++++
+ configs/fairphone-fp2_defconfig               |  82 ++++++++++++
+ doc/board/qualcomm/fairphone-fp2.rst          |  98 +++++++++++++++
  doc/board/qualcomm/index.rst                  |   1 +
- 9 files changed, 387 insertions(+)
+ 9 files changed, 396 insertions(+)
  create mode 100644 arch/arm/dts/qcom-msm8974pro-fairphone-fp2-u-boot.dtsi
  create mode 100644 board/qualcomm/debug-msm8974.config
  create mode 100644 board/qualcomm/fairphone-fp2.env
@@ -98,10 +98,10 @@ index 00000000..1ac28754
 +CONFIG_DEBUG_UART_CLOCK=0
 diff --git a/board/qualcomm/fairphone-fp2.env b/board/qualcomm/fairphone-fp2.env
 new file mode 100644
-index 00000000..590cb310
+index 00000000..06a1ac09
 --- /dev/null
 +++ b/board/qualcomm/fairphone-fp2.env
-@@ -0,0 +1,112 @@
+@@ -0,0 +1,119 @@
 +# Fairphone 2
 +#
 +# The console is on the display (over the boot splash left by LK) and, on
@@ -174,7 +174,9 @@ index 00000000..590cb310
 +
 +# Boot the image in userdata with the boot.scr or extlinux.conf of its first
 +# partition (a boot.scr may choose between A/B slots, e.g. for RAUC), or,
-+# like lk2nd, the extlinux.conf of userdata when it holds a bare filesystem.
++# when userdata holds a bare filesystem, its /boot/boot.scr (with the
++# variables standard boot sets) or, like lk2nd, its extlinux.conf. Standard
++# boot itself only scans the first partition of the eMMC, none are bootable.
 +boot_userdata=run map_userdata; \
 +	if test -e blkmap ${ud_dev}:1 /boot.scr; then \
 +		load blkmap ${ud_dev}:1 ${scriptaddr} /boot.scr && source ${scriptaddr}; \
@@ -182,7 +184,12 @@ index 00000000..590cb310
 +	if test -e blkmap ${ud_dev}:1 /extlinux/extlinux.conf; then \
 +		sysboot blkmap ${ud_dev}:1 any ${scriptaddr} /extlinux/extlinux.conf; \
 +	fi; \
-+	part number mmc 0 userdata ud_part && \
++	part number mmc 0 userdata ud_part; \
++	if test -e mmc 0:${ud_part} /boot/boot.scr; then \
++		setenv devtype mmc; setenv devnum 0; \
++		setenv distro_bootpart ${ud_part}; setenv prefix /boot/; \
++		load mmc 0:${ud_part} ${scriptaddr} /boot/boot.scr && source ${scriptaddr}; \
++	fi; \
 +	sysboot mmc 0:${ud_part} any ${scriptaddr} /extlinux/extlinux.conf
 +
 +boot_os=bootflow scan -b; run boot_userdata
@@ -364,10 +371,10 @@ index 00000000..10b16bc9
 +# CONFIG_TOOLS_MKEFICAPSULE is not set
 diff --git a/doc/board/qualcomm/fairphone-fp2.rst b/doc/board/qualcomm/fairphone-fp2.rst
 new file mode 100644
-index 00000000..e28a3266
+index 00000000..55d4bfbb
 --- /dev/null
 +++ b/doc/board/qualcomm/fairphone-fp2.rst
-@@ -0,0 +1,96 @@
+@@ -0,0 +1,98 @@
 +.. SPDX-License-Identifier: GPL-2.0+
 +.. sectionauthor:: Marc Lainez <marc.lainez@gmail.com>
 +
@@ -433,14 +440,16 @@ index 00000000..e28a3266
 +
 +Without a key pressed, U-Boot boots the first operating system it finds:
 +
-+* a ``boot.scr``, else an ``extlinux.conf``, in ``/`` or ``/boot`` of the eMMC
-+  partitions (standard boot),
++* standard boot (a ``boot.scr``, else an ``extlinux.conf``) on the first
++  partition of the eMMC, the only one it scans as none is marked bootable,
 +* an image with its own partition table written to the ``userdata``
 +  partition, booted with the ``boot.scr`` or the ``extlinux.conf`` of its
 +  first partition. A ``boot.scr`` can choose between A/B slots of that
 +  image, for instance for RAUC,
 +* a bare filesystem written to the ``userdata`` partition, booted with its
-+  ``extlinux.conf``, as lk2nd does.
++  ``/boot/boot.scr`` (with the variables standard boot sets: ``devtype``,
++  ``devnum``, ``distro_bootpart``, ``prefix``) or, as lk2nd does, its
++  ``extlinux.conf``.
 +
 +If nothing can be booted, the boot menu opens.
 +
