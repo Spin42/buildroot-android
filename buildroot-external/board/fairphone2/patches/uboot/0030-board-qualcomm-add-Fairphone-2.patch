@@ -7,16 +7,16 @@ U-Boot is chainloaded by the stock LK or lk2nd from the boot partition and takes
 
 Assisted-by: Claude:claude-opus-5-5
 ---
- .../qcom-msm8974pro-fairphone-fp2-u-boot.dtsi |  29 +++++
+ .../qcom-msm8974pro-fairphone-fp2-u-boot.dtsi |  34 +++++
  board/qualcomm/MAINTAINERS                    |  11 ++
  board/qualcomm/debug-msm8974.config           |   8 ++
- board/qualcomm/fairphone-fp2.env              | 119 ++++++++++++++++++
+ board/qualcomm/fairphone-fp2.env              | 120 ++++++++++++++++++
  board/qualcomm/fairphone-fp2/Makefile         |   3 +
  board/qualcomm/fairphone-fp2/fairphone-fp2.c  |  45 +++++++
- configs/fairphone-fp2_defconfig               |  82 ++++++++++++
- doc/board/qualcomm/fairphone-fp2.rst          |  98 +++++++++++++++
+ configs/fairphone-fp2_defconfig               |  83 ++++++++++++
+ doc/board/qualcomm/fairphone-fp2.rst          | 100 +++++++++++++++
  doc/board/qualcomm/index.rst                  |   1 +
- 9 files changed, 396 insertions(+)
+ 9 files changed, 405 insertions(+)
  create mode 100644 arch/arm/dts/qcom-msm8974pro-fairphone-fp2-u-boot.dtsi
  create mode 100644 board/qualcomm/debug-msm8974.config
  create mode 100644 board/qualcomm/fairphone-fp2.env
@@ -27,10 +27,10 @@ Assisted-by: Claude:claude-opus-5-5
 
 diff --git a/arch/arm/dts/qcom-msm8974pro-fairphone-fp2-u-boot.dtsi b/arch/arm/dts/qcom-msm8974pro-fairphone-fp2-u-boot.dtsi
 new file mode 100644
-index 00000000..cf01e35e
+index 00000000..a02bddb4
 --- /dev/null
 +++ b/arch/arm/dts/qcom-msm8974pro-fairphone-fp2-u-boot.dtsi
-@@ -0,0 +1,29 @@
+@@ -0,0 +1,34 @@
 +// SPDX-License-Identifier: GPL-2.0
 +
 +#include <dt-bindings/arm/qcom,ids.h>
@@ -59,6 +59,11 @@ index 00000000..cf01e35e
 +/* Take over the display that LK leaves running */
 +&mdss {
 +	status = "okay";
++};
++
++/* Console on the debug UART pads, from before relocation */
++&blsp1_uart2 {
++	bootph-all;
 +};
 diff --git a/board/qualcomm/MAINTAINERS b/board/qualcomm/MAINTAINERS
 index fd8db785..037b182a 100644
@@ -98,20 +103,21 @@ index 00000000..1ac28754
 +CONFIG_DEBUG_UART_CLOCK=0
 diff --git a/board/qualcomm/fairphone-fp2.env b/board/qualcomm/fairphone-fp2.env
 new file mode 100644
-index 00000000..06a1ac09
+index 00000000..7c217ded
 --- /dev/null
 +++ b/board/qualcomm/fairphone-fp2.env
-@@ -0,0 +1,119 @@
+@@ -0,0 +1,120 @@
 +# Fairphone 2
 +#
-+# The console is on the display (over the boot splash left by LK) and, on
-+# request, on a USB serial gadget (CDC ACM).
++# The console is on the display (over the boot splash left by LK), on the
++# debug UART pads (115200 8N1) and, on request, on a USB serial gadget (CDC
++# ACM). A key on the UART during the boot delay stops autoboot.
 +# In menus, Volume Up/Down move and Power selects.
 +
 +stdin=serial,button-kbd
 +stdout=serial,vidconsole
 +stderr=serial,vidconsole
-+bootdelay=0
++bootdelay=3
 +bootretry=-1
 +
 +# Fixed load addresses, in lowmem for the 32-bit kernel and used in place.
@@ -283,10 +289,10 @@ index 00000000..f875cb4f
 +}
 diff --git a/configs/fairphone-fp2_defconfig b/configs/fairphone-fp2_defconfig
 new file mode 100644
-index 00000000..10b16bc9
+index 00000000..60fc38a2
 --- /dev/null
 +++ b/configs/fairphone-fp2_defconfig
-@@ -0,0 +1,82 @@
+@@ -0,0 +1,83 @@
 +CONFIG_ARM=y
 +CONFIG_SYS_BOARD="fairphone-fp2"
 +CONFIG_SYS_CONFIG_NAME="qcom"
@@ -302,7 +308,7 @@ index 00000000..10b16bc9
 +CONFIG_SNAPDRAGON_ARMV7=y
 +CONFIG_BUTTON_CMD=y
 +CONFIG_BOOTSTD_FULL=y
-+CONFIG_BOOTDELAY=0
++CONFIG_BOOTDELAY=3
 +CONFIG_OF_BOARD_SETUP=y
 +CONFIG_USE_PREBOOT=y
 +CONFIG_CONSOLE_RECORD=y
@@ -353,6 +359,7 @@ index 00000000..10b16bc9
 +CONFIG_DM_PMIC=y
 +CONFIG_PMIC_QCOM=y
 +# CONFIG_REQUIRE_SERIAL_CONSOLE is not set
++CONFIG_MSM_SERIAL=y
 +CONFIG_SPMI_MSM=y
 +CONFIG_USB=y
 +# CONFIG_DM_USB_GADGET is not set
@@ -371,10 +378,10 @@ index 00000000..10b16bc9
 +# CONFIG_TOOLS_MKEFICAPSULE is not set
 diff --git a/doc/board/qualcomm/fairphone-fp2.rst b/doc/board/qualcomm/fairphone-fp2.rst
 new file mode 100644
-index 00000000..55d4bfbb
+index 00000000..f7b5d541
 --- /dev/null
 +++ b/doc/board/qualcomm/fairphone-fp2.rst
-@@ -0,0 +1,98 @@
+@@ -0,0 +1,100 @@
 +.. SPDX-License-Identifier: GPL-2.0+
 +.. sectionauthor:: Marc Lainez <marc.lainez@gmail.com>
 +
@@ -435,8 +442,10 @@ index 00000000..55d4bfbb
 +Usage
 +-----
 +
-+The console is on the display, cleared when U-Boot starts. In menus, Volume
-+Up and Volume Down move and Power selects.
++The console is on the display, cleared when U-Boot starts, and on the debug
++UART pads (BLSP1 UART2, 115200 8N1, set up by LK). Pressing a key on the UART
++during the three second boot delay stops autoboot at the U-Boot prompt. In
++menus, Volume Up and Volume Down move and Power selects.
 +
 +Without a key pressed, U-Boot boots the first operating system it finds:
 +
