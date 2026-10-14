@@ -18,6 +18,8 @@ Two configurations use it:
 It reuses what LK leaves running and drives:
 
 - the display: the console goes to the framebuffer LK scans out (MDP5 pipe), command mode panel included, cleared at start;
+- the debug UART pads (BLSP1 UART2, 115200 8N1): the console too; a key there during the 3 s boot delay stops autoboot at
+  the U-Boot prompt;
 - the eMMC and the microSD slot, GPT, ext2/3/4 and FAT;
 - the keys: Volume Up/Down (PM8941 GPIOs) and Power (PON);
 - USB in device mode: fastboot, mass storage (userdata only) and a serial console (CDC ACM);
