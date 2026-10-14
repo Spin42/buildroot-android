@@ -1,0 +1,28 @@
+#!/bin/sh
+# mdev as the kernel hotplug helper: device node permissions, and module loading by MODALIAS
+# only while /run/s3ve3g/modautoload exists. Autoload is off by default, as in the rescue
+# system; "s3ve3g.modules=auto" on the kernel command line or the file
+# /etc/s3ve3g/modules-autoload turns it on (modules-coldplug, honouring /etc/modprobe.d).
+case "$1" in
+start)
+	printf "Starting mdev: "
+	mkdir -p /run/s3ve3g
+	echo /sbin/mdev > /proc/sys/kernel/hotplug
+	mdev -s
+	echo "OK"
+	if grep -qw 's3ve3g.modules=auto' /proc/cmdline || [ -e /etc/s3ve3g/modules-autoload ]; then
+		echo "Loading modules for the present hardware in the background"
+		/usr/sbin/modules-coldplug > /run/s3ve3g/coldplug.log 2>&1 &
+	fi
+	;;
+stop)
+	echo > /proc/sys/kernel/hotplug
+	;;
+restart|reload)
+	"$0" stop
+	"$0" start
+	;;
+*)
+	echo "Usage: $0 {start|stop|restart}"
+	exit 1
+esac

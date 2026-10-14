@@ -1,0 +1,107 @@
+From 8897af68073f68393bf6edd978bb7bb212bc7390 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Mon, 3 Aug 2026 16:32:42 +0200
+Subject: [PATCH] power: supply: qcom_smbb: configure battery presence sensing
+ like the vendor
+
+The driver armed the battery temperature comparators (BAT_BTC_CTRL
+COMP_EN plus a range select) while never programming the two registers
+the vendor driver considers prerequisites for any battery sensing:
+
+ - BAT_IF_BPD_CTRL (0x1248): battery presence detection source select.
+   The vendor sets the thermistor line (BAT_THM_EN) at init; the boot
+   chain leaves hardware defaults.
+ - BAT_IF_VREF_BAT_THM_CTRL (0x124A): the thermistor bias reference.
+   The vendor forces it on (VREF_BATT_THERM_FORCE_ON, bits 7:6) before
+   anything consumes the thermistor; unforced, the line can float.
+
+Sensing presence or temperature against an unbiased thermistor lets
+the PMIC transiently read the battery as absent, and its hardware
+response is a system power cut identical to a physical battery pull
+(PON poff=0x2000).  On a Fairphone 2 this produced a reproducible
+family of instant idle power-offs at healthy battery voltage - four in
+one afternoon with one battery, none ever with another whose divider
+values sit further from the comparator margin, and the same "deadly"
+pack runs all day under the vendor kernel, which configures BPD/VREF
+and does NOT arm the BTC comparators on this board (its comparator
+setup call is a mask=0 no-op, leaving bootloader state).
+
+Program BPD and VREF with the vendor values and stop arming the BTC
+comparators; the temperature range select is likewise left at the
+bootloader configuration, as the vendor does.
+
+Assisted-by: Claude:claude-fable-5
+---
+ drivers/power/supply/qcom_smbb.c | 41 +++++++++++++++++++++-----------
+ 1 file changed, 27 insertions(+), 14 deletions(-)
+
+diff --git a/drivers/power/supply/qcom_smbb.c b/drivers/power/supply/qcom_smbb.c
+index 28afe758a2da..b80df6835c13 100644
+--- a/drivers/power/supply/qcom_smbb.c
++++ b/drivers/power/supply/qcom_smbb.c
+@@ -59,10 +59,16 @@
+ #define SMBB_BAT_TEMP_STATUS	0x209
+ #define TEMP_STATUS_OK		BIT(7)
+ #define TEMP_STATUS_HOT		BIT(6)
++#define SMBB_BAT_BPD_CTRL	0x248
++#define BPD_CTRL_BAT_THM_EN	BIT(1)
++#define BPD_CTRL_BAT_ID_EN	BIT(0)
++#define BPD_CTRL_SEL_MASK	(BPD_CTRL_BAT_THM_EN | BPD_CTRL_BAT_ID_EN)
+ #define SMBB_BAT_BTC_CTRL	0x249
+ #define BTC_CTRL_COMP_EN	BIT(7)
+ #define BTC_CTRL_COLD_EXT	BIT(1)
+ #define BTC_CTRL_HOT_EXT_N	BIT(0)
++#define SMBB_BAT_VREF_THM_CTRL	0x24a
++#define VREF_BAT_THM_FORCE_ON	(BIT(7) | BIT(6))
+ 
+ #define SMBB_USB_IMAX		0x344
+ #define SMBB_USB_OTG_CTL	0x348
+@@ -735,8 +741,20 @@ static const struct reg_off_mask_default {
+ 	/* Use VBAT (not VSYS) to compensate for IR drop during fast charging */
+ 	{ SMBB_BUCK_REG_MODE, BUCK_REG_MODE, BUCK_REG_MODE_VBAT },
+ 
+-	/* Enable battery temperature comparators */
+-	{ SMBB_BAT_BTC_CTRL, BTC_CTRL_COMP_EN, BTC_CTRL_COMP_EN },
++	/*
++	 * Battery-presence detection and its reference.  The vendor driver
++	 * selects the thermistor as the presence source and forces the
++	 * thermistor bias reference on before anything consumes it; the
++	 * boot chain leaves both at hardware defaults.  Sensing presence or
++	 * temperature against an unbiased thermistor line lets the PMIC
++	 * transiently read the battery as absent, and its response to that
++	 * is a system power cut identical to a physical battery removal
++	 * (PON poff=0x2000).  The vendor does NOT arm the BTC comparators
++	 * on this board (it leaves BAT_BTC_CTRL exactly as the bootloader
++	 * left it), so no COMP_EN is set here either.
++	 */
++	{ SMBB_BAT_BPD_CTRL, BPD_CTRL_SEL_MASK, BPD_CTRL_BAT_THM_EN },
++	{ SMBB_BAT_VREF_THM_CTRL, VREF_BAT_THM_FORCE_ON, VREF_BAT_THM_FORCE_ON },
+ 
+ 	/* Stop USB enumeration timer */
+ 	{ SMBB_USB_ENUM_TIMER_STOP, ENUM_TIMER_STOP, ENUM_TIMER_STOP },
+@@ -967,18 +985,13 @@ static int smbb_charger_probe(struct platform_device *pdev)
+ 	chg->jeita_ext_temp = of_property_read_bool(pdev->dev.of_node,
+ 			"qcom,jeita-extended-temp-range");
+ 
+-	/* Set temperature range to [35%:70%] or [25%:80%] accordingly */
+-	rc = regmap_update_bits(chg->regmap, chg->addr + SMBB_BAT_BTC_CTRL,
+-			BTC_CTRL_COLD_EXT | BTC_CTRL_HOT_EXT_N,
+-			chg->jeita_ext_temp ?
+-				BTC_CTRL_COLD_EXT :
+-				BTC_CTRL_HOT_EXT_N);
+-	if (rc) {
+-		dev_err(&pdev->dev,
+-			"unable to set %s temperature range\n",
+-			chg->jeita_ext_temp ? "JEITA extended" : "normal");
+-		return rc;
+-	}
++	/*
++	 * The BTC temperature-range select (and the comparator enable,
++	 * formerly set unconditionally from smbb_charger_setup[]) is left
++	 * exactly as the boot chain configured it, matching the vendor
++	 * driver on this board.  See the BPD/VREF entries in the setup
++	 * table for why arming comparators here is unsafe.
++	 */
+ 
+ 	for (i = 0; i < ARRAY_SIZE(smbb_charger_setup); ++i) {
+ 		const struct reg_off_mask_default *r = &smbb_charger_setup[i];

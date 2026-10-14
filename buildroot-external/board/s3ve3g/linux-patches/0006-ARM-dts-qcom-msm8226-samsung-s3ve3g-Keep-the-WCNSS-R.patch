@@ -1,0 +1,71 @@
+From 1bc8fd513ae91f2a549d9608255d31e71478c0a3 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Mon, 12 Oct 2026 00:35:22 +0200
+Subject: [PATCH] ARM: dts: qcom: msm8226-samsung-s3ve3g: Keep the WCNSS RF
+ rails powered
+
+With the RF rails sequenced on demand the radio start stalled and the calibration upload took 8 s. Keep L8 (Pronto PLL), L10, L16 and L24 always on with the firmware's loads, as the vendor kernel and the other msm8226 Samsung boards do, and use the SoC default iris compatible like them.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ .../boot/dts/qcom/qcom-msm8226-samsung-s3ve3g.dts | 15 +++++++++++----
+ 1 file changed, 11 insertions(+), 4 deletions(-)
+
+diff --git a/arch/arm/boot/dts/qcom/qcom-msm8226-samsung-s3ve3g.dts b/arch/arm/boot/dts/qcom/qcom-msm8226-samsung-s3ve3g.dts
+index 1fef3b6be..67d613f6e 100644
+--- a/arch/arm/boot/dts/qcom/qcom-msm8226-samsung-s3ve3g.dts
++++ b/arch/arm/boot/dts/qcom/qcom-msm8226-samsung-s3ve3g.dts
+@@ -204,9 +204,6 @@ &pronto {
+ 	status = "okay";
+ 
+ 	iris {
+-		/* Dual-band 802.11a/b/g/n without 11ac */
+-		compatible = "qcom,wcn3660";
+-
+ 		vddxo-supply = <&pm8226_l10>;
+ 		vddrfa-supply = <&pm8226_l24>;
+ 		vddpa-supply = <&pm8226_l16>;
+@@ -243,15 +240,19 @@ pm8226_l6: l6 {
+ 			regulator-always-on;
+ 		};
+ 
+-		/* Panel vddio */
++		/* Panel vddio, Pronto PLL, SR2 PLL */
+ 		pm8226_l8: l8 {
+ 			regulator-min-microvolt = <1800000>;
+ 			regulator-max-microvolt = <1800000>;
++			regulator-always-on;
+ 		};
+ 
+ 		pm8226_l10: l10 {
+ 			regulator-min-microvolt = <1800000>;
+ 			regulator-max-microvolt = <1800000>;
++			regulator-system-load = <10000>;
++			regulator-allow-set-load;
++			regulator-always-on;
+ 		};
+ 
+ 		/* Panel vdd: 3.3 V on this board, unlike the other msm8226 Samsungs */
+@@ -263,6 +264,9 @@ pm8226_l15: l15 {
+ 		pm8226_l16: l16 {
+ 			regulator-min-microvolt = <3000000>;
+ 			regulator-max-microvolt = <3350000>;
++			regulator-system-load = <515000>;
++			regulator-allow-set-load;
++			regulator-always-on;
+ 		};
+ 
+ 		pm8226_l17: l17 {
+@@ -293,6 +297,9 @@ pm8226_l21: l21 {
+ 		pm8226_l24: l24 {
+ 			regulator-min-microvolt = <1300000>;
+ 			regulator-max-microvolt = <1350000>;
++			regulator-system-load = <110000>;
++			regulator-allow-set-load;
++			regulator-always-on;
+ 		};
+ 	};
+ };
+-- 
+2.43.0
+

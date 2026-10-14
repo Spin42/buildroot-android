@@ -1,0 +1,110 @@
+From 5abb149f0979bb0c80de95525a13bb26fb969385 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Tue, 4 Aug 2026 11:01:59 +0200
+Subject: [PATCH 14/26] power: supply: qcom_smbb: never charge without a
+ battery, and allow boards to forbid it
+
+Two boards want the charge path left alone, and the driver enabled it
+regardless: it wrote CTRL_EN unconditionally at probe and the supervisor
+re-armed whenever it saw an input.
+
+A carrier board that feeds the battery terminals from a bench supply has
+no battery to charge, and enabling the path drives the charger against
+that supply.  Presence detection alone is too thin a guard: with the
+supply near the auto-recharge threshold the voltage check stops reporting
+a full pack, leaving nothing but the absent-battery reading between the
+supervisor and a charge attempt.
+
+So gate the enable on the battery actually being there - which is what the
+vendor driver effectively does, its enable being a no-op while the battery
+is known absent - and add the vendor's qcom,charging-disabled property for
+boards that must never charge at all.  On those the driver stays loaded
+for OTG and reporting, and it actively writes CTRL_EN off at probe rather
+than inheriting whatever the boot chain left, since a charger already
+engaged when Linux takes over is exactly the case to correct.
+
+A battery appearing later raises the presence interrupt, which kicks the
+supervisor, so a board that does have one still charges as before.
+
+Assisted-by: Claude:claude-fable-5
+---
+ drivers/power/supply/qcom_smbb.c | 38 ++++++++++++++++++++++++++++++--
+ 1 file changed, 36 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/power/supply/qcom_smbb.c b/drivers/power/supply/qcom_smbb.c
+index 3c0f95db6e43..045d5c3bbc48 100644
+--- a/drivers/power/supply/qcom_smbb.c
++++ b/drivers/power/supply/qcom_smbb.c
+@@ -165,6 +165,13 @@ struct smbb_charger {
+ 
+ 	bool dc_disabled;
+ 	bool jeita_ext_temp;
++	/*
++	 * Set for boards that must never run a charge cycle - a carrier board
++	 * feeding the battery terminals from a bench supply, for instance.
++	 * The driver stays loaded for OTG and reporting, but the charge path
++	 * is actively turned off rather than left as the boot chain had it.
++	 */
++	bool charging_disabled;
+ 	unsigned long status;
+ 	struct mutex statlock;
+ 
+@@ -598,6 +605,13 @@ static void smbb_engage_work(struct work_struct *work)
+ 
+ 	smbb_hw_state(chg, &input, &charging, &bat_ready, &done);
+ 
++	if (chg->charging_disabled) {
++		/* keep the path off; nothing here should ever enable it */
++		regmap_update_bits(chg->regmap, chg->addr + SMBB_CHG_CTRL,
++				   CTRL_EN, 0);
++		return;
++	}
++
+ 	if (!input) {
+ 		/*
+ 		 * Cable gone: forget what was learned about this supply and
+@@ -675,8 +689,20 @@ static void smbb_engage_work(struct work_struct *work)
+ 		 * the vendor does (it re-arms once at end of charge and then
+ 		 * waits on the comparator).
+ 		 */
+-		if (charging || !bat_ready || done || smbb_battery_full(chg)) {
+-			/* running, or the battery is in no state to charge */
++		if (!bat_ready) {
++			/*
++			 * No battery to charge: leave the path off entirely.
++			 * On a board whose battery terminals are fed from a
++			 * supply, enabling it would drive the charger against
++			 * that supply.  A battery appearing raises the
++			 * presence interrupt, which kicks us again.
++			 */
++			regmap_update_bits(chg->regmap,
++					   chg->addr + SMBB_CHG_CTRL,
++					   CTRL_EN, 0);
++			break;
++		}
++		if (charging || done || smbb_battery_full(chg)) {
+ 			regmap_update_bits(chg->regmap,
+ 					   chg->addr + SMBB_CHG_CTRL,
+ 					   CTRL_EN, CTRL_EN);
+@@ -1206,6 +1232,8 @@ static int smbb_state_show(struct seq_file *s, void *data)
+ 	seq_printf(s, "  chg_trkl    %d\n", !!(status & STATUS_CHG_TRKL));
+ 	seq_printf(s, "  chg_done    %d\n", !!(status & STATUS_CHG_DONE));
+ 	seq_printf(s, "  chg_gone    %d\n", !!(status & STATUS_CHG_GONE));
++	if (chg->charging_disabled)
++		seq_puts(s, "charging      DISABLED by device tree\n");
+ 	seq_printf(s, "supervisor    rearms=%u gate_clears=%u stage=%u backoff=%ums\n",
+ 		   chg->rearm_count, chg->gate_clear_count, chg->rearm_stage,
+ 		   chg->rearm_delay_ms);
+@@ -1473,6 +1501,12 @@ static int smbb_charger_probe(struct platform_device *pdev)
+ 	chg->jeita_ext_temp = of_property_read_bool(pdev->dev.of_node,
+ 			"qcom,jeita-extended-temp-range");
+ 
++	chg->charging_disabled = of_property_read_bool(pdev->dev.of_node,
++			"qcom,charging-disabled");
++	if (chg->charging_disabled)
++		dev_info(&pdev->dev,
++			 "charging disabled by device tree; keeping the charge path off\n");
++
+ 	/*
+ 	 * The BTC temperature-range select (and the comparator enable,
+ 	 * formerly set unconditionally from smbb_charger_setup[]) is left

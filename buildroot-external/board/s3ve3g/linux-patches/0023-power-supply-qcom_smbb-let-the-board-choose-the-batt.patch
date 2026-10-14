@@ -1,0 +1,128 @@
+From 5a3df5a457c813166c83a5c9d2b806fedea86ab4 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Mon, 12 Oct 2026 01:05:56 +0200
+Subject: [PATCH 23/26] power: supply: qcom_smbb: let the board choose the
+ battery presence source
+
+Battery presence detection was hardwired to the thermistor, which is
+what the Fairphone 2 vendor tree selects. PM8226 phones such as the
+Galaxy S III Neo select the battery ID pin instead (vendor
+qcom,bpd-detection = "bpd_id"). Add qcom,battery-presence-source,
+defaulting to the thermistor, and program it before the setup table.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ .../power/supply/qcom,pm8941-charger.yaml     |  8 +++
+ drivers/power/supply/qcom_smbb.c              | 58 +++++++++++++++----
+ 2 files changed, 55 insertions(+), 11 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/power/supply/qcom,pm8941-charger.yaml b/Documentation/devicetree/bindings/power/supply/qcom,pm8941-charger.yaml
+index cbac55d3cb92..f15748fbbc20 100644
+--- a/Documentation/devicetree/bindings/power/supply/qcom,pm8941-charger.yaml
++++ b/Documentation/devicetree/bindings/power/supply/qcom,pm8941-charger.yaml
+@@ -108,6 +108,14 @@ properties:
+     type: boolean
+     description: Disable DC charger
+ 
++  qcom,battery-presence-source:
++    enum: [thermistor, id, thermistor-id]
++    default: thermistor
++    description:
++      Battery line the PMIC watches to detect that a battery is fitted.
++      A wrong choice makes the PMIC see no battery and cut the system
++      supply.
++
+   qcom,jeita-extended-temp-range:
+     type: boolean
+     description: |
+diff --git a/drivers/power/supply/qcom_smbb.c b/drivers/power/supply/qcom_smbb.c
+index 96e6d79fac81..5f2942a3713a 100644
+--- a/drivers/power/supply/qcom_smbb.c
++++ b/drivers/power/supply/qcom_smbb.c
+@@ -25,6 +25,7 @@
+ #include <linux/of.h>
+ #include <linux/platform_device.h>
+ #include <linux/power_supply.h>
++#include <linux/property.h>
+ #include <linux/regmap.h>
+ #include <linux/slab.h>
+ #include <linux/extcon-provider.h>
+@@ -1351,18 +1352,18 @@ static const struct reg_off_mask_default {
+ 	{ SMBB_BUCK_REG_MODE, BUCK_REG_MODE, BUCK_REG_MODE_VBAT },
+ 
+ 	/*
+-	 * Battery-presence detection and its reference.  The vendor driver
+-	 * selects the thermistor as the presence source and forces the
+-	 * thermistor bias reference on before anything consumes it; the
+-	 * boot chain leaves both at hardware defaults.  Sensing presence or
+-	 * temperature against an unbiased thermistor line lets the PMIC
+-	 * transiently read the battery as absent, and its response to that
+-	 * is a system power cut identical to a physical battery removal
+-	 * (PON poff=0x2000).  The vendor does NOT arm the BTC comparators
+-	 * on this board (it leaves BAT_BTC_CTRL exactly as the bootloader
+-	 * left it), so no COMP_EN is set here either.
++	 * Battery-presence detection reference.  The presence source itself
++	 * (BAT_IF_BPD_CTRL) is board-specific and programmed at probe, just
++	 * before this table, from qcom,battery-presence-source.  The vendor
++	 * driver forces the thermistor bias reference on before anything
++	 * consumes it; the boot chain leaves it at the hardware default.
++	 * Sensing presence or temperature against an unbiased thermistor
++	 * line lets the PMIC transiently read the battery as absent, and its
++	 * response to that is a system power cut identical to a physical
++	 * battery removal (PON poff=0x2000).  The vendor does NOT arm the BTC
++	 * comparators (it leaves BAT_BTC_CTRL exactly as the bootloader left
++	 * it), so no COMP_EN is set here either.
+ 	 */
+-	{ SMBB_BAT_BPD_CTRL, BPD_CTRL_SEL_MASK, BPD_CTRL_BAT_THM_EN },
+ 	{ SMBB_BAT_VREF_THM_CTRL, VREF_BAT_THM_FORCE_ON, VREF_BAT_THM_FORCE_ON },
+ 
+ 	/* Stop USB enumeration timer */
+@@ -1594,6 +1595,37 @@ static const struct regulator_ops smbb_chg_otg_ops = {
+ 	.is_enabled = smbb_chg_otg_is_enabled,
+ };
+ 
++/*
++ * Select the line the PMIC watches for battery presence, as the vendor
++ * qcom,bpd-detection does: the thermistor (the default), the battery ID
++ * pin, or both.  Boards differ: the Fairphone 2 vendor tree uses the
++ * thermistor, PM8226 phones such as the Galaxy S III Neo the ID pin.
++ * A wrong choice makes the PMIC see no battery and cut the system supply.
++ */
++static int smbb_set_presence_source(struct smbb_charger *chg)
++{
++	static const char * const names[] = {
++		"thermistor", "id", "thermistor-id",
++	};
++	static const unsigned int bits[] = {
++		BPD_CTRL_BAT_THM_EN,
++		BPD_CTRL_BAT_ID_EN,
++		BPD_CTRL_BAT_THM_EN | BPD_CTRL_BAT_ID_EN,
++	};
++	const char *prop = "qcom,battery-presence-source";
++	int idx = 0;
++
++	if (device_property_present(chg->dev, prop)) {
++		idx = device_property_match_property_string(chg->dev, prop, names,
++							    ARRAY_SIZE(names));
++		if (idx < 0)
++			return dev_err_probe(chg->dev, idx, "bad %s\n", prop);
++	}
++
++	return regmap_update_bits(chg->regmap, chg->addr + SMBB_BAT_BPD_CTRL,
++				  BPD_CTRL_SEL_MASK, bits[idx]);
++}
++
+ static int smbb_charger_probe(struct platform_device *pdev)
+ {
+ 	struct power_supply_config bat_cfg = {};
+@@ -1832,6 +1864,10 @@ static int smbb_charger_probe(struct platform_device *pdev)
+ 	 */
+ 	smbb_clear_gates(chg);
+ 
++	rc = smbb_set_presence_source(chg);
++	if (rc)
++		return rc;
++
+ 	for (i = 0; i < ARRAY_SIZE(smbb_charger_setup); ++i) {
+ 		const struct reg_off_mask_default *r = &smbb_charger_setup[i];
+ 

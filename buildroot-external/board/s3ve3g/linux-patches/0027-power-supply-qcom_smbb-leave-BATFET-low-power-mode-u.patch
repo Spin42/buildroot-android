@@ -1,0 +1,91 @@
+From 206f7489f133f5bf29a444639f2529974dd0807d Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Mon, 12 Oct 2026 07:32:43 +0200
+Subject: [PATCH 27/29] power: supply: qcom_smbb: leave BATFET low-power mode
+ under a charger
+
+BATFET_CTRL4 low-power mode survives every reset short of a battery
+removal and was found set (0x40) with a supply connected on PM8226. The
+vendor driver clears it on every insertion and sets it again only once
+no input remains.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/power/supply/qcom_smbb.c | 47 ++++++++++++++++++++++++++++++++
+ 1 file changed, 47 insertions(+)
+
+diff --git a/drivers/power/supply/qcom_smbb.c b/drivers/power/supply/qcom_smbb.c
+index 63b2031351b1..e807bf65d1b9 100644
+--- a/drivers/power/supply/qcom_smbb.c
++++ b/drivers/power/supply/qcom_smbb.c
+@@ -130,6 +130,8 @@
+ #define SMBB_BAT_VREF_THM_CTRL	0x24a
+ #define VREF_BAT_THM_FORCE_ON	(BIT(7) | BIT(6))
+ #define SMBB_BAT_BATFET_CTRL4	0x293
++#define BATFET_LPM_MASK		0xc0
++#define BATFET_LPM		0x40
+ 
+ #define SMBB_USB_IMAX		0x344
+ #define SMBB_USB_SUSP		0x347
+@@ -846,6 +848,48 @@ static unsigned int smbb_clear_overrides(struct smbb_charger *chg)
+ 	return found;
+ }
+ 
++/*
++ * BATFET low-power mode trades the BATFET gate drive for quiescent current
++ * and is only meant for running on the battery alone.  It survives every
++ * reset short of a battery removal, so whatever set it last (a previous OS,
++ * or a power-off on battery) leaves it in force under the next charger.  The
++ * vendor driver takes the FET out of it on every insertion and puts it back
++ * only once no input remains; do the same.  "Input" is USBIN/DCIN valid,
++ * as the vendor tests it, or a USB supply the path still sees inside its
++ * valid window: an input that is connected but not qualified, or has a
++ * latched CHG_GONE, must not leave the FET in low-power mode.  Without a
++ * battery the register is left as booted when no input is present, since
++ * VPH may then be fed through the BATFET from the battery terminals.
++ */
++static void smbb_batfet_lpm_update(struct smbb_charger *chg)
++{
++	unsigned int usb = 0, sts = 0, dc = 0, reg, want;
++	bool input;
++
++	regmap_read(chg->regmap, chg->addr + SMBB_USB_RT_STS, &usb);
++	regmap_read(chg->regmap, chg->addr + SMBB_USB_STATUS, &sts);
++	if (!chg->dc_disabled)
++		regmap_read(chg->regmap, chg->addr + SMBB_DC_RT_STS, &dc);
++	input = (usb & USB_RT_VALID) || (dc & DC_RT_VALID) ||
++		((sts & USB_STS_COARSE_DET) &&
++		 (sts & USB_STS_VALID_MASK) == USB_STS_VALID_IN);
++
++	if (!input && !smbb_battery_present(chg))
++		return;
++	if (regmap_read(chg->regmap, chg->addr + SMBB_BAT_BATFET_CTRL4, &reg))
++		return;
++
++	want = input ? 0 : BATFET_LPM;
++	if ((reg & BATFET_LPM_MASK) == want)
++		return;
++
++	regmap_update_bits(chg->regmap, chg->addr + SMBB_BAT_BATFET_CTRL4,
++			   BATFET_LPM_MASK, want);
++	dev_info(chg->dev, "BATFET low-power mode %s (batfet_ctrl4 %02x -> %02x)\n",
++		 input ? "off, input present" : "on, running on battery",
++		 reg, (reg & ~BATFET_LPM_MASK) | want);
++}
++
+ /*
+  * The cable is physically there - the USB charger path sees VBUS above its
+  * coarse detector and inside the valid window - yet the real-time status
+@@ -977,6 +1021,9 @@ static void smbb_engage_work(struct work_struct *work)
+ 		dev_info_ratelimited(chg->dev, "supply mode: %s\n", mode);
+ 	}
+ 
++	if (!chg->charging_disabled)
++		smbb_batfet_lpm_update(chg);
++
+ 	if (smbb_arb_step(chg, input, &delay)) {
+ 		schedule_delayed_work(&chg->engage_work, msecs_to_jiffies(delay));
+ 		return;
+-- 
+2.43.0
+

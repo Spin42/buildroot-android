@@ -1,0 +1,228 @@
+From 6ef25f2c5df825abfff11a2c14f842c8dc2b79c3 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Mon, 12 Oct 2026 01:28:53 +0200
+Subject: [PATCH 26/26] power: supply: qcom_smbb: restore charger overrides on
+ a stuck input
+
+The SMBB override and protection registers survive PS_HOLD resets, so
+a value left by the boot chain or an earlier kernel stays in force.
+At probe, and when an input is present but never qualifies, log them,
+put the ones the vendor driver manages back to its normal-operation
+values (with the SEC_ACCESS unlock each needs), set the PM8226 USB OCP
+threshold and release its latch as the vendor does, and re-qualify at
+100 mA so the input-limit ramp starts from the insertion value.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/power/supply/qcom_smbb.c | 151 +++++++++++++++++++++++++++++++
+ 1 file changed, 151 insertions(+)
+
+diff --git a/drivers/power/supply/qcom_smbb.c b/drivers/power/supply/qcom_smbb.c
+index fa8bdc069cb5..63b2031351b1 100644
+--- a/drivers/power/supply/qcom_smbb.c
++++ b/drivers/power/supply/qcom_smbb.c
+@@ -99,11 +99,20 @@
+  */
+ #define SMBB_CHG_TRICKLE_CLAMP	0x0e3
+ #define SMBB_CHG_OVR0		0x0ed
++#define SMBB_CHG_COMP_OVR1	0x0ea
++#define SMBB_CHG_VBATDET_OVR	0x0ee	/* vendor CHGR_COMP_OVR1 */
+ 
+ #define SMBB_BUCK_REG_MODE	0x174
+ #define BUCK_REG_MODE		BIT(0)
+ #define BUCK_REG_MODE_VBAT	BIT(0)
+ #define BUCK_REG_MODE_VSYS	0
++#define SMBB_BUCK_VCHG_OV	0x177
++#define SMBB_BUCK_SEC_ACCESS	0x1d0
++#define SMBB_BUCK_CMP_OVR1	0x1eb
++#define SMBB_BUCK_CMP_OVR2	0x1ec
++#define BUCK_VIN_LOOP_CMP_OVR	GENMASK(5, 4)
++#define SMBB_BUCK_CMP_OVR3	0x1ed
++#define BUCK_VCP_CMP_OVR	GENMASK(3, 2)
+ 
+ #define SMBB_BAT_PRES_STATUS	0x208
+ #define PRES_STATUS_BAT_PRES	BIT(7)
+@@ -120,6 +129,7 @@
+ #define BTC_CTRL_HOT_EXT_N	BIT(0)
+ #define SMBB_BAT_VREF_THM_CTRL	0x24a
+ #define VREF_BAT_THM_FORCE_ON	(BIT(7) | BIT(6))
++#define SMBB_BAT_BATFET_CTRL4	0x293
+ 
+ #define SMBB_USB_IMAX		0x344
+ #define SMBB_USB_SUSP		0x347
+@@ -132,6 +142,18 @@
+ #define SEC_ACCESS_MAGIC	0xa5
+ #define SMBB_USB_REV_BST	0x3ed
+ #define REV_BST_CHG_GONE	BIT(7)
++#define SMBB_USB_SUBTYPE	0x305
++#define USB_SUBTYPE_SMBBP	0x34
++#define SMBB_USB_CTL		0x340
++#define SMBB_USB_OVP_CTL	0x342
++#define SMBB_USB_OCP_THR	0x352
++#define OCP_THR_MASK		GENMASK(1, 0)
++#define OCP_THR_900MA		0x02
++#define SMBB_USB_OCP_CLR	0x353
++#define OCP_CLR			BIT(7)
++#define SMBB_USB_SPARE		0x3df
++#define SMBB_USB_COMP_OVR1	0x3ea
++#define SMBB_USB_TRIM		0x3f1
+ 
+ #define SMBB_DC_IMAX		0x444
+ 
+@@ -713,6 +735,117 @@ static bool smbb_battery_full(struct smbb_charger *chg)
+ 	return uv >= chg->attr[ATTR_CHG_VDET];
+ }
+ 
++/*
++ * Comparator overrides and protection latches in the charger blocks.  Like
++ * USB_SUSP they are not reset by a PS_HOLD reset, warm or hard, so whatever
++ * the boot chain or a previous kernel left there is still in force.  Each entry
++ * is a register the vendor driver writes, with the value it holds there in
++ * normal operation, so restoring it is never a new state for the hardware.
++ * The secure ones need a SEC_ACCESS unlock immediately before the write.
++ */
++static const struct smbb_override {
++	const char *name;
++	unsigned int off;
++	unsigned int mask;
++	unsigned int val;
++	unsigned int sec;	/* SEC_ACCESS of the owning block, 0 if none */
++} smbb_overrides[] = {
++	/* vendor: 0x2f during an OTG/flash workaround, 0x00 otherwise */
++	{ "usb_comp_ovr1", SMBB_USB_COMP_OVR1, 0xff, 0x00, SMBB_USB_SEC_ACCESS },
++	/* vendor: input-loop debouncer bypass (0x10) off */
++	{ "buck_cmp_ovr2", SMBB_BUCK_CMP_OVR2, BUCK_VIN_LOOP_CMP_OVR, 0x00,
++	  SMBB_BUCK_SEC_ACCESS },
++	/* vendor: VCP workaround brackets IUSB writes with 0x0c, then 0 */
++	{ "buck_cmp_ovr3", SMBB_BUCK_CMP_OVR3, BUCK_VCP_CMP_OVR, 0x00,
++	  SMBB_BUCK_SEC_ACCESS },
++	/* vendor probe */
++	{ "buck_vchg_ov", SMBB_BUCK_VCHG_OV, 0xff, 0x00, SMBB_BUCK_SEC_ACCESS },
++	/* vendor: 0x20 pulse after boost off, 0x00 otherwise */
++	{ "chg_comp_ovr1", SMBB_CHG_COMP_OVR1, 0xff, 0x00, SMBB_CHG_SEC_ACCESS },
++	/* vendor: VBATDET comparator bypass off */
++	{ "chg_vbatdet_ovr", SMBB_CHG_VBATDET_OVR, 0xff, 0x00,
++	  SMBB_CHG_SEC_ACCESS },
++};
++
++/* Read-only context for the log line: what else differs between boots */
++static const struct {
++	const char *name;
++	unsigned int off;
++} smbb_override_ctx[] = {
++	{ "usb_ctl", SMBB_USB_CTL },
++	{ "usb_ovp_ctl", SMBB_USB_OVP_CTL },
++	{ "usb_ocp_thr", SMBB_USB_OCP_THR },
++	{ "usb_spare", SMBB_USB_SPARE },
++	{ "usb_trim", SMBB_USB_TRIM },
++	{ "usb_rev_bst", SMBB_USB_REV_BST },
++	{ "buck_cmp_ovr1", SMBB_BUCK_CMP_OVR1 },
++	{ "batfet_ctrl4", SMBB_BAT_BATFET_CTRL4 },
++};
++
++static void smbb_log_overrides(struct smbb_charger *chg, const char *when)
++{
++	char buf[384];
++	unsigned int val;
++	int i, n = 0;
++
++	for (i = 0; i < ARRAY_SIZE(smbb_overrides); ++i) {
++		if (regmap_read(chg->regmap, chg->addr + smbb_overrides[i].off,
++				&val))
++			continue;
++		n += scnprintf(buf + n, sizeof(buf) - n, " %s=%02x",
++			       smbb_overrides[i].name, val);
++	}
++	for (i = 0; i < ARRAY_SIZE(smbb_override_ctx); ++i) {
++		if (regmap_read(chg->regmap,
++				chg->addr + smbb_override_ctx[i].off, &val))
++			continue;
++		n += scnprintf(buf + n, sizeof(buf) - n, " %s=%02x",
++			       smbb_override_ctx[i].name, val);
++	}
++	dev_info(chg->dev, "overrides %s:%s\n", when, buf);
++}
++
++/*
++ * Put every override back to its normal-operation value and clear the USB
++ * over-current latch.  Returns how many overrides were not at that value.
++ */
++static unsigned int smbb_clear_overrides(struct smbb_charger *chg)
++{
++	const struct smbb_override *o;
++	unsigned int val, sub = 0, found = 0;
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(smbb_overrides); ++i) {
++		o = &smbb_overrides[i];
++		if (regmap_read(chg->regmap, chg->addr + o->off, &val))
++			continue;
++		if ((val & o->mask) == o->val)
++			continue;
++		found++;
++		if (o->sec)
++			regmap_write(chg->regmap, chg->addr + o->sec,
++				     SEC_ACCESS_MAGIC);
++		regmap_write(chg->regmap, chg->addr + o->off,
++			     (val & ~o->mask) | o->val);
++		dev_warn(chg->dev, "cleared %s %03x: %02x -> %02x\n", o->name,
++			 o->off, val, (val & ~o->mask) | o->val);
++	}
++
++	/*
++	 * PM8226 (SMBBP) only: the vendor sets the USB OVP FET over-current
++	 * threshold to 900 mA at probe and releases the latch from its
++	 * usb-ocp handler.  Left at its reset value the threshold is 200 mA.
++	 */
++	regmap_read(chg->regmap, chg->addr + SMBB_USB_SUBTYPE, &sub);
++	if (sub == USB_SUBTYPE_SMBBP) {
++		regmap_update_bits(chg->regmap, chg->addr + SMBB_USB_OCP_THR,
++				   OCP_THR_MASK, OCP_THR_900MA);
++		regmap_write(chg->regmap, chg->addr + SMBB_USB_OCP_CLR, OCP_CLR);
++	}
++
++	return found;
++}
++
+ /*
+  * The cable is physically there - the USB charger path sees VBUS above its
+  * coarse detector and inside the valid window - yet the real-time status
+@@ -801,6 +934,14 @@ static bool smbb_arb_step(struct smbb_charger *chg, bool input,
+ 	dev_info(chg->dev,
+ 		 "input present but not qualified (status %02x, rt %02x): resetting the input arbiter\n",
+ 		 sts, rt);
++	smbb_log_overrides(chg, "while stuck");
++	smbb_clear_overrides(chg);
++	/*
++	 * Re-qualify at 100 mA, the vendor's limit for a fresh insertion; the
++	 * ramp walks up from there once a cycle runs, and learns a ceiling if
++	 * the supply collapses on the way.
++	 */
++	smbb_set_iusb(chg, 0);
+ 	regmap_update_bits(chg->regmap, chg->addr + SMBB_CHG_CTRL, CTRL_EN, 0);
+ 	regmap_update_bits(chg->regmap, chg->addr + SMBB_CHG_CTRL,
+ 			   CTRL_ON_BAT_FORCE, CTRL_ON_BAT_FORCE);
+@@ -1555,6 +1696,13 @@ static const struct {
+ 	{ "tchg_max_en",  SMBB_CHG_TCHG_MAX_EN },
+ 	{ "usb_susp",     SMBB_USB_SUSP },
+ 	{ "usb_otg_ctl",  SMBB_USB_OTG_CTL },
++	{ "usb_ocp_thr",  SMBB_USB_OCP_THR },
++	{ "usb_comp_ovr1", SMBB_USB_COMP_OVR1 },
++	{ "usb_spare",    SMBB_USB_SPARE },
++	{ "usb_trim",     SMBB_USB_TRIM },
++	{ "buck_cmp_ovr2", SMBB_BUCK_CMP_OVR2 },
++	{ "buck_cmp_ovr3", SMBB_BUCK_CMP_OVR3 },
++	{ "buck_vchg_ov", SMBB_BUCK_VCHG_OV },
+ };
+ 
+ static int smbb_state_show(struct seq_file *s, void *data)
+@@ -1991,6 +2139,9 @@ static int smbb_charger_probe(struct platform_device *pdev)
+ 	if (rc)
+ 		return rc;
+ 
++	smbb_log_overrides(chg, "at probe");
++	smbb_clear_overrides(chg);
++
+ 	for (i = 0; i < ARRAY_SIZE(smbb_charger_setup); ++i) {
+ 		const struct reg_off_mask_default *r = &smbb_charger_setup[i];
+ 

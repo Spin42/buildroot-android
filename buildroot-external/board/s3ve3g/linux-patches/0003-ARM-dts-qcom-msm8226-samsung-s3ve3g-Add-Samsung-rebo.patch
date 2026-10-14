@@ -1,0 +1,44 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Sun, 11 Oct 2026 22:51:15 +0200
+Subject: [PATCH 3/3] ARM: dts: qcom: msm8226-samsung-s3ve3g: Add Samsung
+ reboot modes
+
+The Samsung aboot enters download mode for 0x12345671 and treats
+0x12345678 as a normal reboot, the magics of the Samsung kernel.
+0x12345678 also clears a recovery boot that aboot keeps pending in the
+param partition after a "recovery" reboot.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ .../boot/dts/qcom/qcom-msm8226-samsung-s3ve3g.dts  | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/arch/arm/boot/dts/qcom/qcom-msm8226-samsung-s3ve3g.dts b/arch/arm/boot/dts/qcom/qcom-msm8226-samsung-s3ve3g.dts
+index 4509c3acd..484b4bc83 100644
+--- a/arch/arm/boot/dts/qcom/qcom-msm8226-samsung-s3ve3g.dts
++++ b/arch/arm/boot/dts/qcom/qcom-msm8226-samsung-s3ve3g.dts
+@@ -118,6 +118,20 @@ &blsp1_uart3 {
+ 	status = "okay";
+ };
+ 
++&imem {
++	reboot-mode {
++		/*
++		 * Samsung aboot reads and clears the word on every boot. It
++		 * enters download mode for "download" and also for
++		 * "bootloader", and boots the recovery partition for
++		 * "recovery". "normal" is the magic of the Samsung kernel,
++		 * which also cancels a pending recovery boot.
++		 */
++		mode-normal = <0x12345678>;
++		mode-download = <0x12345671>;
++	};
++};
++
+ &rpm_requests {
+ 	regulators {
+ 		compatible = "qcom,rpm-pm8226-regulators";
+-- 
+2.43.0
+

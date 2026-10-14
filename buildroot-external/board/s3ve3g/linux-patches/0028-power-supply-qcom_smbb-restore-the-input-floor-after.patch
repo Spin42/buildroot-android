@@ -1,0 +1,53 @@
+From a6ef32f9c3c555a3111dc5a65c8b0016e027be27 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Mon, 12 Oct 2026 07:32:50 +0200
+Subject: [PATCH 28/29] power: supply: qcom_smbb: restore the input floor after
+ an arbiter reset
+
+The arbiter reset re-qualifies the input at 100 mA, and only a running
+charge cycle ramps the limit up again. Below the system load no cycle
+starts, so the input stayed at 100 mA for good.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/power/supply/qcom_smbb.c | 17 +++++++++++++----
+ 1 file changed, 13 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/power/supply/qcom_smbb.c b/drivers/power/supply/qcom_smbb.c
+index e807bf65d1b9..f9f1c86ef7f1 100644
+--- a/drivers/power/supply/qcom_smbb.c
++++ b/drivers/power/supply/qcom_smbb.c
+@@ -947,8 +947,18 @@ static bool smbb_arb_step(struct smbb_charger *chg, bool input,
+ 
+ 	if (input || chg->charging_disabled || !smbb_input_stuck(chg)) {
+ 		if (input) {
+-			if (chg->arb_stage == 2)
+-				dev_info(chg->dev, "input re-qualified after arbiter reset\n");
++			if (chg->arb_stage == 2) {
++				/*
++				 * The ramp above the floor only runs during a
++				 * cycle, so leaving the 100 mA re-qualification
++				 * limit in place would pin the input below the
++				 * system load and no cycle could ever start.
++				 */
++				smbb_set_iusb(chg, chg->iusb_floor_idx);
++				dev_info(chg->dev,
++					 "input re-qualified after arbiter reset, input limit %u uA\n",
++					 smbb_iusb_hw_ua(chg));
++			}
+ 			chg->arb_delay_ms = SMBB_ENGAGE_POLL_MS;
+ 			chg->arb_next = jiffies;
+ 		}
+@@ -982,8 +992,7 @@ static bool smbb_arb_step(struct smbb_charger *chg, bool input,
+ 	smbb_clear_overrides(chg);
+ 	/*
+ 	 * Re-qualify at 100 mA, the vendor's limit for a fresh insertion; the
+-	 * ramp walks up from there once a cycle runs, and learns a ceiling if
+-	 * the supply collapses on the way.
++	 * floor is restored as soon as the input qualifies.
+ 	 */
+ 	smbb_set_iusb(chg, 0);
+ 	regmap_update_bits(chg->regmap, chg->addr + SMBB_CHG_CTRL, CTRL_EN, 0);
+-- 
+2.43.0
+

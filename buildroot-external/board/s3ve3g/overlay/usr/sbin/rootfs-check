@@ -1,0 +1,26 @@
+#!/bin/sh
+# sysinit: check the root filesystem while it is still read-only, then remount it read-write.
+# ext2 has no journal, so a power cut or a watchdog reset leaves it "not clean"; e2fsck -p
+# repairs what is safe to repair on its own.
+# e2fsck exit codes: 0 clean, 1 fixed, 2 fixed and a reboot is needed (the root fs changed
+# under the mounted kernel), 4 and up errors left: root stays read-only, the rest still boots.
+majmin=$(awk '$5 == "/" { print $3; exit }' /proc/self/mountinfo)
+dev=$(awk -v mm="$majmin" '{ if ($1 ":" $2 == mm) { print $4; exit } }' /proc/partitions)
+if [ -z "$dev" ] || [ ! -b "/dev/$dev" ]; then
+	echo "rootfs-check: root device $majmin not found, mounting read-write unchecked"
+	exec mount -o remount,rw /
+fi
+echo "rootfs-check: e2fsck -p /dev/$dev"
+e2fsck -p "/dev/$dev"
+rc=$?
+echo "rootfs-check: e2fsck exit code $rc" > /dev/kmsg
+if [ $((rc & 2)) -ne 0 ]; then
+	echo "rootfs-check: e2fsck changed the mounted root, rebooting"
+	sync
+	reboot -f
+fi
+if [ $rc -ge 4 ]; then
+	echo "rootfs-check: errors left on /dev/$dev, root stays read-only (run e2fsck -f from rescue)"
+	exit 1
+fi
+mount -o remount,rw /

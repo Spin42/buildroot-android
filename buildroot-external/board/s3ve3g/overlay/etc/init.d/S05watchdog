@@ -1,0 +1,26 @@
+#!/bin/sh
+# Pet the KPSS hardware watchdog every 5 s with a 20 s timeout: a hung kernel reboots into lk2nd,
+# which boots this system again (or stays in fastboot when Volume Down is held).
+# On stop, busybox watchdog writes the magic close character, so poweroff is not undone by a reset.
+PIDFILE=/run/watchdog.pid
+
+case "$1" in
+start)
+	[ -e /dev/watchdog ] || { echo "watchdog: no /dev/watchdog"; exit 0; }
+	printf "Starting watchdog: "
+	start-stop-daemon -S -q -b -m -p $PIDFILE -x /sbin/watchdog -- -F -T 20 -t 5 /dev/watchdog
+	[ $? = 0 ] && echo "OK" || echo "FAIL"
+	;;
+stop)
+	printf "Stopping watchdog: "
+	start-stop-daemon -K -q -p $PIDFILE
+	[ $? = 0 ] && echo "OK" || echo "FAIL"
+	;;
+restart|reload)
+	"$0" stop
+	"$0" start
+	;;
+*)
+	echo "Usage: $0 {start|stop|restart}"
+	exit 1
+esac

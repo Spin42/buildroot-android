@@ -1,0 +1,40 @@
+#!/bin/sh
+# Firmware from the phone, never from the image: mount the apnhlos partition (vfat) read-only on
+# /run/firmware/apnhlos and add its image/ directory to the kernel's firmware search path, so
+# request_firmware("wcnss.mdt") finds wcnss.mdt and its wcnss.bNN segments there.
+# The search path is tried before /lib/firmware, which keeps the shipped files (the WCNSS NV
+# file, regulatory.db) reachable. shortname=lower: the 8.3 names are lowercase, as the drivers
+# request them.
+MNT=/run/firmware/apnhlos
+FWPATH=/sys/module/firmware_class/parameters/path
+
+partdev() {
+	grep -lx "PARTNAME=$1" /sys/class/block/*/uevent 2>/dev/null | head -n 1 |
+		sed -n 's|^/sys/class/block/\([^/]*\)/uevent$|/dev/\1|p'
+}
+
+case "$1" in
+start)
+	printf "Mounting firmware (apnhlos): "
+	dev=$(partdev apnhlos)
+	[ -b "$dev" ] || { echo "FAIL (no apnhlos partition)"; exit 0; }
+	mkdir -p $MNT
+	if ! mountpoint -q $MNT && ! mount -t vfat -o ro,nodev,nosuid,noexec,shortname=lower "$dev" $MNT; then
+		echo "FAIL (mount $dev)"
+		exit 0
+	fi
+	echo -n $MNT/image > $FWPATH
+	echo "OK ($dev, firmware path $(cat $FWPATH))"
+	;;
+stop)
+	[ -w $FWPATH ] && echo -n "" > $FWPATH
+	mountpoint -q $MNT && umount $MNT
+	;;
+restart|reload)
+	"$0" stop
+	"$0" start
+	;;
+*)
+	echo "Usage: $0 {start|stop|restart}"
+	exit 1
+esac

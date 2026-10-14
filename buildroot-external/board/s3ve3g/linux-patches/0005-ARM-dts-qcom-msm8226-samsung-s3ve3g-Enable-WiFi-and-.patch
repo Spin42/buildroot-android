@@ -1,0 +1,102 @@
+From 9ffb08fac8259ecb5eca30885b52d37680373c45 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Sun, 11 Oct 2026 23:41:06 +0200
+Subject: [PATCH] ARM: dts: qcom: msm8226-samsung-s3ve3g: Enable WiFi and
+ Bluetooth
+
+The board uses a dual-band IRIS RF chip, so describe it as WCN3660.
+Regulator constraints and pins are the stock ones.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ .../dts/qcom/qcom-msm8226-samsung-s3ve3g.dts  | 49 +++++++++++++++++++
+ 1 file changed, 49 insertions(+)
+
+diff --git a/arch/arm/boot/dts/qcom/qcom-msm8226-samsung-s3ve3g.dts b/arch/arm/boot/dts/qcom/qcom-msm8226-samsung-s3ve3g.dts
+index 9e1181b60..1fef3b6be 100644
+--- a/arch/arm/boot/dts/qcom/qcom-msm8226-samsung-s3ve3g.dts
++++ b/arch/arm/boot/dts/qcom/qcom-msm8226-samsung-s3ve3g.dts
+@@ -194,10 +194,42 @@ reboot-mode {
+ 	};
+ };
+ 
++&pronto {
++	vddmx-supply = <&pm8226_l3>;
++	vddpx-supply = <&pm8226_l6>;
++
++	pinctrl-0 = <&wcnss_pin_a>;
++	pinctrl-names = "default";
++
++	status = "okay";
++
++	iris {
++		/* Dual-band 802.11a/b/g/n without 11ac */
++		compatible = "qcom,wcn3660";
++
++		vddxo-supply = <&pm8226_l10>;
++		vddrfa-supply = <&pm8226_l24>;
++		vddpa-supply = <&pm8226_l16>;
++		vdddig-supply = <&pm8226_l24>;
++	};
++
++	smd-edge {
++		wcnss {
++			status = "okay";
++		};
++	};
++};
++
+ &rpm_requests {
+ 	regulators {
+ 		compatible = "qcom,rpm-pm8226-regulators";
+ 
++		pm8226_l3: l3 {
++			regulator-min-microvolt = <750000>;
++			regulator-max-microvolt = <1337500>;
++			regulator-always-on;
++		};
++
+ 		/* Panel vdda (DSI PHY) */
+ 		pm8226_l4: l4 {
+ 			regulator-min-microvolt = <1200000>;
+@@ -228,6 +260,11 @@ pm8226_l15: l15 {
+ 			regulator-max-microvolt = <3300000>;
+ 		};
+ 
++		pm8226_l16: l16 {
++			regulator-min-microvolt = <3000000>;
++			regulator-max-microvolt = <3350000>;
++		};
++
+ 		pm8226_l17: l17 {
+ 			regulator-min-microvolt = <2950000>;
+ 			regulator-max-microvolt = <2950000>;
+@@ -252,6 +289,11 @@ pm8226_l21: l21 {
+ 			regulator-max-microvolt = <2950000>;
+ 			regulator-allow-set-load;
+ 		};
++
++		pm8226_l24: l24 {
++			regulator-min-microvolt = <1300000>;
++			regulator-max-microvolt = <1350000>;
++		};
+ 	};
+ };
+ 
+@@ -306,6 +348,13 @@ sdhc2_cd_default: sdhc2-cd-default-state {
+ 		drive-strength = <2>;
+ 		bias-disable;
+ 	};
++
++	wcnss_pin_a: wcnss-pin-active-state {
++		pins = "gpio40", "gpio41", "gpio42", "gpio43", "gpio44";
++		function = "wlan";
++		drive-strength = <6>;
++		bias-pull-down;
++	};
+ };
+ 
+ &usb {
+-- 
+2.43.0
+

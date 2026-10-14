@@ -1,0 +1,507 @@
+From 5a50bbe4f1ffef9ec33e4427905a13c2a4a401a6 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Tue, 4 Aug 2026 09:03:42 +0200
+Subject: [PATCH 08/26] power: supply: qcom_smbb: keep the charge path engaged
+
+The driver programmed the charger once at probe and then only observed
+it: every interrupt handler updates a status bit and calls
+power_supply_changed(), and nothing ever writes charger hardware again.
+The PM8941 charge path needs more than that, and on a Fairphone 2 the
+result was charging that engaged on some boots and not others, live
+cable insertions that raised usb-valid without ever starting a cycle,
+and a full battery that never resumed charging as it drained.
+
+Three classes of state stop a cycle, none of them visible through the
+power-supply properties and all of them surviving a reset:
+
+ - the gates: CTRL_ON_BAT_FORCE (0x1049 bit 0), USB_SUSP (0x1347 bit 0)
+   and the write-1-to-clear CHG_FAILED latch (0x104A bit 7).  The vendor
+   driver clears all three at init and after every fault; this driver
+   masked only CTRL_EN and could neither see nor clear them.  Note the
+   trap: enabling charging with a read-modify-write is skipped entirely
+   when the boot chain already left CTRL_EN set, so no fresh edge is
+   produced and inherited latches stay latched.
+ - the hardware end-of-charge latch, cleared only by a CTRL_EN off->on
+   toggle.  Without it VBAT_DET has nothing to act on, which is why a
+   pack that terminated at 4.35 V never restarted at 4.14 V.
+ - transients that clear CTRL_EN behind the back of the driver.  The
+   vendor re-asserts it every ten seconds while an input is present.
+
+Add an engagement supervisor: a delayed work that, while an input is
+present, clears the gates, re-asserts CTRL_EN, and - when the battery is
+present and in range but no cycle is running - re-arms with an off->on
+toggle, carrying the settling delay across two work invocations so no
+workqueue blocks.  If the battery really is full the hardware comparator
+keeps the buck off and the toggle is a no-op.  Insertion, charge-done and
+charger-gone all kick it.
+
+Also apply the two register workarounds the vendor considers part of
+bring-up: the trickle-stuck pair (CHG_OVR0, CHG_TRICKLE_CLAMP behind
+SEC_ACCESS), whose absence looks exactly like "input valid, nothing
+charges"; and USB_REV_BST, which was #if 0 out here with its mask and
+value swapped, so enabling it as written would have cleared SEC_ACCESS
+instead of unlocking it.  Both need unconditional writes: SEC_ACCESS
+unlocks the single write that follows, and regmap_update_bits() skips
+writes whose value is unchanged, so the setup table grows a force flag.
+
+For diagnosis, expose a driver-owned debugfs file that decodes the
+status word, the supervisor counters, and the fifteen registers this
+driver understands.  It deliberately does not use the generic regmap
+debugfs: that walks the whole address range, and reads of addresses the
+SPMI arbiter refuses produce a storm of pmic_arb warnings on this PMIC.
+
+Assisted-by: Claude:claude-fable-5
+---
+ drivers/power/supply/qcom_smbb.c | 314 ++++++++++++++++++++++++++++++-
+ 1 file changed, 309 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/power/supply/qcom_smbb.c b/drivers/power/supply/qcom_smbb.c
+index b80df6835c13..68398cd7584d 100644
+--- a/drivers/power/supply/qcom_smbb.c
++++ b/drivers/power/supply/qcom_smbb.c
+@@ -16,6 +16,7 @@
+  *  - HF-Buck
+  */
+ 
++#include <linux/debugfs.h>
+ #include <linux/errno.h>
+ #include <linux/interrupt.h>
+ #include <linux/kernel.h>
+@@ -28,6 +29,8 @@
+ #include <linux/slab.h>
+ #include <linux/extcon-provider.h>
+ #include <linux/regulator/driver.h>
++#include <linux/seq_file.h>
++#include <linux/workqueue.h>
+ 
+ #define SMBB_CHG_VMAX		0x040
+ #define SMBB_CHG_VSAFE		0x041
+@@ -37,6 +40,15 @@
+ #define SMBB_CHG_VIN_MIN	0x047
+ #define SMBB_CHG_CTRL		0x049
+ #define CTRL_EN			BIT(7)
++/*
++ * Forces the charge path to run from the battery instead of a connected
++ * charger.  Set by the vendor driver around reverse-boost recovery and by
++ * host-mode transitions, and it survives a reset - so it must be cleared
++ * explicitly at probe or charging never engages again.
++ */
++#define CTRL_ON_BAT_FORCE	BIT(0)
++#define SMBB_CHG_FAILED		0x04a
++#define CHG_FAILED_CLEAR	BIT(7)	/* write-1-to-clear latch */
+ #define SMBB_CHG_VBAT_WEAK	0x052
+ #define SMBB_CHG_IBAT_TERM_CHG	0x05b
+ #define IBAT_TERM_CHG_IEOC	BIT(7)
+@@ -48,6 +60,14 @@
+ #define SMBB_CHG_WDOG_TIME	0x062
+ #define SMBB_CHG_WDOG_EN	0x065
+ #define WDOG_EN			BIT(7)
++#define SMBB_CHG_SEC_ACCESS	0x0d0
++/*
++ * The vendor calls these two the "trickle stuck workaround": without them
++ * a cycle can stay in trickle and never promote to fast charge, which
++ * looks exactly like "the input is valid but nothing charges".
++ */
++#define SMBB_CHG_TRICKLE_CLAMP	0x0e3
++#define SMBB_CHG_OVR0		0x0ed
+ 
+ #define SMBB_BUCK_REG_MODE	0x174
+ #define BUCK_REG_MODE		BIT(0)
+@@ -71,6 +91,8 @@
+ #define VREF_BAT_THM_FORCE_ON	(BIT(7) | BIT(6))
+ 
+ #define SMBB_USB_IMAX		0x344
++#define SMBB_USB_SUSP		0x347
++#define USB_SUSP_EN		BIT(0)	/* input suspend; survives a reset */
+ #define SMBB_USB_OTG_CTL	0x348
+ #define OTG_CTL_EN		BIT(0)
+ #define SMBB_USB_ENUM_TIMER_STOP 0x34e
+@@ -120,6 +142,19 @@ struct smbb_charger {
+ 	unsigned long status;
+ 	struct mutex statlock;
+ 
++	/*
++	 * Engagement supervisor.  The hardware needs software to keep the
++	 * charge path armed: see smbb_engage_work().  rearm_stage carries a
++	 * pending CTRL_EN off->on toggle across two work invocations so the
++	 * settling delay does not block a workqueue.
++	 */
++	struct delayed_work engage_work;
++	unsigned int rearm_stage;
++	unsigned int rearm_count;
++	unsigned int gate_clear_count;
++	bool was_charging;
++	struct dentry *debugfs;
++
+ 	unsigned int attr[_ATTR_CNT];
+ 
+ 	struct power_supply *usb_psy;
+@@ -377,6 +412,134 @@ static void smbb_set_line_flag(struct smbb_charger *chg, int irq, int flag)
+ 	dev_dbg(chg->dev, "status = %03lx\n", chg->status);
+ }
+ 
++/*
++ * Engagement supervisor.
++ *
++ * This charger is not self-arming.  Three classes of state stop a charge
++ * cycle from ever starting, all of them sticky across a reset and none of
++ * them observable from the power-supply properties:
++ *
++ *  - the gates: CTRL_ON_BAT_FORCE, USB_SUSP and the CHG_FAILED latch;
++ *  - the hardware end-of-charge latch, which is only cleared by a
++ *    CTRL_EN off->on toggle: without it a full battery that later drops
++ *    below VBAT_DET never resumes charging;
++ *  - transients that clear CTRL_EN behind our back.
++ *
++ * The vendor driver handles all three by re-asserting CTRL_EN every ten
++ * seconds while an input is present and by toggling it at end of charge.
++ * Do the same: clear the gates and re-assert CTRL_EN on every pass, and
++ * when an input is present but no cycle is running, re-arm with a
++ * two-stage toggle (settling delay taken as a work reschedule, so nothing
++ * blocks the workqueue).  If the battery is genuinely full the hardware
++ * comparator simply keeps the buck off and the toggle is a no-op.
++ */
++#define SMBB_ENGAGE_POLL_MS	10000
++#define SMBB_REARM_SETTLE_MS	2000
++
++static void smbb_clear_gates(struct smbb_charger *chg)
++{
++	static const struct {
++		unsigned int off, mask, val;
++	} gates[] = {
++		{ SMBB_CHG_CTRL, CTRL_ON_BAT_FORCE, 0 },
++		{ SMBB_USB_SUSP, USB_SUSP_EN, 0 },
++	};
++	unsigned int reg;
++	int i, rc;
++
++	for (i = 0; i < ARRAY_SIZE(gates); ++i) {
++		rc = regmap_read(chg->regmap, chg->addr + gates[i].off, &reg);
++		if (rc || !(reg & gates[i].mask))
++			continue;
++		regmap_update_bits(chg->regmap, chg->addr + gates[i].off,
++				   gates[i].mask, gates[i].val);
++		chg->gate_clear_count++;
++		dev_info(chg->dev, "cleared charge gate %03x (was %02x)\n",
++			 gates[i].off, reg);
++	}
++
++	/* Write-1-to-clear, so it needs a plain write, not update_bits. */
++	rc = regmap_read(chg->regmap, chg->addr + SMBB_CHG_FAILED, &reg);
++	if (!rc && (reg & CHG_FAILED_CLEAR)) {
++		regmap_write(chg->regmap, chg->addr + SMBB_CHG_FAILED,
++			     CHG_FAILED_CLEAR);
++		chg->gate_clear_count++;
++		dev_info(chg->dev, "cleared the charge-failed latch\n");
++	}
++}
++
++static void smbb_engage_work(struct work_struct *work)
++{
++	struct smbb_charger *chg = container_of(work, struct smbb_charger,
++						engage_work.work);
++	unsigned long status;
++	bool input, charging;
++	unsigned int delay = SMBB_ENGAGE_POLL_MS;
++
++	mutex_lock(&chg->statlock);
++	status = chg->status;
++	mutex_unlock(&chg->statlock);
++
++	input = status & (STATUS_USBIN_VALID | STATUS_DCIN_VALID);
++	charging = status & (STATUS_CHG_FAST | STATUS_CHG_TRKL);
++
++	if (!input) {
++		chg->rearm_stage = 0;
++		if (chg->was_charging) {
++			dev_dbg(chg->dev, "input gone, supervisor idle\n");
++			chg->was_charging = false;
++		}
++		return;	/* an insertion IRQ reschedules us */
++	}
++
++	if (charging != chg->was_charging) {
++		dev_info(chg->dev, "charge cycle %s\n",
++			 charging ? "running" : "stopped");
++		chg->was_charging = charging;
++	}
++
++	smbb_clear_gates(chg);
++
++	switch (chg->rearm_stage) {
++	case 1:
++		/* settling delay elapsed: bring CTRL_EN back up */
++		regmap_update_bits(chg->regmap, chg->addr + SMBB_CHG_CTRL,
++				   CTRL_EN, CTRL_EN);
++		chg->rearm_stage = 0;
++		chg->rearm_count++;
++		dev_dbg(chg->dev, "re-arm complete (%u total)\n",
++			chg->rearm_count);
++		break;
++	default:
++		if (charging || !(status & STATUS_BAT_PRESENT) ||
++		    !(status & STATUS_BAT_OK)) {
++			/* running, or the battery is in no state to charge */
++			regmap_update_bits(chg->regmap,
++					   chg->addr + SMBB_CHG_CTRL,
++					   CTRL_EN, CTRL_EN);
++			break;
++		}
++		/*
++		 * Input present, battery present and in range, yet no cycle:
++		 * drop CTRL_EN so the next pass raises it, clearing any
++		 * latched done/failed state in the hardware.
++		 */
++		regmap_update_bits(chg->regmap, chg->addr + SMBB_CHG_CTRL,
++				   CTRL_EN, 0);
++		chg->rearm_stage = 1;
++		delay = SMBB_REARM_SETTLE_MS;
++		break;
++	}
++
++	schedule_delayed_work(&chg->engage_work, msecs_to_jiffies(delay));
++}
++
++static void smbb_engage_kick(struct smbb_charger *chg)
++{
++	if (chg->dev)
++		mod_delayed_work(system_wq, &chg->engage_work, 0);
++}
++
+ static irqreturn_t smbb_usb_valid_handler(int irq, void *_data)
+ {
+ 	struct smbb_charger *chg = _data;
+@@ -385,6 +548,7 @@ static irqreturn_t smbb_usb_valid_handler(int irq, void *_data)
+ 	extcon_set_state_sync(chg->edev, EXTCON_USB,
+ 				chg->status & STATUS_USBIN_VALID);
+ 	power_supply_changed(chg->usb_psy);
++	smbb_engage_kick(chg);
+ 
+ 	return IRQ_HANDLED;
+ }
+@@ -396,6 +560,7 @@ static irqreturn_t smbb_dc_valid_handler(int irq, void *_data)
+ 	smbb_set_line_flag(chg, irq, STATUS_DCIN_VALID);
+ 	if (!chg->dc_disabled)
+ 		power_supply_changed(chg->dc_psy);
++	smbb_engage_kick(chg);
+ 
+ 	return IRQ_HANDLED;
+ }
+@@ -440,6 +605,12 @@ static irqreturn_t smbb_chg_done_handler(int irq, void *_data)
+ 
+ 	smbb_set_line_flag(chg, irq, STATUS_CHG_DONE);
+ 	power_supply_changed(chg->bat_psy);
++	/*
++	 * End of charge: the hardware latches "done" and will not restart a
++	 * cycle when the battery later falls below VBAT_DET.  Let the
++	 * supervisor re-arm with a CTRL_EN toggle.
++	 */
++	smbb_engage_kick(chg);
+ 
+ 	return IRQ_HANDLED;
+ }
+@@ -453,6 +624,7 @@ static irqreturn_t smbb_chg_gone_handler(int irq, void *_data)
+ 	power_supply_changed(chg->usb_psy);
+ 	if (!chg->dc_disabled)
+ 		power_supply_changed(chg->dc_psy);
++	smbb_engage_kick(chg);
+ 
+ 	return IRQ_HANDLED;
+ }
+@@ -719,6 +891,14 @@ static const struct reg_off_mask_default {
+ 	unsigned int mask;
+ 	unsigned int value;
+ 	unsigned int rev_mask;
++	/*
++	 * Write the byte unconditionally instead of read-modify-write.
++	 * Required for the SEC_ACCESS unlock (whose effect is the write
++	 * itself, not the resulting value) and for write-1-to-clear latches,
++	 * both of which regmap_update_bits() would skip when the register
++	 * already reads the target value.
++	 */
++	bool force;
+ } smbb_charger_setup[] = {
+ 	/* The bootloader is supposed to set this... make sure anyway. */
+ 	{ SMBB_MISC_BOOT_DONE, BOOT_DONE, BOOT_DONE },
+@@ -759,18 +939,117 @@ static const struct reg_off_mask_default {
+ 	/* Stop USB enumeration timer */
+ 	{ SMBB_USB_ENUM_TIMER_STOP, ENUM_TIMER_STOP, ENUM_TIMER_STOP },
+ 
+-#if 0 /* FIXME supposedly only to disable hardware ARB termination */
+-	{ SMBB_USB_SEC_ACCESS, SEC_ACCESS_MAGIC },
+-	{ SMBB_USB_REV_BST, 0xff, REV_BST_CHG_GONE },
+-#endif
++	/*
++	 * Vendor "trickle stuck" workaround: without it a cycle can stay in
++	 * trickle and never promote to fast charge.  SEC_ACCESS unlocks
++	 * exactly the write that follows it, so each protected register needs
++	 * its own unlock.
++	 */
++	{ SMBB_CHG_SEC_ACCESS, 0xff, SEC_ACCESS_MAGIC, 0, true },
++	{ SMBB_CHG_OVR0, 0xff, 0x00, 0, true },
++	{ SMBB_CHG_SEC_ACCESS, 0xff, SEC_ACCESS_MAGIC, 0, true },
++	{ SMBB_CHG_TRICKLE_CLAMP, 0xff, 0x00, 0, true },
++
++	/*
++	 * Take hardware reverse-boost/ARB termination out of the charge
++	 * path, as the vendor does at init.  This block used to be #if 0'd
++	 * out here, and had its mask and value swapped, so enabling it as
++	 * written would have cleared SEC_ACCESS instead of unlocking it.
++	 */
++	{ SMBB_USB_SEC_ACCESS, 0xff, SEC_ACCESS_MAGIC, 0, true },
++	{ SMBB_USB_REV_BST, 0xff, REV_BST_CHG_GONE, 0, true },
+ 
+ 	/* Stop USB enumeration timer, again */
+ 	{ SMBB_USB_ENUM_TIMER_STOP, ENUM_TIMER_STOP, ENUM_TIMER_STOP },
+ 
+-	/* Enable charging */
++	/*
++	 * Enable charging with a guaranteed 0->1 edge.  Dropping CTRL_EN
++	 * first matters: a single read-modify-write is skipped entirely when
++	 * the boot chain already left CTRL_EN set, so any end-of-charge state
++	 * latched in the hardware stays latched - which is why charging
++	 * engaged on some boots and not others.
++	 */
++	{ SMBB_CHG_CTRL, CTRL_EN, 0 },
+ 	{ SMBB_CHG_CTRL, CTRL_EN, CTRL_EN },
+ };
+ 
++
++/*
++ * A driver-owned diagnostic file: /sys/kernel/debug/qcom_smbb/state.
++ *
++ * It reads only the handful of registers this driver understands.  That
++ * matters on this PMIC: the generic regmap debugfs dump walks the whole
++ * address range, and reads of addresses the SPMI arbiter refuses produce a
++ * storm of pmic_arb warnings, so it must not be used here.
++ */
++static const struct {
++	const char *name;
++	unsigned int off;
++} smbb_debug_regs[] = {
++	{ "chg_ctrl",     SMBB_CHG_CTRL },
++	{ "chg_failed",   SMBB_CHG_FAILED },
++	{ "vmax",         SMBB_CHG_VMAX },
++	{ "vbat_det",     SMBB_CHG_VBAT_DET },
++	{ "ibat_max",     SMBB_CHG_IMAX },
++	{ "vin_min",      SMBB_CHG_VIN_MIN },
++	{ "ibat_term",    SMBB_CHG_IBAT_TERM_CHG },
++	{ "bat_pres_sts", SMBB_BAT_PRES_STATUS },
++	{ "bat_temp_sts", SMBB_BAT_TEMP_STATUS },
++	{ "bpd_ctrl",     SMBB_BAT_BPD_CTRL },
++	{ "btc_ctrl",     SMBB_BAT_BTC_CTRL },
++	{ "vref_thm",     SMBB_BAT_VREF_THM_CTRL },
++	{ "usb_imax",     SMBB_USB_IMAX },
++	{ "usb_susp",     SMBB_USB_SUSP },
++	{ "usb_otg_ctl",  SMBB_USB_OTG_CTL },
++};
++
++static int smbb_state_show(struct seq_file *s, void *data)
++{
++	struct smbb_charger *chg = s->private;
++	unsigned long status;
++	unsigned int val;
++	int i, rc;
++
++	mutex_lock(&chg->statlock);
++	status = chg->status;
++	mutex_unlock(&chg->statlock);
++
++	seq_printf(s, "status        0x%03lx\n", status);
++	seq_printf(s, "  usbin_valid %d\n", !!(status & STATUS_USBIN_VALID));
++	seq_printf(s, "  dcin_valid  %d\n", !!(status & STATUS_DCIN_VALID));
++	seq_printf(s, "  bat_present %d\n", !!(status & STATUS_BAT_PRESENT));
++	seq_printf(s, "  bat_temp_ok %d\n", !!(status & STATUS_BAT_OK));
++	seq_printf(s, "  chg_fast    %d\n", !!(status & STATUS_CHG_FAST));
++	seq_printf(s, "  chg_trkl    %d\n", !!(status & STATUS_CHG_TRKL));
++	seq_printf(s, "  chg_done    %d\n", !!(status & STATUS_CHG_DONE));
++	seq_printf(s, "  chg_gone    %d\n", !!(status & STATUS_CHG_GONE));
++	seq_printf(s, "supervisor    rearms=%u gate_clears=%u stage=%u\n",
++		   chg->rearm_count, chg->gate_clear_count, chg->rearm_stage);
++
++	for (i = 0; i < ARRAY_SIZE(smbb_debug_regs); ++i) {
++		rc = regmap_read(chg->regmap,
++				 chg->addr + smbb_debug_regs[i].off, &val);
++		if (rc)
++			seq_printf(s, "%-13s (read failed: %d)\n",
++				   smbb_debug_regs[i].name, rc);
++		else
++			seq_printf(s, "%-13s 0x%02x\n",
++				   smbb_debug_regs[i].name, val);
++	}
++
++	return 0;
++}
++DEFINE_SHOW_ATTRIBUTE(smbb_state);
++
++static void smbb_debugfs_init(struct smbb_charger *chg)
++{
++	if (!IS_ENABLED(CONFIG_DEBUG_FS))
++		return;
++
++	chg->debugfs = debugfs_create_dir(dev_name(chg->dev), NULL);
++	debugfs_create_file("state", 0444, chg->debugfs, chg, &smbb_state_fops);
++}
++
+ static char *smbb_bif[] = { "smbb-bif" };
+ 
+ static const struct power_supply_desc bat_psy_desc = {
+@@ -861,6 +1140,7 @@ static int smbb_charger_probe(struct platform_device *pdev)
+ 
+ 	chg->dev = &pdev->dev;
+ 	mutex_init(&chg->statlock);
++	INIT_DELAYED_WORK(&chg->engage_work, smbb_engage_work);
+ 
+ 	chg->regmap = dev_get_regmap(pdev->dev.parent, NULL);
+ 	if (!chg->regmap) {
+@@ -993,12 +1273,30 @@ static int smbb_charger_probe(struct platform_device *pdev)
+ 	 * table for why arming comparators here is unsafe.
+ 	 */
+ 
++	/*
++	 * Clear the sticky gates before the setup table enables charging:
++	 * whatever the boot chain (or a previous kernel) left behind must not
++	 * outlive our probe.
++	 */
++	smbb_clear_gates(chg);
++
+ 	for (i = 0; i < ARRAY_SIZE(smbb_charger_setup); ++i) {
+ 		const struct reg_off_mask_default *r = &smbb_charger_setup[i];
+ 
+ 		if (r->rev_mask & BIT(chg->revision))
+ 			continue;
+ 
++		if (r->force) {
++			rc = regmap_write(chg->regmap, chg->addr + r->offset,
++					  r->value);
++			if (rc) {
++				dev_err(&pdev->dev,
++					"unable to initializing charging, bailing\n");
++				return rc;
++			}
++			continue;
++		}
++
+ 		rc = regmap_update_bits(chg->regmap, chg->addr + r->offset,
+ 				r->mask, r->value);
+ 		if (rc) {
+@@ -1010,6 +1308,10 @@ static int smbb_charger_probe(struct platform_device *pdev)
+ 
+ 	platform_set_drvdata(pdev, chg);
+ 
++	smbb_debugfs_init(chg);
++	/* First supervisor pass right away: a cable may already be present. */
++	schedule_delayed_work(&chg->engage_work, msecs_to_jiffies(500));
++
+ 	return 0;
+ }
+ 
+@@ -1019,6 +1321,8 @@ static void smbb_charger_remove(struct platform_device *pdev)
+ 
+ 	chg = platform_get_drvdata(pdev);
+ 
++	cancel_delayed_work_sync(&chg->engage_work);
++	debugfs_remove_recursive(chg->debugfs);
+ 	regmap_update_bits(chg->regmap, chg->addr + SMBB_CHG_CTRL, CTRL_EN, 0);
+ }
+ 

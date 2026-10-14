@@ -1,0 +1,138 @@
+From d13f05fc92f5afd52e75383ce7def5c448aba8c7 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Mon, 12 Oct 2026 00:51:44 +0200
+Subject: [PATCH 19/26] dt-bindings: power: supply: add Qualcomm PM8941/PM8226
+ BMS
+
+Describe the BMS1 battery monitoring block of PM8941 and PM8226: an OCV
+latch and a coulomb counter over an external sense resistor, with the
+battery profile taken from monitored-battery.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ .../power/supply/qcom,pm8941-bms.yaml         | 116 ++++++++++++++++++
+ 1 file changed, 116 insertions(+)
+ create mode 100644 Documentation/devicetree/bindings/power/supply/qcom,pm8941-bms.yaml
+
+diff --git a/Documentation/devicetree/bindings/power/supply/qcom,pm8941-bms.yaml b/Documentation/devicetree/bindings/power/supply/qcom,pm8941-bms.yaml
+new file mode 100644
+index 000000000000..0a640d4b9a18
+--- /dev/null
++++ b/Documentation/devicetree/bindings/power/supply/qcom,pm8941-bms.yaml
+@@ -0,0 +1,116 @@
++# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/power/supply/qcom,pm8941-bms.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: Qualcomm Battery Monitoring System (BMS1)
++
++maintainers:
++  - Marc Lainez <marc.lainez@gmail.com>
++
++description:
++  The BMS1 block of Qualcomm PMICs such as PM8941 and PM8226 latches the
++  battery open circuit voltage (OCV) when the battery current stays low,
++  and counts charge through an external sense resistor with a coulomb
++  counter that restarts on every OCV latch. State of charge is derived
++  from the OCV through the monitored battery's OCV-to-capacity tables,
++  corrected by the counted charge.
++
++allOf:
++  - $ref: power-supply.yaml#
++
++properties:
++  compatible:
++    oneOf:
++      - items:
++          - const: qcom,pm8226-bms
++          - const: qcom,pm8941-bms
++      - const: qcom,pm8941-bms
++
++  reg:
++    minItems: 1
++    items:
++      - description: BMS1 peripheral
++      - description: IADC1_BMS peripheral, the current ADC feeding the counter
++
++  interrupts:
++    items:
++      - description: Coulomb counter threshold
++      - description: OCV for battery resistance measured
++      - description: Good OCV latched
++      - description: Charge cycle began
++      - description: OCV threshold crossed
++      - description: Software coulomb counter threshold
++      - description: Average sense voltage ready
++      - description: Sense voltage for battery resistance ready
++
++  interrupt-names:
++    items:
++      - const: cc-thr
++      - const: ocv-for-r
++      - const: good-ocv
++      - const: charge-begin
++      - const: ocv-thr
++      - const: sw-cc-thr
++      - const: vsense-avg
++      - const: vsense-for-r
++
++  shunt-resistor-micro-ohms:
++    description: Value of the battery current sense resistor.
++
++  io-channels:
++    minItems: 1
++    maxItems: 4
++
++  io-channel-names:
++    minItems: 1
++    items:
++      enum:
++        - vbat
++        - batt-therm
++        - ref-625mv
++        - ref-1250mv
++
++  monitored-battery: true
++
++required:
++  - compatible
++  - reg
++  - shunt-resistor-micro-ohms
++  - monitored-battery
++
++additionalProperties: false
++
++examples:
++  - |
++    #include <dt-bindings/interrupt-controller/irq.h>
++    battery: battery {
++      compatible = "simple-battery";
++      charge-full-design-microamp-hours = <2100000>;
++      ocv-capacity-celsius = <25>;
++      ocv-capacity-table-0 = <4322000 100>, <3828000 50>, <3000000 0>;
++    };
++
++    pmic {
++      #address-cells = <1>;
++      #size-cells = <0>;
++
++      fuel-gauge@4000 {
++        compatible = "qcom,pm8226-bms", "qcom,pm8941-bms";
++        reg = <0x4000>, <0x3800>;
++        interrupts = <0x0 0x40 0x0 IRQ_TYPE_EDGE_RISING>,
++                     <0x0 0x40 0x1 IRQ_TYPE_EDGE_RISING>,
++                     <0x0 0x40 0x2 IRQ_TYPE_EDGE_RISING>,
++                     <0x0 0x40 0x3 IRQ_TYPE_EDGE_RISING>,
++                     <0x0 0x40 0x4 IRQ_TYPE_EDGE_RISING>,
++                     <0x0 0x40 0x5 IRQ_TYPE_EDGE_RISING>,
++                     <0x0 0x40 0x6 IRQ_TYPE_EDGE_RISING>,
++                     <0x0 0x40 0x7 IRQ_TYPE_EDGE_RISING>;
++        interrupt-names = "cc-thr", "ocv-for-r", "good-ocv",
++                          "charge-begin", "ocv-thr", "sw-cc-thr",
++                          "vsense-avg", "vsense-for-r";
++        shunt-resistor-micro-ohms = <10000>;
++        monitored-battery = <&battery>;
++      };
++    };

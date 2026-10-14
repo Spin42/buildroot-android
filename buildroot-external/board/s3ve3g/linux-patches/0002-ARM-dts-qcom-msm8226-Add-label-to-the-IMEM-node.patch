@@ -1,0 +1,28 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Sun, 11 Oct 2026 22:50:50 +0200
+Subject: [PATCH 2/3] ARM: dts: qcom: msm8226: Add label to the IMEM node
+
+Boards override the reboot-mode magics of their bootloader through it.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ arch/arm/boot/dts/qcom/qcom-msm8226.dtsi | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/arm/boot/dts/qcom/qcom-msm8226.dtsi b/arch/arm/boot/dts/qcom/qcom-msm8226.dtsi
+index 9fb547080..419c989d6 100644
+--- a/arch/arm/boot/dts/qcom/qcom-msm8226.dtsi
++++ b/arch/arm/boot/dts/qcom/qcom-msm8226.dtsi
+@@ -1491,7 +1491,7 @@ smd-edge {
+ 			};
+ 		};
+ 
+-		sram@fe805000 {
++		imem: sram@fe805000 {
+ 			compatible = "qcom,msm8226-imem", "syscon", "simple-mfd";
+ 			reg = <0xfe805000 0x1000>;
+ 
+-- 
+2.43.0
+

@@ -1,0 +1,215 @@
+From 638efd2e2dfac0f09a94678c00a5e5760351efe7 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Mon, 12 Oct 2026 01:10:11 +0200
+Subject: [PATCH 25/26] power: supply: qcom_smbb: reset the input arbiter when
+ a present input is dropped
+
+After a flash and warm reboot on a host port, a Galaxy S III Neo came up
+with the cable in and VBUS inside the valid window (USB_STATUS 0x92:
+coarse detect and valid-in), yet USB_RT_STS 0x05: CHG_GONE set and
+USB_VALID clear. Nothing charged until a replug, and rebinding the
+driver did not help. The supervisor reads CHG_GONE as "no input" and
+idles, which is right for a pulled cable but not for this state.
+
+When the path status says the input is there but the real-time status
+says it is gone, and a battery is fitted, apply the vendor answer to
+CHG_GONE: run on battery for a second with charging off, then restore.
+If the input still does not qualify, toggle the input suspend. Back off
+between rounds, and expose the counters in the debugfs state file.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/power/supply/qcom_smbb.c | 131 +++++++++++++++++++++++++++++++
+ 1 file changed, 131 insertions(+)
+
+diff --git a/drivers/power/supply/qcom_smbb.c b/drivers/power/supply/qcom_smbb.c
+index 5f2942a3713a..fa8bdc069cb5 100644
+--- a/drivers/power/supply/qcom_smbb.c
++++ b/drivers/power/supply/qcom_smbb.c
+@@ -50,6 +50,10 @@
+ #define SMBB_BAT_RT_STS		0x210
+ #define BAT_RT_PRESENT		BIT(0)
+ #define BAT_RT_TEMP_OK		BIT(1)
++#define SMBB_USB_STATUS		0x309
++#define USB_STS_VALID_MASK	GENMASK(7, 6)
++#define USB_STS_VALID_IN	BIT(7)	/* 0b01 here means over-voltage */
++#define USB_STS_COARSE_DET	BIT(4)
+ #define SMBB_USB_RT_STS		0x310
+ #define USB_RT_VALID		BIT(1)
+ #define USB_RT_CHG_GONE		BIT(2)
+@@ -206,6 +210,16 @@ struct smbb_charger {
+ 	bool collapse_pending;
+ 	unsigned int rearm_delay_ms;	/* backoff between re-arm attempts */
+ 
++	/*
++	 * Input arbiter recovery, see smbb_input_stuck().  arb_stage carries
++	 * the vendor run-on-battery pulse and the input suspend toggle across
++	 * work invocations; arb_next and arb_delay_ms bound how often.
++	 */
++	unsigned int arb_stage;
++	unsigned int arb_count;
++	unsigned int arb_delay_ms;
++	unsigned long arb_next;
++
+ 	/*
+ 	 * Battery voltage, when the board provides it.  Without it the
+ 	 * supervisor cannot tell a charge path that needs prodding from a
+@@ -496,6 +510,9 @@ static void smbb_set_line_flag(struct smbb_charger *chg, int irq, int flag)
+ #define SMBB_ENGAGE_POLL_MS	10000
+ #define SMBB_REARM_SETTLE_MS	2000
+ #define SMBB_REARM_MAX_MS	300000
++#define SMBB_ARB_PULSE_MS	1000	/* vendor ARB_STOP_WORK_MS */
++#define SMBB_ARB_SETTLE_MS	2000
++#define SMBB_ARB_SUSP_MS	500
+ 
+ static void smbb_clear_gates(struct smbb_charger *chg)
+ {
+@@ -696,6 +713,102 @@ static bool smbb_battery_full(struct smbb_charger *chg)
+ 	return uv >= chg->attr[ATTR_CHG_VDET];
+ }
+ 
++/*
++ * The cable is physically there - the USB charger path sees VBUS above its
++ * coarse detector and inside the valid window - yet the real-time status
++ * reports CHG_GONE and no valid input.  This is the input arbiter having
++ * dropped the path after a collapse (seen on a Galaxy S III Neo after a
++ * flash and warm reboot on a host port: USB_STATUS 0x92, USB_RT_STS 0x05),
++ * and nothing re-qualifies it short of a replug.  The vendor driver answers
++ * CHG_GONE with a one-second run-on-battery pulse (its "ARB" workaround);
++ * do the same, then fall back to an input suspend toggle.  Only with a
++ * battery fitted: forcing run-on-battery without one cuts the supply.
++ */
++static bool smbb_input_stuck(struct smbb_charger *chg)
++{
++	unsigned int sts = 0, rt = 0;
++
++	if (!smbb_battery_present(chg) || smbb_otg_enabled(chg))
++		return false;
++
++	regmap_read(chg->regmap, chg->addr + SMBB_USB_STATUS, &sts);
++	regmap_read(chg->regmap, chg->addr + SMBB_USB_RT_STS, &rt);
++
++	return (sts & USB_STS_COARSE_DET) &&
++	       (sts & USB_STS_VALID_MASK) == USB_STS_VALID_IN &&
++	       ((rt & USB_RT_CHG_GONE) || !(rt & USB_RT_VALID));
++}
++
++/*
++ * Returns true and sets *delay when the arbiter recovery owns this pass.
++ * Stages: 1 = run-on-battery pulse in progress, 2 = pulse done, waiting for
++ * the input to qualify, 3 = input suspended.
++ */
++static bool smbb_arb_step(struct smbb_charger *chg, bool input,
++			  unsigned int *delay)
++{
++	unsigned int sts = 0, rt = 0;
++
++	switch (chg->arb_stage) {
++	case 1:
++		/* Always end the pulse, whatever the input does meanwhile */
++		regmap_update_bits(chg->regmap, chg->addr + SMBB_CHG_CTRL,
++				   CTRL_ON_BAT_FORCE, 0);
++		regmap_update_bits(chg->regmap, chg->addr + SMBB_CHG_CTRL,
++				   CTRL_EN, chg->charging_disabled ? 0 : CTRL_EN);
++		chg->arb_stage = 2;
++		chg->arb_count++;
++		*delay = SMBB_ARB_SETTLE_MS;
++		return true;
++	case 3:
++		regmap_update_bits(chg->regmap, chg->addr + SMBB_USB_SUSP,
++				   USB_SUSP_EN, 0);
++		chg->arb_stage = 0;
++		*delay = SMBB_ARB_SETTLE_MS;
++		return true;
++	}
++
++	if (input || chg->charging_disabled || !smbb_input_stuck(chg)) {
++		if (input) {
++			if (chg->arb_stage == 2)
++				dev_info(chg->dev, "input re-qualified after arbiter reset\n");
++			chg->arb_delay_ms = SMBB_ENGAGE_POLL_MS;
++			chg->arb_next = jiffies;
++		}
++		chg->arb_stage = 0;
++		return false;
++	}
++
++	if (chg->arb_stage == 2) {
++		/* The pulse did not help: suspend and resume the input */
++		regmap_update_bits(chg->regmap, chg->addr + SMBB_USB_SUSP,
++				   USB_SUSP_EN, USB_SUSP_EN);
++		chg->arb_stage = 3;
++		*delay = SMBB_ARB_SUSP_MS;
++		/* Back off before the next round */
++		chg->arb_next = jiffies + msecs_to_jiffies(chg->arb_delay_ms);
++		chg->arb_delay_ms = min(chg->arb_delay_ms * 3, SMBB_REARM_MAX_MS);
++		return true;
++	}
++
++	if (time_before(jiffies, chg->arb_next)) {
++		*delay = jiffies_to_msecs(chg->arb_next - jiffies) + 1;
++		return true;
++	}
++
++	regmap_read(chg->regmap, chg->addr + SMBB_USB_STATUS, &sts);
++	regmap_read(chg->regmap, chg->addr + SMBB_USB_RT_STS, &rt);
++	dev_info(chg->dev,
++		 "input present but not qualified (status %02x, rt %02x): resetting the input arbiter\n",
++		 sts, rt);
++	regmap_update_bits(chg->regmap, chg->addr + SMBB_CHG_CTRL, CTRL_EN, 0);
++	regmap_update_bits(chg->regmap, chg->addr + SMBB_CHG_CTRL,
++			   CTRL_ON_BAT_FORCE, CTRL_ON_BAT_FORCE);
++	chg->arb_stage = 1;
++	*delay = SMBB_ARB_PULSE_MS;
++	return true;
++}
++
+ static void smbb_engage_work(struct work_struct *work)
+ {
+ 	struct smbb_charger *chg = container_of(work, struct smbb_charger,
+@@ -723,6 +836,11 @@ static void smbb_engage_work(struct work_struct *work)
+ 		dev_info_ratelimited(chg->dev, "supply mode: %s\n", mode);
+ 	}
+ 
++	if (smbb_arb_step(chg, input, &delay)) {
++		schedule_delayed_work(&chg->engage_work, msecs_to_jiffies(delay));
++		return;
++	}
++
+ 	if (chg->charging_disabled) {
+ 		/* keep the path off; nothing here should ever enable it */
+ 		regmap_update_bits(chg->regmap, chg->addr + SMBB_CHG_CTRL,
+@@ -1470,6 +1588,9 @@ static int smbb_state_show(struct seq_file *s, void *data)
+ 	seq_printf(s, "supervisor    rearms=%u gate_clears=%u stage=%u backoff=%ums\n",
+ 		   chg->rearm_count, chg->gate_clear_count, chg->rearm_stage,
+ 		   chg->rearm_delay_ms);
++	seq_printf(s, "arbiter       resets=%u stage=%u backoff=%ums stuck=%d\n",
++		   chg->arb_count, chg->arb_stage, chg->arb_delay_ms,
++		   smbb_input_stuck(chg));
+ 
+ 	/*
+ 	 * Hardware truth, for comparison with the cached bits above: a
+@@ -1642,6 +1763,8 @@ static int smbb_charger_probe(struct platform_device *pdev)
+ 	chg->dev = &pdev->dev;
+ 	mutex_init(&chg->statlock);
+ 	INIT_DELAYED_WORK(&chg->engage_work, smbb_engage_work);
++	chg->arb_delay_ms = SMBB_ENGAGE_POLL_MS;
++	chg->arb_next = jiffies;
+ 
+ 	chg->regmap = dev_get_regmap(pdev->dev.parent, NULL);
+ 	if (!chg->regmap) {
+@@ -1912,6 +2035,14 @@ static void smbb_charger_remove(struct platform_device *pdev)
+ 	cancel_delayed_work_sync(&chg->engage_work);
+ 	debugfs_remove_recursive(chg->debugfs);
+ 
++	/* Never leave an arbiter reset half done */
++	if (chg->arb_stage == 1)
++		regmap_update_bits(chg->regmap, chg->addr + SMBB_CHG_CTRL,
++				   CTRL_ON_BAT_FORCE, 0);
++	else if (chg->arb_stage == 3)
++		regmap_update_bits(chg->regmap, chg->addr + SMBB_USB_SUSP,
++				   USB_SUSP_EN, 0);
++
+ 	/*
+ 	 * Leave the charge path armed when it is the system's supply.
+ 	 *
