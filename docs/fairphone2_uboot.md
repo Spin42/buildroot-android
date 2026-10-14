@@ -74,7 +74,8 @@ with `rauc.slot=A|B`. When no slot has attempts left, they are reset to 3.
 
 Linux does not see partitions inside a partition, so the initramfs (`board/fairphone2/rauc/initramfs-init`, built into
 `/boot` of each slot by `post-build.sh`) attaches userdata to `/dev/loop0` with partition scanning and switches to
-`/dev/loop0p2` or `/dev/loop0p3`. RAUC then manages these slots with its U-Boot backend: `fw_printenv`/`fw_setenv` reach the
+`/dev/loop0p2` or `/dev/loop0p3`. The kernel gets dm-verity and squashfs (`board/fairphone2/rauc/linux.fragment`) to
+mount `verity` bundles. RAUC then manages these slots with its U-Boot backend: `fw_printenv`/`fw_setenv` reach the
 state in `/dev/loop0p4` (`/etc/fw_env.config`). `S99rauc-mark-good` marks the booted slot good, which restores its attempts.
 
 Update:
