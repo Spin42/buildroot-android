@@ -14,9 +14,9 @@ Assisted-by: Claude:claude-opus-5-5
  board/qualcomm/fairphone-fp2/Makefile         |   3 +
  board/qualcomm/fairphone-fp2/fairphone-fp2.c  |  45 +++++++
  configs/fairphone-fp2_defconfig               |  82 +++++++++++++
- doc/board/qualcomm/fairphone-fp2.rst          |  95 +++++++++++++++
+ doc/board/qualcomm/fairphone-fp2.rst          |  96 +++++++++++++++
  doc/board/qualcomm/index.rst                  |   1 +
- 9 files changed, 386 insertions(+)
+ 9 files changed, 387 insertions(+)
  create mode 100644 arch/arm/dts/qcom-msm8974pro-fairphone-fp2-u-boot.dtsi
  create mode 100644 board/qualcomm/debug-msm8974.config
  create mode 100644 board/qualcomm/fairphone-fp2.env
@@ -364,10 +364,10 @@ index 00000000..10b16bc9
 +# CONFIG_TOOLS_MKEFICAPSULE is not set
 diff --git a/doc/board/qualcomm/fairphone-fp2.rst b/doc/board/qualcomm/fairphone-fp2.rst
 new file mode 100644
-index 00000000..a612c886
+index 00000000..e28a3266
 --- /dev/null
 +++ b/doc/board/qualcomm/fairphone-fp2.rst
-@@ -0,0 +1,95 @@
+@@ -0,0 +1,96 @@
 +.. SPDX-License-Identifier: GPL-2.0+
 +.. sectionauthor:: Marc Lainez <marc.lainez@gmail.com>
 +
@@ -433,7 +433,8 @@ index 00000000..a612c886
 +
 +Without a key pressed, U-Boot boots the first operating system it finds:
 +
-+* any standard boot method (extlinux, EFI, ...) on the eMMC partitions,
++* a ``boot.scr``, else an ``extlinux.conf``, in ``/`` or ``/boot`` of the eMMC
++  partitions (standard boot),
 +* an image with its own partition table written to the ``userdata``
 +  partition, booted with the ``boot.scr`` or the ``extlinux.conf`` of its
 +  first partition. A ``boot.scr`` can choose between A/B slots of that
