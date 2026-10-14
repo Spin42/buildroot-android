@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Marc Lainez <marc.lainez@gmail.com>
 Date: Wed, 14 Oct 2026 00:46:11 +0200
-Subject: [PATCH 22/29] gpio: qcom_pmic_gpio: support PM8941 and the pin bias
+Subject: [PATCH] gpio: qcom_pmic_gpio: support PM8941 and the pin bias
 
 Accept the 8 channel GPIO subtypes of PM8941, apply bias-pull-up/-down and
 bias-disable from pinctrl, and keep the bias of inputs instead of

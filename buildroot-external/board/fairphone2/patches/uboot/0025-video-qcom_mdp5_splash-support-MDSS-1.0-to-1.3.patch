@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Marc Lainez <marc.lainez@gmail.com>
 Date: Wed, 14 Oct 2026 00:46:12 +0200
-Subject: [PATCH 25/29] video: qcom_mdp5_splash: support MDSS 1.0 to 1.3
+Subject: [PATCH] video: qcom_mdp5_splash: support MDSS 1.0 to 1.3
 
 Pick the register layout from the MDSS version: the MDP block of MSM8974
 and APQ8084 sits at 0x100 with older CTL and pipe offsets.

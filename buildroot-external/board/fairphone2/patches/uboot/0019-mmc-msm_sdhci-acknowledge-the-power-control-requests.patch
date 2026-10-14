@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Marc Lainez <marc.lainez@gmail.com>
 Date: Wed, 14 Oct 2026 00:46:11 +0200
-Subject: [PATCH 19/29] mmc: msm_sdhci: acknowledge the power control requests
+Subject: [PATCH] mmc: msm_sdhci: acknowledge the power control requests
 
 On controllers with an MCI block, changes of the bus power and I/O voltage
 raise a power control request that software has to acknowledge, as Linux

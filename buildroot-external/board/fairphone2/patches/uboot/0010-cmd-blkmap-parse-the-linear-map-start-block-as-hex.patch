@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Marc Lainez <marc.lainez@gmail.com>
 Date: Mon, 12 Oct 2026 14:51:20 +0200
-Subject: [PATCH 10/29] cmd: blkmap: parse the linear map start block as hex
+Subject: [PATCH] cmd: blkmap: parse the linear map start block as hex
 
 Like the other block numbers of the command and as the documented
 example expects. The start block from 'part start' is hex.

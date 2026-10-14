@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Marc Lainez <marc.lainez@gmail.com>
 Date: Mon, 12 Oct 2026 14:50:57 +0200
-Subject: [PATCH 02/29] mach-snapdragon: carve out reserved memory on MSM8953
+Subject: [PATCH] mach-snapdragon: carve out reserved memory on MSM8953
 
 The memory map that the Android bootloader hands over on MSM8953, SDM450
 and SDM632 covers the no-map regions. Speculative accesses to them trip

@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Marc Lainez <marc.lainez@gmail.com>
 Date: Wed, 14 Oct 2026 00:46:11 +0200
-Subject: [PATCH 17/29] serial: add a debug UART that writes to RAM
+Subject: [PATCH] serial: add a debug UART that writes to RAM
 
 Many phones have no reachable UART. Keep the debug output, and the console
 output once it is up, in a RAM buffer that the previous bootloader can read

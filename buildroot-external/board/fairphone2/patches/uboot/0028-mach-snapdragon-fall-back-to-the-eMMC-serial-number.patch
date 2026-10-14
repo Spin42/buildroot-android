@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Marc Lainez <marc.lainez@gmail.com>
 Date: Wed, 14 Oct 2026 00:46:12 +0200
-Subject: [PATCH 28/29] mach-snapdragon: fall back to the eMMC serial number
+Subject: [PATCH] mach-snapdragon: fall back to the eMMC serial number
 
 LK passes androidboot.serialno only to Android. Use the product serial
 number of the eMMC like LK does, so fastboot reports the same serial.

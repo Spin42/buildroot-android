@@ -1,8 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Marc Lainez <marc.lainez@gmail.com>
 Date: Wed, 14 Oct 2026 06:22:54 +0200
-Subject: [PATCH 26/29] video: qcom_mdp5_splash: hand the pipe back as LK set
- it up
+Subject: [PATCH] video: qcom_mdp5_splash: hand the pipe back as LK set it up
 
 Converting a 24 bpp splash to XRGB8888 changes the format, unpack pattern
 and stride of the pipe. On MDSS 1.2 (MSM8974) the shared memory pool was

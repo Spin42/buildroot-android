@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Marc Lainez <marc.lainez@gmail.com>
 Date: Mon, 12 Oct 2026 14:51:06 +0200
-Subject: [PATCH 06/29] pinctrl: qcom: add MSM8953 TLMM driver
+Subject: [PATCH] pinctrl: qcom: add MSM8953 TLMM driver
 
 The per-pin function table is generated from the Linux driver, so every
 function can be muxed on the pins that support it.

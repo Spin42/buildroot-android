@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Marc Lainez <marc.lainez@gmail.com>
 Date: Wed, 14 Oct 2026 00:46:11 +0200
-Subject: [PATCH 20/29] spmi: msm: support the v1 PMIC arbiter
+Subject: [PATCH] spmi: msm: support the v1 PMIC arbiter
 
 The v1 arbiter (MSM8974) has no peripheral to channel table: all accesses
 go through the channel of the execution environment in the core region,

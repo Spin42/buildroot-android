@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Marc Lainez <marc.lainez@gmail.com>
 Date: Wed, 14 Oct 2026 00:46:11 +0200
-Subject: [PATCH 15/29] mach-snapdragon: support 32-bit ARMv7 SoCs
+Subject: [PATCH] mach-snapdragon: support 32-bit ARMv7 SoCs
 
 The Krait based SoCs (MSM8974, APQ8084, MSM8226, ...) run 32-bit code. LK
 boots their kernels as a zImage with an appended device tree, entered with

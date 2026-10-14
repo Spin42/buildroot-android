@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Marc Lainez <marc.lainez@gmail.com>
 Date: Wed, 14 Oct 2026 00:46:12 +0200
-Subject: [PATCH 23/29] button: gpio: skip disabled keys
+Subject: [PATCH] button: gpio: skip disabled keys
 
 Assisted-by: Claude:claude-opus-5-5
 ---

@@ -1,8 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Marc Lainez <marc.lainez@gmail.com>
 Date: Mon, 12 Oct 2026 14:51:20 +0200
-Subject: [PATCH 07/29] clk: stub: bind the RPM clock controller on SMD based
- SoCs
+Subject: [PATCH] clk: stub: bind the RPM clock controller on SMD based SoCs
 
 On SMD RPM SoCs the rpmcc node sits below an smd-edge node without a
 compatible, so it was never bound and every device using the XO clock

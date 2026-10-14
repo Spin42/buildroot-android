@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Marc Lainez <marc.lainez@gmail.com>
 Date: Mon, 12 Oct 2026 16:46:34 +0200
-Subject: [PATCH 11/29] video: add Qualcomm MDP5 boot splash framebuffer
+Subject: [PATCH] video: add Qualcomm MDP5 boot splash framebuffer
 
 Uses the framebuffer that the Android bootloader leaves on screen. The
 packed RGB888 buffer is converted to XRGB8888 for U-Boot, and since LK
