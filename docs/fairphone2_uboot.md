@@ -23,14 +23,32 @@ It reuses what LK leaves running and drives:
 - the eMMC and the microSD slot, GPT, ext2/3/4 and FAT;
 - the keys: Volume Up/Down (PM8941 GPIOs) and Power (PON);
 - USB in device mode: fastboot, mass storage (userdata only) and a serial console (CDC ACM);
+- USB in host mode, through a powered hub (the phone does not supply VBUS): USB storage and Ethernet dongles (ASIX
+  AX88772/AX88179, Realtek RTL8152/8153, SMSC95xx, MCS7830) for DHCP/TFTP;
 - reset, power off and reboot to the bootloader's fastboot mode.
 
-Boot: during the first five seconds, Volume Up opens the boot menu and Volume Down starts U-Boot fastboot. Otherwise U-Boot boots
-the first system it finds and opens the menu if there is none:
+Boot: during the first five seconds, Volume Up opens the boot menu and Volume Down starts U-Boot fastboot (only when LK lit
+a panel: without one, `headless=1` and only the boot delay on the UART remains). Otherwise U-Boot boots the first system it
+finds and opens the menu if there is none. Standard boot (`bootmeths=script extlinux pxe`) tries, in order:
 
-1. standard boot on the eMMC partitions (`boot_targets=mmc0`, `bootmeths=script extlinux`): a `boot.scr` in `/` or `/boot`;
-   `fairphone2_uboot` installs `board/fairphone2/uboot/boot.cmd` as `/boot/boot.scr` in its root filesystem;
-2. the image in userdata (`blkmap`): the `boot.scr` of its first partition, as in `fairphone2_uboot_rauc`.
+| Role | `boot_targets` |
+|---|---|
+| phone (USB device) | `mmc1 mmc0`: the microSD card, then the eMMC |
+| USB host | `usb dhcp mmc1 mmc0`: USB storage, the network (`boot.scr` over TFTP, or a PXE `extlinux` configuration), the microSD card, then the eMMC |
+
+The role comes from the USB ID line (an OTG adapter grounds it), read at boot; `usb_mode=host` or `usb_mode=device` forces
+it, e.g. on a carrier board that routes the USB to a hub without grounding ID: `setenv usb_mode host; saveenv`. Each target
+is searched for a `boot.scr` (in `/` or `/boot`), then an `extlinux.conf`; `fairphone2_uboot` installs
+`board/fairphone2/uboot/boot.cmd` as `/boot/boot.scr` in its root filesystem. On the eMMC standard boot only finds the first
+partition, so U-Boot then boots the system in userdata: the `boot.scr` of the first partition of an image written there
+(`blkmap`, as in `fairphone2_uboot_rauc`), or `/boot/boot.scr` of a bare filesystem.
+
+`saveenv` keeps the environment, in two copies, in the last 256 KiB of the `boot` partition: flashing U-Boot keeps it,
+erasing `boot` clears it. A saved environment replaces the built-in one, also after updating U-Boot: `env default -a;
+saveenv` goes back to it.
+
+U-Boot runs with the MMU off and turns off the branch prediction LK leaves enabled: on Krait it makes the SoC hang until the
+secure watchdog resets it, at points that depend on the build. A panic resets the phone.
 
 U-Boot loads the kernel, device tree and initramfs at fixed addresses in lowmem (`kernel_addr_r`, `fdt_addr_r`,
 `ramdisk_addr_r` from `0x12000000`) and boots them in place: Linux does not start when they are loaded between

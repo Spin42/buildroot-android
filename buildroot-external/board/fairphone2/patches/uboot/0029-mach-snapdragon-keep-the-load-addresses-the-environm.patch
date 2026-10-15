@@ -13,10 +13,10 @@ Assisted-by: Claude:claude-opus-5-5
  1 file changed, 20 insertions(+), 7 deletions(-)
 
 diff --git a/arch/arm/mach-snapdragon/board.c b/arch/arm/mach-snapdragon/board.c
-index a502a717..d75e8e03 100644
+index ea61069a..457903c4 100644
 --- a/arch/arm/mach-snapdragon/board.c
 +++ b/arch/arm/mach-snapdragon/board.c
-@@ -451,6 +451,22 @@ void __weak qcom_late_init(void)
+@@ -455,6 +455,22 @@ void __weak qcom_late_init(void)
  
  #define lmb_alloc(size, addr) lmb_alloc_mem(LMB_MEM_ALLOC_ANY, SZ_2M, addr, size, LMB_NONE)
  
@@ -39,7 +39,7 @@ index a502a717..d75e8e03 100644
  /* Stolen from arch/arm/mach-apple/board.c */
  int board_late_init(void)
  {
-@@ -459,11 +475,9 @@ int board_late_init(void)
+@@ -463,11 +479,9 @@ int board_late_init(void)
  	struct fdt_header *fdt_blob = (struct fdt_header *)gd->fdt_blob;
  
  	/* We need to be fairly conservative here as we support boards with just 1G of TOTAL RAM */
@@ -54,7 +54,7 @@ index a502a717..d75e8e03 100644
  	status |= !lmb_alloc(KERNEL_COMP_SIZE, &addr) ?
  		env_set_hex("kernel_comp_addr_r", addr) : 1;
  	status |= env_set_hex("kernel_comp_size", KERNEL_COMP_SIZE);
-@@ -484,8 +498,7 @@ int board_late_init(void)
+@@ -488,8 +502,7 @@ int board_late_init(void)
  		status |= env_set_hex("loadaddr", addr);
  	}
  
