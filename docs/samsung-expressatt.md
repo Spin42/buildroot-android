@@ -6,6 +6,17 @@ in `buildroot-external/board/samsung-expressatt/linux-patches/`.
 
 ## Build
 
+This development board was built with Buildroot 2026.08, commit
+`d5180309b1b66ef3b8eaccca70ad69be8e0729a1`. The repository's default submodule
+remains on its existing version for the other boards. Select the Express-tested
+version explicitly before configuring a new output directory:
+
+```sh
+git submodule update --init buildroot
+git -C buildroot fetch origin d5180309b1b66ef3b8eaccca70ad69be8e0729a1
+git -C buildroot switch --detach d5180309b1b66ef3b8eaccca70ad69be8e0729a1
+```
+
 From the repository root:
 
 ```sh
@@ -45,6 +56,19 @@ the ignored `overlay/lib/firmware/`. The private calibration and any image conta
 must remain local. The stock MDT uses legacy packed program headers and needs the audited
 kernel compatibility change; extraction alone does not establish WiFi operation. See the
 port's `dossier/wifi-firmware.md` for provenance, exact files and the loader constraint.
+
+In a standalone checkout, pass an absolute backups directory as the first argument.
+It must contain `system.img`, `persist.img` and their `SHA256SUMS`. The extractor's
+default path and the guarded reflash helper expect the original porting-kit layout
+(`ports/samsung-expressatt/buildroot-android`). The calibration projector currently
+accepts only the original development phone's verified NV identity; another phone
+needs its own reviewed calibration schema and identity before Wi-Fi can be enabled.
+No calibration files or private firmware are distributed in this repository.
+
+The corresponding Nerves system is
+[mlainez/nerves_system_samsung_expressatt](https://github.com/mlainez/nerves_system_samsung_expressatt).
+Its later CPU/memory-clock and Wi-Fi association changes are separate from this
+Buildroot scanning checkpoint.
 
 WCNSS must come from the original SYSTEM `/etc/firmware/wcnss.*`, pinned by
 `scripts/wcnss-system.sha256`. Its MDT hash begins `59d69215` and b04 is 1,808,268
