@@ -1,0 +1,35 @@
+From 46cce555a0f30691ebc3a98ea3872f8465185be8 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Tue, 13 Oct 2026 22:41:17 +0200
+Subject: [PATCH 14/17] dt-bindings: clock: qcom: rpmcc: Add MSM8960
+
+Describe the MSM8960 RPM clock controller and its PXO input.
+
+Signed-off-by: Marc Lainez <marc.lainez@gmail.com>
+---
+ Documentation/devicetree/bindings/clock/qcom,rpmcc.yaml | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/clock/qcom,rpmcc.yaml b/Documentation/devicetree/bindings/clock/qcom,rpmcc.yaml
+index ab97d4b7d..62cd47e5f 100644
+--- a/Documentation/devicetree/bindings/clock/qcom,rpmcc.yaml
++++ b/Documentation/devicetree/bindings/clock/qcom,rpmcc.yaml
+@@ -36,6 +36,7 @@ properties:
+           - qcom,rpmcc-msm8937
+           - qcom,rpmcc-msm8940
+           - qcom,rpmcc-msm8953
++          - qcom,rpmcc-msm8960
+           - qcom,rpmcc-msm8974
+           - qcom,rpmcc-msm8976
+           - qcom,rpmcc-msm8992
+@@ -75,6 +76,7 @@ allOf:
+               - qcom,rpmcc-apq8060
+               - qcom,rpmcc-ipq806x
+               - qcom,rpmcc-msm8660
++              - qcom,rpmcc-msm8960
+ 
+     then:
+       properties:
+-- 
+2.43.0
+

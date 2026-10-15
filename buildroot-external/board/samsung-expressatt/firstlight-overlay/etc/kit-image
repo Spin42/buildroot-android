@@ -1,0 +1,15 @@
+# /etc/kit-image: identity and behaviour of this test image (read by kit-common.sh and usb-gadget.sh)
+KIT_PORT=samsung-expressatt
+# firstlight | rescue | system
+KIT_IMAGE=firstlight
+# device.serial: the USB serial number of the gadget, so the host matches the right phone
+KIT_SERIAL=08a571a0
+# Mode reached by `reboot-mode` to get back to flashing: device.return_mode of port.yaml,
+# bootloader (fastboot) or download (Samsung)
+KIT_RETURN_MODE=download
+# Seconds before an image without USB returns to the flash mode on its own (0: never)
+KIT_FAIL_REBOOT=60
+# Fixed USB network MAC addresses (phone side, host side), so the host reconnects at once after a
+# reboot; change them when two phones run kit images on the same computer
+KIT_DEV_ADDR=02:4b:49:54:00:01
+KIT_HOST_ADDR=02:4b:49:54:00:02

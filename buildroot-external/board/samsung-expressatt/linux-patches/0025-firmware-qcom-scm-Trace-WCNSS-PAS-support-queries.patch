@@ -1,0 +1,82 @@
+From 1d628dff082f32ccadd6afccfa927bec6778837d Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Tue, 13 Oct 2026 23:22:38 +0200
+Subject: [PATCH] firmware: qcom: scm: Trace WCNSS PAS support queries
+
+Record the raw availability and PAS support responses for WCNSS to
+distinguish a positive result from a negative 32-bit service status.
+Report transport errors without reading an uninitialized response.
+
+Preserve the existing nonzero-to-boolean decisions and leave all other
+peripherals and call-availability users silent. No command arguments
+or metadata addresses are logged.
+
+Signed-off-by: Marc Lainez <marc.lainez@gmail.com>
+---
+ drivers/firmware/qcom/qcom_scm.c | 29 +++++++++++++++++++++++++----
+ 1 file changed, 25 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/firmware/qcom/qcom_scm.c b/drivers/firmware/qcom/qcom_scm.c
+index a3b79daa0..3c8b18f8d 100644
+--- a/drivers/firmware/qcom/qcom_scm.c
++++ b/drivers/firmware/qcom/qcom_scm.c
+@@ -352,8 +352,8 @@ static int qcom_scm_call_atomic(struct device *dev,
+ 	}
+ }
+ 
+-static bool __qcom_scm_is_call_available(struct device *dev, u32 svc_id,
+-					 u32 cmd_id)
++static bool qcom_scm_query_call_available(struct device *dev, u32 svc_id,
++					  u32 cmd_id, bool trace_wcnss)
+ {
+ 	int ret;
+ 	struct qcom_scm_desc desc = {
+@@ -379,10 +379,23 @@ static bool __qcom_scm_is_call_available(struct device *dev, u32 svc_id,
+ 	}
+ 
+ 	ret = qcom_scm_call(dev, &desc, &res);
++	if (trace_wcnss) {
++		if (ret)
++			dev_info(dev, "PAS 6 availability transport: %d\n", ret);
++		else
++			dev_info(dev, "PAS 6 availability response: %#llx\n",
++				 res.result[0]);
++	}
+ 
+ 	return ret ? false : !!res.result[0];
+ }
+ 
++static bool __qcom_scm_is_call_available(struct device *dev, u32 svc_id,
++					 u32 cmd_id)
++{
++	return qcom_scm_query_call_available(dev, svc_id, cmd_id, false);
++}
++
+ static int qcom_scm_set_boot_addr(void *entry, const u8 *cpu_bits)
+ {
+ 	int cpu;
+@@ -1096,11 +1109,19 @@ bool qcom_scm_pas_supported(u32 pas_id)
+ 	};
+ 	struct qcom_scm_res res;
+ 
+-	if (!__qcom_scm_is_call_available(__scm->dev, QCOM_SCM_SVC_PIL,
+-					  QCOM_SCM_PIL_PAS_IS_SUPPORTED))
++	if (!qcom_scm_query_call_available(__scm->dev, QCOM_SCM_SVC_PIL,
++					   QCOM_SCM_PIL_PAS_IS_SUPPORTED,
++					   pas_id == 6))
+ 		return false;
+ 
+ 	ret = qcom_scm_call(__scm->dev, &desc, &res);
++	if (pas_id == 6) {
++		if (ret)
++			dev_info(__scm->dev, "PAS 6 support transport: %d\n", ret);
++		else
++			dev_info(__scm->dev, "PAS 6 support response: %#llx\n",
++				 res.result[0]);
++	}
+ 
+ 	return ret ? false : !!res.result[0];
+ }
+-- 
+2.43.0
+

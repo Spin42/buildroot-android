@@ -1,0 +1,32 @@
+From 5ac5ae399e5360582521a6277426b29cb970e1f5 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Tue, 13 Oct 2026 21:34:12 +0200
+Subject: [PATCH] power: supply: max17040: Preserve firmware node for suppliers
+
+Pass the client firmware node when registering the battery supply.
+The power supply core needs it to resolve power-supplies references;
+without it, status cannot be obtained from a described charger supplier.
+
+Signed-off-by: Marc Lainez <marc.lainez@gmail.com>
+---
+ drivers/power/supply/max17040_battery.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/power/supply/max17040_battery.c b/drivers/power/supply/max17040_battery.c
+index 41744191a..3286330f1 100644
+--- a/drivers/power/supply/max17040_battery.c
++++ b/drivers/power/supply/max17040_battery.c
+@@ -474,7 +474,9 @@ static const struct power_supply_desc max17040_battery_desc = {
+ static int max17040_probe(struct i2c_client *client)
+ {
+ 	const struct i2c_device_id *id = i2c_client_get_device_id(client);
+-	struct power_supply_config psy_cfg = {};
++	struct power_supply_config psy_cfg = {
++		.fwnode = dev_fwnode(&client->dev),
++	};
+ 	struct max17040_chip *chip;
+ 	enum chip_id chip_id;
+ 	bool enable_irq = false;
+-- 
+2.43.0
+

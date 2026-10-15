@@ -1,0 +1,93 @@
+From 755f26a301bc4c216dec7f98505e48265215b019 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Tue, 13 Oct 2026 22:45:34 +0200
+Subject: [PATCH 19/19] remoteproc: qcom: wcnss: Bound IRIS status polling
+
+A stuck IRIS reset or XO configuration status bit currently spins
+forever during remoteproc start. Use a one-second deadline for each
+transition and return through the existing IRIS and regulator cleanup
+before asking PAS to release reset.
+
+Signed-off-by: Marc Lainez <marc.lainez@gmail.com>
+---
+ drivers/remoteproc/qcom_wcnss.c | 27 +++++++++++++++++++++------
+ 1 file changed, 21 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/remoteproc/qcom_wcnss.c b/drivers/remoteproc/qcom_wcnss.c
+index b47edf8dc..eb2cb2a30 100644
+--- a/drivers/remoteproc/qcom_wcnss.c
++++ b/drivers/remoteproc/qcom_wcnss.c
+@@ -14,6 +14,7 @@
+ #include <linux/kernel.h>
+ #include <linux/module.h>
+ #include <linux/io.h>
++#include <linux/iopoll.h>
+ #include <linux/of.h>
+ #include <linux/of_reserved_mem.h>
+ #include <linux/platform_device.h>
+@@ -184,9 +185,11 @@ static void wcnss_indicate_nv_download(struct qcom_wcnss *wcnss)
+ 	writel(val, wcnss->spare_out);
+ }
+ 
+-static void wcnss_configure_iris(struct qcom_wcnss *wcnss)
++static int wcnss_configure_iris(struct qcom_wcnss *wcnss)
+ {
++	u32 status;
+ 	u32 val;
++	int ret;
+ 
+ 	/* Clear PMU cfg register */
+ 	writel(0, wcnss->pmu_cfg);
+@@ -207,8 +210,12 @@ static void wcnss_configure_iris(struct qcom_wcnss *wcnss)
+ 	writel(val, wcnss->pmu_cfg);
+ 
+ 	/* Wait for PMU.iris_reg_reset_sts */
+-	while (readl(wcnss->pmu_cfg) & WCNSS_PMU_IRIS_RESET_STS)
+-		cpu_relax();
++	ret = readl_poll_timeout(wcnss->pmu_cfg, status,
++				 !(status & WCNSS_PMU_IRIS_RESET_STS), 10, 1000000);
++	if (ret) {
++		dev_err(wcnss->dev, "IRIS reset timed out\n");
++		return ret;
++	}
+ 
+ 	/* Clear IRIS reset */
+ 	val &= ~WCNSS_PMU_IRIS_RESET;
+@@ -219,8 +226,12 @@ static void wcnss_configure_iris(struct qcom_wcnss *wcnss)
+ 	writel(val, wcnss->pmu_cfg);
+ 
+ 	/* Wait for XO configuration to finish */
+-	while (readl(wcnss->pmu_cfg) & WCNSS_PMU_IRIS_XO_CFG_STS)
+-		cpu_relax();
++	ret = readl_poll_timeout(wcnss->pmu_cfg, status,
++				 !(status & WCNSS_PMU_IRIS_XO_CFG_STS), 10, 1000000);
++	if (ret) {
++		dev_err(wcnss->dev, "IRIS XO configuration timed out\n");
++		return ret;
++	}
+ 
+ 	/* Stop IRIS XO configuration */
+ 	val &= ~WCNSS_PMU_GC_BUS_MUX_SEL_TOP;
+@@ -229,6 +240,8 @@ static void wcnss_configure_iris(struct qcom_wcnss *wcnss)
+ 
+ 	/* Add some delay for XO to settle */
+ 	msleep(20);
++
++	return 0;
+ }
+ 
+ static int wcnss_start(struct rproc *rproc)
+@@ -261,7 +274,9 @@ static int wcnss_start(struct rproc *rproc)
+ 		goto disable_regulators;
+ 
+ 	wcnss_indicate_nv_download(wcnss);
+-	wcnss_configure_iris(wcnss);
++	ret = wcnss_configure_iris(wcnss);
++	if (ret)
++		goto disable_iris;
+ 
+ 	ret = qcom_scm_pas_auth_and_reset(WCNSS_PAS_ID);
+ 	if (ret) {
+-- 
+2.43.0
+

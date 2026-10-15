@@ -1,0 +1,31 @@
+#!/bin/sh
+. /usr/lib/kit-common.sh
+
+case "$1" in
+    start)
+        mkdir -p /sys/kernel/config /sys/fs/pstore
+        if ! mount -t configfs configfs /sys/kernel/config; then
+            kit_say "cannot mount configfs for USB gadget"
+            exit 1
+        fi
+        if ! mount -t pstore pstore /sys/fs/pstore; then
+            kit_say "pstore is unavailable"
+        fi
+        kit_watchdog
+        charger_mode=/sys/class/power_supply/bq24157-0/mode
+        if [ -w "$charger_mode" ]; then
+            if ! printf 'host\n' > "$charger_mode"; then
+                kit_say "cannot select USB host charging mode"
+            fi
+        else
+            kit_say "charger mode is unavailable"
+        fi
+        kit_start_usb
+        ;;
+    stop)
+        ;;
+    *)
+        echo "Usage: $0 {start|stop}" >&2
+        exit 1
+        ;;
+esac

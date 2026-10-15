@@ -1,0 +1,50 @@
+From b447f708397c1ea62268a04a5136ec6cd98804e8 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Tue, 13 Oct 2026 23:33:09 +0200
+Subject: [PATCH] firmware: qcom: scm: Use one response word for legacy WCNSS
+ init
+
+The old PAS init helper used one little-endian status word. Generic
+legacy descriptors instead reserve three response words. Restore the
+40-byte request layout for PAS6 init with two arguments so an older
+endpoint can be tested against its original response contract.
+
+Use the selected count consistently for allocation, DMA synchronization
+and copying. Zero unused result slots after successful transport. Other
+legacy calls retain three words; metadata and authentication are intact.
+
+Signed-off-by: Marc Lainez <marc.lainez@gmail.com>
+---
+ drivers/firmware/qcom/qcom_scm-legacy.c | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/firmware/qcom/qcom_scm-legacy.c b/drivers/firmware/qcom/qcom_scm-legacy.c
+index e5cc73e1e..71ebd2dec 100644
+--- a/drivers/firmware/qcom/qcom_scm-legacy.c
++++ b/drivers/firmware/qcom/qcom_scm-legacy.c
+@@ -142,7 +142,11 @@ int scm_legacy_call(struct device *dev, const struct qcom_scm_desc *desc,
+ 	struct arm_smccc_args smc = {0};
+ 	struct arm_smccc_res smc_res;
+ 	const size_t cmd_len = arglen * sizeof(__le32);
+-	const size_t resp_len = MAX_QCOM_SCM_RETS * sizeof(__le32);
++	const unsigned int num_rets = desc->svc == QCOM_SCM_SVC_PIL &&
++				      desc->cmd == QCOM_SCM_PIL_PAS_INIT_IMAGE &&
++				      arglen == 2 && desc->args[0] == 6 ?
++				      1 : MAX_QCOM_SCM_RETS;
++	const size_t resp_len = num_rets * sizeof(__le32);
+ 	size_t alloc_len = sizeof(*cmd) + cmd_len + sizeof(*rsp) + resp_len;
+ 	dma_addr_t cmd_phys;
+ 	__le32 *arg_buf;
+@@ -197,7 +201,8 @@ int scm_legacy_call(struct device *dev, const struct qcom_scm_desc *desc,
+ 
+ 	if (res) {
+ 		res_buf = scm_legacy_get_response_buffer(rsp);
+-		for (i = 0; i < MAX_QCOM_SCM_RETS; i++)
++		memset(res, 0, sizeof(*res));
++		for (i = 0; i < num_rets; i++)
+ 			res->result[i] = le32_to_cpu(res_buf[i]);
+ 	}
+ out:
+-- 
+2.43.0
+

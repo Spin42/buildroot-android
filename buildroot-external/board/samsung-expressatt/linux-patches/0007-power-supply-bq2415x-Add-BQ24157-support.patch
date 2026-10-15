@@ -1,0 +1,88 @@
+From 54040c6f3f31300c23594fd9927f34b4f6bb9b2a Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Tue, 13 Oct 2026 21:31:15 +0200
+Subject: [PATCH 7/8] power: supply: bq2415x: Add BQ24157 support
+
+Recognize BQ24157 at address 0x6a with part number 2 and apply its
+revision decoding. The compatible distinguishes it from BQ24157S.
+
+Initialize its supported registers explicitly without asserting RESET.
+The hardware reset also resets the special register, including LOW_CHG,
+which this driver does not configure. Preserve that state and the safety
+limits while programming the requested supported charging parameters.
+
+Signed-off-by: Marc Lainez <marc.lainez@gmail.com>
+---
+ drivers/power/supply/bq2415x_charger.c | 14 ++++++++++++--
+ 1 file changed, 12 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/power/supply/bq2415x_charger.c b/drivers/power/supply/bq2415x_charger.c
+index 9f801717b..29d17eb45 100644
+--- a/drivers/power/supply/bq2415x_charger.c
++++ b/drivers/power/supply/bq2415x_charger.c
+@@ -135,6 +135,7 @@ enum bq2415x_chip {
+ 	BQ24155,
+ 	BQ24156,
+ 	BQ24156A,
++	BQ24157,
+ 	BQ24157S,
+ 	BQ24158,
+ };
+@@ -151,6 +152,7 @@ static char *bq2415x_chip_name[] = {
+ 	"bq24155",
+ 	"bq24156",
+ 	"bq24156a",
++	"bq24157",
+ 	"bq24157s",
+ 	"bq24158",
+ };
+@@ -440,7 +442,7 @@ static enum bq2415x_chip bq2415x_detect_chip(struct bq2415x_device *bq)
+ 				return bq->chip;
+ 			return BQ24156;
+ 		case 2:
+-			if (bq->chip == BQ24157S)
++			if (bq->chip == BQ24157 || bq->chip == BQ24157S)
+ 				return bq->chip;
+ 			return BQ24158;
+ 		default:
+@@ -474,6 +476,7 @@ static int bq2415x_detect_revision(struct bq2415x_device *bq)
+ 	case BQ24153A:
+ 	case BQ24156:
+ 	case BQ24156A:
++	case BQ24157:
+ 	case BQ24157S:
+ 	case BQ24158:
+ 		if (ret == 3)
+@@ -510,7 +513,12 @@ static int bq2415x_get_vender_code(struct bq2415x_device *bq)
+ /* reset all chip registers to default state */
+ static void bq2415x_reset_chip(struct bq2415x_device *bq)
+ {
+-	bq2415x_i2c_write(bq, BQ2415X_REG_CURRENT, BQ2415X_RESET_CURRENT);
++	u8 current_reg = BQ2415X_RESET_CURRENT;
++
++	if (bq->chip == BQ24157)
++		current_reg &= ~BQ2415X_MASK_RESET;
++
++	bq2415x_i2c_write(bq, BQ2415X_REG_CURRENT, current_reg);
+ 	bq2415x_i2c_write(bq, BQ2415X_REG_VOLTAGE, BQ2415X_RESET_VOLTAGE);
+ 	bq2415x_i2c_write(bq, BQ2415X_REG_CONTROL, BQ2415X_RESET_CONTROL);
+ 	bq2415x_i2c_write(bq, BQ2415X_REG_STATUS, BQ2415X_RESET_STATUS);
+@@ -1749,6 +1757,7 @@ static const struct i2c_device_id bq2415x_i2c_id_table[] = {
+ 	{ .name = "bq24155", .driver_data = BQ24155 },
+ 	{ .name = "bq24156", .driver_data = BQ24156 },
+ 	{ .name = "bq24156a", .driver_data = BQ24156A },
++	{ .name = "bq24157", .driver_data = BQ24157 },
+ 	{ .name = "bq24157s", .driver_data = BQ24157S },
+ 	{ .name = "bq24158", .driver_data = BQ24158 },
+ 	{ }
+@@ -1787,6 +1796,7 @@ static const struct of_device_id bq2415x_of_match_table[] = {
+ 	{ .compatible = "ti,bq24155" },
+ 	{ .compatible = "ti,bq24156" },
+ 	{ .compatible = "ti,bq24156a" },
++	{ .compatible = "ti,bq24157" },
+ 	{ .compatible = "ti,bq24157s" },
+ 	{ .compatible = "ti,bq24158" },
+ 	{},
+-- 
+2.43.0
+

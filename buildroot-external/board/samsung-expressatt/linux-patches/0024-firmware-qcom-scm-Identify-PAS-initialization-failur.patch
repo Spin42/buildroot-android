@@ -1,0 +1,76 @@
+From dcd24c15464ba286c956a8ba59ec0a1dfca67f1c Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Tue, 13 Oct 2026 23:16:30 +0200
+Subject: [PATCH] firmware: qcom: scm: Identify PAS initialization failures
+
+PAS initialization can return the same error for clock voting, SCM
+transport and a completed secure-service response. Report each failing
+stage without changing error propagation or cleanup.
+
+For legacy PAS initialization, also report the raw SMC status before
+errno translation. Read the response only after successful transport;
+never log metadata, physical addresses or command arguments.
+
+Signed-off-by: Marc Lainez <marc.lainez@gmail.com>
+---
+ drivers/firmware/qcom/qcom_scm-legacy.c |  7 ++++++-
+ drivers/firmware/qcom/qcom_scm.c        | 16 ++++++++++++++--
+ 2 files changed, 20 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/firmware/qcom/qcom_scm-legacy.c b/drivers/firmware/qcom/qcom_scm-legacy.c
+index 029e6d117..e5cc73e1e 100644
+--- a/drivers/firmware/qcom/qcom_scm-legacy.c
++++ b/drivers/firmware/qcom/qcom_scm-legacy.c
+@@ -175,8 +175,13 @@ int scm_legacy_call(struct device *dev, const struct qcom_scm_desc *desc,
+ 
+ 	mutex_lock(&qcom_scm_lock);
+ 	__scm_legacy_do(&smc, &smc_res);
+-	if (smc_res.a0)
++	if (smc_res.a0) {
++		if (desc->svc == QCOM_SCM_SVC_PIL &&
++		    desc->cmd == QCOM_SCM_PIL_PAS_INIT_IMAGE)
++			dev_err(dev, "legacy SCM svc %#x cmd %#x failed: a0=%#lx\n",
++				desc->svc, desc->cmd, smc_res.a0);
+ 		ret = qcom_scm_remap_error(smc_res.a0);
++	}
+ 	mutex_unlock(&qcom_scm_lock);
+ 	if (ret)
+ 		goto out;
+diff --git a/drivers/firmware/qcom/qcom_scm.c b/drivers/firmware/qcom/qcom_scm.c
+index 26bf87247..a3b79daa0 100644
+--- a/drivers/firmware/qcom/qcom_scm.c
++++ b/drivers/firmware/qcom/qcom_scm.c
+@@ -617,16 +617,28 @@ static int __qcom_scm_pas_init_image(u32 pas_id, dma_addr_t mdata_phys,
+ 	int ret;
+ 
+ 	ret = qcom_scm_clk_enable();
+-	if (ret)
++	if (ret) {
++		dev_err(__scm->dev, "PAS %u init clock enable failed: %d\n",
++			pas_id, ret);
+ 		return ret;
++	}
+ 
+ 	ret = qcom_scm_bw_enable();
+-	if (ret)
++	if (ret) {
++		dev_err(__scm->dev, "PAS %u init bandwidth enable failed: %d\n",
++			pas_id, ret);
+ 		goto disable_clk;
++	}
+ 
+ 	desc.args[1] = mdata_phys;
+ 
+ 	ret = qcom_scm_call(__scm->dev, &desc, res);
++	if (ret)
++		dev_err(__scm->dev, "PAS %u init transport failed: %d\n",
++			pas_id, ret);
++	else if (res->result[0])
++		dev_err(__scm->dev, "PAS %u init response: %#llx\n",
++			pas_id, res->result[0]);
+ 	qcom_scm_bw_disable();
+ 
+ disable_clk:
+-- 
+2.43.0
+

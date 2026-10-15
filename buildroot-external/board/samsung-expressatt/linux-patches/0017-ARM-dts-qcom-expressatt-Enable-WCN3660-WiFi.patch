@@ -1,0 +1,84 @@
+From aa99f0a7430a704de1018f688ceb77bc910b698e Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Tue, 13 Oct 2026 22:41:18 +0200
+Subject: [PATCH 17/17] ARM: dts: qcom: expressatt: Enable WCN3660 WiFi
+
+Describe the vendor WLAN pins and PM8921 supplies, and reserve the
+fixed physical range required by the stock RIVA firmware. Correct the
+LVS2 input to S1, matching the vendor regulator table and the WCN3660
+digital supply voltage. Retain the standard WCNSS firmware names and do
+not enable Bluetooth or modem remote processors.
+
+Signed-off-by: Marc Lainez <marc.lainez@gmail.com>
+---
+ .../qcom/qcom-msm8960-samsung-expressatt.dts  | 33 ++++++++++++++++++-
+ 1 file changed, 32 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm/boot/dts/qcom/qcom-msm8960-samsung-expressatt.dts b/arch/arm/boot/dts/qcom/qcom-msm8960-samsung-expressatt.dts
+index faf82dbbd..002031f66 100644
+--- a/arch/arm/boot/dts/qcom/qcom-msm8960-samsung-expressatt.dts
++++ b/arch/arm/boot/dts/qcom/qcom-msm8960-samsung-expressatt.dts
+@@ -24,6 +24,13 @@ chosen {
+ 		stdout-path = "serial0:115200n8";
+ 	};
+ 
++	reserved-memory {
++		wcnss_mem: wcnss@8f200000 {
++			reg = <0x8f200000 0x500000>;
++			no-map;
++		};
++	};
++
+ 	battery_i2c: i2c-battery {
+ 		compatible = "i2c-gpio";
+ 		sda-gpios = <&tlmm 24 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN)>;
+@@ -126,6 +133,23 @@ &gsbi5_serial {
+ 	status = "okay";
+ };
+ 
++&riva {
++	memory-region = <&wcnss_mem>;
++	pinctrl-names = "default";
++	pinctrl-0 = <&wcnss_default>;
++	vddcx-supply = <&pm8921_s3>;
++	vddmx-supply = <&pm8921_l24>;
++	vddpx-supply = <&pm8921_s4>;
++	status = "okay";
++
++	iris {
++		vddxo-supply = <&pm8921_l4>;
++		vddrfa-supply = <&pm8921_s2>;
++		vddpa-supply = <&pm8921_l10>;
++		vdddig-supply = <&pm8921_lvs2>;
++	};
++};
++
+ &sdcc1 {
+ 	vmmc-supply = <&pm8921_l5>;
+ 	status = "okay";
+@@ -175,6 +199,13 @@ touchscreen@4a {
+ };
+ 
+ &tlmm {
++	wcnss_default: wcnss-default-state {
++		pins = "gpio84", "gpio85", "gpio86", "gpio87", "gpio88";
++		function = "wlan";
++		drive-strength = <6>;
++		bias-pull-down;
++	};
++
+ 	battery_i2c_default: battery-i2c-default-state {
+ 		pins = "gpio24", "gpio25";
+ 		function = "gpio";
+@@ -270,7 +301,7 @@ &rpm {
+ 	regulators {
+ 		compatible = "qcom,rpm-pm8921-regulators";
+ 		vin_lvs1_3_6-supply = <&pm8921_s4>;
+-		vin_lvs2-supply = <&pm8921_s4>;
++		vin_lvs2-supply = <&pm8921_s1>;
+ 		vin_lvs4_5_7-supply = <&pm8921_s4>;
+ 		vdd_ncp-supply = <&pm8921_l6>;
+ 		vdd_l1_l2_l12_l18-supply = <&pm8921_s4>;
+-- 
+2.43.0
+

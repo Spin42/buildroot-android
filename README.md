@@ -6,6 +6,7 @@ This repository supports the following devices so far:
 - Nexus 7 (grouper E1565)
 - Lenovo Tab3 7 Essential (TB3-710F, MediaTek MT8127)
 - Samsung Galaxy S III Neo (GT-I9301I, s3ve3g, Qualcomm MSM8228): first light and a rescue initramfs
+- Samsung Galaxy Express (SGH-I437, expressatt, Qualcomm MSM8960): persistent Linux, USB networking, charging and Wi-Fi scanning; see [the board guide](./docs/samsung-expressatt.md).
 
 ## Fairphone 2
 

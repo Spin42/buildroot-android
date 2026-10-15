@@ -1,0 +1,72 @@
+From ecd6455c261277c8e5e0ad08f700dbe7a2b5c217 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Wed, 14 Oct 2026 00:47:44 +0200
+Subject: [PATCH 31/33] dt-bindings: soc: qcom: wcnss: Describe legacy RIVA
+ WLAN control
+
+Legacy RIVA firmware exposes WLAN_CTRL without a separate WCNSS_CTRL
+service. Describe this interface explicitly so the WLAN child can own
+the channel and upload NV data using its HAL protocol.
+
+Signed-off-by: Marc Lainez <marc.lainez@gmail.com>
+---
+ .../bindings/soc/qcom/qcom,wcnss.yaml         | 26 ++++++++++++++++---
+ 1 file changed, 23 insertions(+), 3 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/soc/qcom/qcom,wcnss.yaml b/Documentation/devicetree/bindings/soc/qcom/qcom,wcnss.yaml
+index 4fcae6bed..7578e1cad 100644
+--- a/Documentation/devicetree/bindings/soc/qcom/qcom,wcnss.yaml
++++ b/Documentation/devicetree/bindings/soc/qcom/qcom,wcnss.yaml
+@@ -12,11 +12,15 @@ maintainers:
+ 
+ description:
+   The Qualcomm WCNSS hardware consists of control block and a BT, WiFi and FM
+-  radio block, all using SMD as command channels.
++  radio block, all using SMD as command channels. Legacy RIVA firmware exposes
++  WLAN_CTRL without a separate WCNSS_CTRL service. With qcom,riva-wlan-ctrl,
++  the WiFi child owns WLAN_CTRL and uploads NV data through the WLAN protocol.
+ 
+ properties:
+   compatible:
+-    const: qcom,wcnss
++    enum:
++      - qcom,wcnss
++      - qcom,riva-wlan-ctrl
+ 
+   firmware-name:
+     $ref: /schemas/types.yaml#/definitions/string
+@@ -34,7 +38,9 @@ properties:
+ 
+   qcom,smd-channels:
+     $ref: /schemas/types.yaml#/definitions/string
+-    const: WCNSS_CTRL
++    enum:
++      - WCNSS_CTRL
++      - WLAN_CTRL
+     description:
+       Standard SMD property specifying the SMD channel used for communication
+       with the WiFi firmware.
+@@ -96,6 +102,20 @@ required:
+   - qcom,mmio
+   - qcom,smd-channels
+ 
++allOf:
++  - if:
++      properties:
++        compatible:
++          const: qcom,riva-wlan-ctrl
++    then:
++      properties:
++        qcom,smd-channels:
++          const: WLAN_CTRL
++    else:
++      properties:
++        qcom,smd-channels:
++          const: WCNSS_CTRL
++
+ additionalProperties: false
+ 
+ examples:
+-- 
+2.43.0
+

@@ -1,0 +1,35 @@
+From df28a5c4b6085c6e3237c65c26c9593e0b27e196 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Tue, 13 Oct 2026 23:10:50 +0200
+Subject: [PATCH] dt-bindings: usb: chipidea: Accommodate four common clocks
+
+The Qualcomm controller can have interface, core, full-speed and bus
+clocks. Raise the shared schema limit to match that variant; the
+controller-specific schemas retain their more precise constraints.
+
+Signed-off-by: Marc Lainez <marc.lainez@gmail.com>
+---
+ .../devicetree/bindings/usb/chipidea,usb2-common.yaml         | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/usb/chipidea,usb2-common.yaml b/Documentation/devicetree/bindings/usb/chipidea,usb2-common.yaml
+index e6a5e79df..aea65239d 100644
+--- a/Documentation/devicetree/bindings/usb/chipidea,usb2-common.yaml
++++ b/Documentation/devicetree/bindings/usb/chipidea,usb2-common.yaml
+@@ -20,11 +20,11 @@ properties:
+ 
+   clocks:
+     minItems: 1
+-    maxItems: 3
++    maxItems: 4
+ 
+   clock-names:
+     minItems: 1
+-    maxItems: 3
++    maxItems: 4
+ 
+   dr_mode: true
+ 
+-- 
+2.43.0
+

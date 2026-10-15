@@ -1,0 +1,32 @@
+From 959831c76de5703e5af1c326cf7fc3912b54df63 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Tue, 13 Oct 2026 23:24:12 +0200
+Subject: [PATCH] firmware: qcom: scm: Log WCNSS metadata DMA placement
+
+Report the allocated DMA address and byte count for PAS6 metadata so
+legacy secure-world addressability can be compared with the old kernel.
+Do not print metadata contents or change allocation and cache policy.
+
+Signed-off-by: Marc Lainez <marc.lainez@gmail.com>
+---
+ drivers/firmware/qcom/qcom_scm.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/drivers/firmware/qcom/qcom_scm.c b/drivers/firmware/qcom/qcom_scm.c
+index 3c8b18f8d..e91d600e8 100644
+--- a/drivers/firmware/qcom/qcom_scm.c
++++ b/drivers/firmware/qcom/qcom_scm.c
+@@ -729,6 +729,10 @@ int qcom_scm_pas_init_image(u32 pas_id, const void *metadata, size_t size,
+ 	if (!mdata_buf)
+ 		return -ENOMEM;
+ 
++	if (pas_id == 6)
++		dev_info(__scm->dev, "PAS 6 metadata DMA address: %pad size: %zu\n",
++			 &mdata_phys, size);
++
+ 	memcpy(mdata_buf, metadata, size);
+ 
+ 	ret = __qcom_scm_pas_init_image(pas_id, mdata_phys, &res);
+-- 
+2.43.0
+

@@ -1,0 +1,53 @@
+From 61e5b57692f17d3f3ff954bcc6727b785df0958d Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Tue, 13 Oct 2026 21:58:56 +0200
+Subject: [PATCH 12/13] power: supply: bq2415x: Honor termination policy at
+ probe
+
+Read the optional ti,disable-charge-termination firmware property
+before configuring the charger. Keep termination disabled when requested
+while still programming the charge and termination current limits.
+
+Use the same stored policy when defaults are reapplied. Platforms without
+the property retain the existing termination-enabled behavior.
+
+Signed-off-by: Marc Lainez <marc.lainez@gmail.com>
+---
+ drivers/power/supply/bq2415x_charger.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/power/supply/bq2415x_charger.c b/drivers/power/supply/bq2415x_charger.c
+index 249d42a8c..d74a82460 100644
+--- a/drivers/power/supply/bq2415x_charger.c
++++ b/drivers/power/supply/bq2415x_charger.c
+@@ -174,6 +174,7 @@ struct bq2415x_device {
+ 	int autotimer;	/* 1 - if driver automatically reset timer, 0 - not */
+ 	int automode;	/* 1 - enabled, 0 - disabled; -1 - not supported */
+ 	int charge_status;
++	bool disable_charge_termination;
+ 	int id;
+ };
+ 
+@@ -718,7 +719,8 @@ static int bq2415x_set_defaults(struct bq2415x_device *bq)
+ 	if (bq->init_data.resistor_sense > 0) {
+ 		bq2415x_set_default_value(bq, charge_current);
+ 		bq2415x_set_default_value(bq, termination_current);
+-		bq2415x_exec_command(bq, BQ2415X_CHARGE_TERMINATION_ENABLE);
++		if (!bq->disable_charge_termination)
++			bq2415x_exec_command(bq, BQ2415X_CHARGE_TERMINATION_ENABLE);
+ 	}
+ 
+ 	bq2415x_exec_command(bq, BQ2415X_CHARGER_ENABLE);
+@@ -1650,6 +1652,9 @@ static int bq2415x_probe(struct i2c_client *client)
+ 		memcpy(&bq->init_data, pdata, sizeof(bq->init_data));
+ 	}
+ 
++	bq->disable_charge_termination = device_property_read_bool(bq->dev,
++						"ti,disable-charge-termination");
++
+ 	bq2415x_reset_chip(bq);
+ 
+ 	ret = bq2415x_power_supply_init(bq);
+-- 
+2.43.0
+

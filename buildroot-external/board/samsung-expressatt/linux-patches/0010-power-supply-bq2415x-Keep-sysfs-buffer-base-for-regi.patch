@@ -1,0 +1,58 @@
+From 8c775a02a399ca4a23735df5af007ea3eb7743d2 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Tue, 13 Oct 2026 21:49:13 +0200
+Subject: [PATCH] power: supply: bq2415x: Keep sysfs buffer base for registers
+
+The registers attribute passes an interior buffer pointer to sysfs_emit
+for every line after the first. sysfs_emit rejects non-page-aligned
+buffers, emits a warning and omits the remaining register values.
+
+Pass the original buffer and accumulated offset to sysfs_emit_at for
+both successful register reads and error lines.
+
+Signed-off-by: Marc Lainez <marc.lainez@gmail.com>
+---
+ drivers/power/supply/bq2415x_charger.c | 16 ++++++++--------
+ 1 file changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/power/supply/bq2415x_charger.c b/drivers/power/supply/bq2415x_charger.c
+index 29d17eb45..249d42a8c 100644
+--- a/drivers/power/supply/bq2415x_charger.c
++++ b/drivers/power/supply/bq2415x_charger.c
+@@ -1284,13 +1284,13 @@ static ssize_t bq2415x_sysfs_set_registers(struct device *dev,
+ /* print value of chip register, format: 'register=value' */
+ static ssize_t bq2415x_sysfs_print_reg(struct bq2415x_device *bq,
+ 				       u8 reg,
+-				       char *buf)
++				       char *buf, int at)
+ {
+ 	int ret = bq2415x_i2c_read(bq, reg);
+ 
+ 	if (ret < 0)
+-		return sysfs_emit(buf, "%#.2x=error %d\n", reg, ret);
+-	return sysfs_emit(buf, "%#.2x=%#.2x\n", reg, ret);
++		return sysfs_emit_at(buf, at, "%#.2x=error %d\n", reg, ret);
++	return sysfs_emit_at(buf, at, "%#.2x=%#.2x\n", reg, ret);
+ }
+ 
+ /* show all raw values of chip register, format per line: 'register=value' */
+@@ -1302,11 +1302,11 @@ static ssize_t bq2415x_sysfs_show_registers(struct device *dev,
+ 	struct bq2415x_device *bq = power_supply_get_drvdata(psy);
+ 	ssize_t ret = 0;
+ 
+-	ret += bq2415x_sysfs_print_reg(bq, BQ2415X_REG_STATUS, buf+ret);
+-	ret += bq2415x_sysfs_print_reg(bq, BQ2415X_REG_CONTROL, buf+ret);
+-	ret += bq2415x_sysfs_print_reg(bq, BQ2415X_REG_VOLTAGE, buf+ret);
+-	ret += bq2415x_sysfs_print_reg(bq, BQ2415X_REG_VENDER, buf+ret);
+-	ret += bq2415x_sysfs_print_reg(bq, BQ2415X_REG_CURRENT, buf+ret);
++	ret += bq2415x_sysfs_print_reg(bq, BQ2415X_REG_STATUS, buf, ret);
++	ret += bq2415x_sysfs_print_reg(bq, BQ2415X_REG_CONTROL, buf, ret);
++	ret += bq2415x_sysfs_print_reg(bq, BQ2415X_REG_VOLTAGE, buf, ret);
++	ret += bq2415x_sysfs_print_reg(bq, BQ2415X_REG_VENDER, buf, ret);
++	ret += bq2415x_sysfs_print_reg(bq, BQ2415X_REG_CURRENT, buf, ret);
+ 	return ret;
+ }
+ 
+-- 
+2.43.0
+
