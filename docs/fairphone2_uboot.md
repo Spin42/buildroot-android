@@ -85,6 +85,35 @@ When the USB port is a host (OTG adapter or carrier board hub), fastboot also ru
 netfastboot` at the U-Boot prompt (`usb start`, `dhcp`, `fastboot tcp`), then `fastboot -s tcp:<board address> flash
 userdata ...` from the computer. Kernels and device trees can also be tried without flashing with `tftpboot` and `bootz`.
 
+`fastboot tcp` is slow (under 0.5 MB/s), so a full image is better written by the network flasher in
+`board/fairphone2/netflash`: a small initramfs that U-Boot boots over TFTP, which receives an image over TCP and writes
+it to userdata. Build it from an output directory into the TFTP server's directory:
+
+```
+board/fairphone2/netflash/mkrescue.sh output /srv/tftp
+```
+
+Then at the U-Boot prompt (`serverip` is the TFTP server; `tftpblocksize`/`tftpwindowsize` need a server with RFC 7440
+window support and can be left out otherwise):
+
+```
+usb start; dhcp; setenv serverip <server>; setenv tftpblocksize 1468; setenv tftpwindowsize 16
+tftpboot ${kernel_addr_r} zImage; tftpboot ${fdt_addr_r} netflash.dtb; tftpboot ${ramdisk_addr_r} netflash.cpio.gz
+setenv bootargs console=ttyMSM0,115200 rdinit=/init panic=10 flash.verify=1 flash.reboot=1
+bootz ${kernel_addr_r} ${ramdisk_addr_r}:${filesize} ${fdt_addr_r}
+```
+
+and send the image from the computer to the address the flasher prints, on the port for its format:
+
+```
+lzop -1 -c output/images/sdcard.img | nc -N <board> 5002      # 5000 raw, 5001 gzip, 5002 lzop
+```
+
+LZO is the fastest: it shrinks what crosses the 100 Mbit link and is cheap to decompress, where gzip is limited by the
+CPU. A 419 MB image takes 21 s, against 45 s raw, 38 s gzip and 24.5 s for USB fastboot in phone mode. `flash.verify=1` prints the MD5 of what was written, `flash.reboot=1`
+reboots into the new system once it is written, and any connection to port 5009 reboots the board. The flasher's
+messages go to the kernel log, and a shell runs on the serial console.
+
 Like the lk2nd setup, the system brings up USB networking: the phone is `10.0.42.1` and gives the computer an address,
 `ssh root@10.0.42.1` (password `root`).
 

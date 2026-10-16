@@ -1,0 +1,73 @@
+#!/bin/sh
+# Network flasher: receive an image over TCP and write it to a block device.
+# The port selects the format: 5000 raw, 5001 gzip, 5002 lzop.
+# Kernel arguments: flash.dev=<device> (default /dev/mmcblk0p20),
+# flash.verify=1 to print the MD5 of what was written. Messages go to the
+# kernel log, so they reach the console and pstore.
+exec >/dev/kmsg 2>&1
+echo "netflash: init started"
+/bin/busybox --install -s /bin
+mount -t proc proc /proc
+mount -t sysfs sys /sys
+mount -t devtmpfs dev /dev
+
+DEV=/dev/mmcblk0p20
+VERIFY=
+REBOOT=
+for a in $(cat /proc/cmdline); do
+	case "$a" in
+	flash.dev=*) DEV=${a#flash.dev=} ;;
+	flash.verify=1) VERIFY=1 ;;
+	flash.reboot=1) REBOOT=1 ;;
+	esac
+done
+
+# A shell on the serial console, restarted when it exits. Keeping the port
+# open also enables its receiver, which magic SysRq over a break needs.
+(while :; do setsid getty -n -l /bin/sh -L 115200 ttyMSM0 vt100; sleep 1; done) &
+
+# Any connection to port 5009 reboots the board.
+(netrecv 5009 - >/dev/null; echo "netflash: reboot requested"; sync; reboot -f) &
+
+# The USB charger supplies VBUS to the hub. Drivers built into the kernel
+# have no module here.
+echo "netflash: loading the USB charger and Ethernet drivers"
+for m in qcom_smbb mii usbnet smsc95xx; do
+	[ -e /lib/modules/$m.ko ] && insmod /lib/modules/$m.ko
+done
+
+n=0
+while [ ! -e /sys/class/net/eth0 ] && [ $n -lt 30 ]; do sleep 1; n=$((n + 1)); done
+ip link set eth0 up
+udhcpc -i eth0 -q -t 10 -s /udhcpc.script
+IP=$(ip -4 -o addr show eth0 | awk '{print $4}' | cut -d/ -f1)
+while [ ! -b "$DEV" ]; do echo "netflash: waiting for $DEV"; sleep 1; done
+
+# serve <port> <format>: receive, decompress, write, report
+serve() {
+	while :; do
+		t0=$(cut -d' ' -f1 /proc/uptime)
+		case "$2" in
+		raw) netrecv "$1" "$DEV" 2>/tmp/rx.$1 ;;
+		gzip) netrecv "$1" - | gunzip -c | netrecv - "$DEV" 2>/tmp/rx.$1 ;;
+		lzop) netrecv "$1" - | unlzop -c | netrecv - "$DEV" 2>/tmp/rx.$1 ;;
+		esac
+		t1=$(cut -d' ' -f1 /proc/uptime)
+		bytes=$(grep -o '^[0-9]* bytes' /tmp/rx.$1 | cut -d' ' -f1)
+		echo "netflash: $2 wrote ${bytes:-0} bytes in $(awk "BEGIN { print $t1 - $t0 }") s"
+		if [ -n "$VERIFY" ] && [ -n "$bytes" ] && [ "$bytes" -gt 0 ]; then
+			echo "netflash: md5 $(head -c "$bytes" "$DEV" | md5sum | cut -d' ' -f1)"
+		fi
+		if [ -n "$REBOOT" ] && [ -n "$bytes" ] && [ "$bytes" -gt 0 ]; then
+			echo "netflash: rebooting into the new system"
+			sync
+			reboot -f
+		fi
+		echo "netflash: ready on $IP:$1 ($2) for $DEV"
+	done
+}
+
+serve 5001 gzip &
+serve 5002 lzop &
+echo "netflash: ready on $IP:5000 (raw), 5001 (gzip), 5002 (lzop) for $DEV"
+serve 5000 raw
