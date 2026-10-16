@@ -5,18 +5,20 @@ Subject: [PATCH] board: qualcomm: add Fairphone 2
 
 U-Boot is chainloaded by the stock LK or lk2nd from the boot partition and takes over the display, eMMC, keys and USB they leave set up. Like lk2nd, it gives the OS device tree the compatible of the panel fitted, which the generic Fairphone 2 panel node lacks.
 
+Standard boot tries the microSD card, then the eMMC; as USB host (ID grounded, or usb_mode=host) it first tries USB storage and the network. The environment is saved at the end of the boot partition, after the U-Boot image.
+
 Assisted-by: Claude:claude-opus-5-5
 ---
- .../qcom-msm8974pro-fairphone-fp2-u-boot.dtsi |  34 +++++
+ .../qcom-msm8974pro-fairphone-fp2-u-boot.dtsi |  42 +++++
  board/qualcomm/MAINTAINERS                    |  11 ++
- board/qualcomm/debug-msm8974.config           |   8 ++
- board/qualcomm/fairphone-fp2.env              | 125 ++++++++++++++++++
+ board/qualcomm/debug-msm8974.config           |   8 +
+ board/qualcomm/fairphone-fp2.env              | 146 ++++++++++++++++++
  board/qualcomm/fairphone-fp2/Makefile         |   3 +
- board/qualcomm/fairphone-fp2/fairphone-fp2.c  |  85 ++++++++++++
- configs/fairphone-fp2_defconfig               |  90 +++++++++++++
- doc/board/qualcomm/fairphone-fp2.rst          | 109 +++++++++++++++
+ board/qualcomm/fairphone-fp2/fairphone-fp2.c  | 110 +++++++++++++
+ configs/fairphone-fp2_defconfig               |  97 ++++++++++++
+ doc/board/qualcomm/fairphone-fp2.rst          | 120 ++++++++++++++
  doc/board/qualcomm/index.rst                  |   1 +
- 9 files changed, 466 insertions(+)
+ 9 files changed, 538 insertions(+)
  create mode 100644 arch/arm/dts/qcom-msm8974pro-fairphone-fp2-u-boot.dtsi
  create mode 100644 board/qualcomm/debug-msm8974.config
  create mode 100644 board/qualcomm/fairphone-fp2.env
@@ -27,10 +29,10 @@ Assisted-by: Claude:claude-opus-5-5
 
 diff --git a/arch/arm/dts/qcom-msm8974pro-fairphone-fp2-u-boot.dtsi b/arch/arm/dts/qcom-msm8974pro-fairphone-fp2-u-boot.dtsi
 new file mode 100644
-index 00000000..a02bddb4
+index 00000000..6057ba95
 --- /dev/null
 +++ b/arch/arm/dts/qcom-msm8974pro-fairphone-fp2-u-boot.dtsi
-@@ -0,0 +1,34 @@
+@@ -0,0 +1,42 @@
 +// SPDX-License-Identifier: GPL-2.0
 +
 +#include <dt-bindings/arm/qcom,ids.h>
@@ -49,6 +51,14 @@ index 00000000..a02bddb4
 +		      <QCOM_ID_MSM8974PRO_AA 0x10000>,
 +		      <QCOM_ID_MSM8974PRO_AB 0x10000>;
 +	qcom,board-id = <QCOM_BOARD_ID_MTP 0>;
++
++	/*
++	 * The environment, two copies, fills the end of the boot partition,
++	 * after the U-Boot image: flashing U-Boot leaves it, erasing boot clears it.
++	 */
++	config {
++		u-boot,mmc-env-partition = "boot";
++	};
 +};
 +
 +/* No camera key on production phones: the line reads as pressed */
@@ -103,10 +113,10 @@ index 00000000..1ac28754
 +CONFIG_DEBUG_UART_CLOCK=0
 diff --git a/board/qualcomm/fairphone-fp2.env b/board/qualcomm/fairphone-fp2.env
 new file mode 100644
-index 00000000..eabd9ddc
+index 00000000..420cae39
 --- /dev/null
 +++ b/board/qualcomm/fairphone-fp2.env
-@@ -0,0 +1,125 @@
+@@ -0,0 +1,146 @@
 +# Fairphone 2
 +#
 +# The console is on the display (over the boot splash left by LK), on the
@@ -129,14 +139,35 @@ index 00000000..eabd9ddc
 +fdt_high=0xffffffff
 +initrd_high=0xffffffff
 +
-+# Standard boot: a boot.scr, else an extlinux.conf, on the eMMC partitions
-+boot_targets=mmc0
-+bootmeths=script extlinux
++# Standard boot: a boot.scr, else an extlinux.conf, on the microSD card,
++# then on the eMMC. A phone acting as USB host (an OTG adapter grounds the
++# ID line, or usb_mode=host) first tries USB storage, then the network
++# (boot.scr or PXE extlinux over TFTP). usb_mode=device ignores the ID line.
++boot_targets_phone=mmc1 mmc0
++boot_targets_host=usb dhcp mmc1 mmc0
++bootmeths=script extlinux pxe
++boot_script_dhcp=boot.scr
++usb_mode=auto
++select_targets=setenv boot_targets "${boot_targets_phone}"; \
++	if test "${usb_mode}" = host; then \
++		setenv boot_targets "${boot_targets_host}"; \
++	elif test "${usb_mode}" = auto && test -n "${usb_id_host}"; then \
++		setenv boot_targets "${boot_targets_host}"; \
++	fi
 +
 +fastboot=fastboot usb 0
 +
 +# USB Ethernet dongle (ASIX, RTL8152/8153, SMSC95xx, MCS7830) on a powered
 +# hub: "usb start", then e.g. "dhcp" and "tftpboot ${kernel_addr_r} zImage".
++# Without a server, a network boot attempt gives up within seconds.
++autoload=no
++netretry=no
++tftptimeout=1000
++tftptimeoutcountmax=3
++
++# Fastboot over the network, through the Ethernet dongle, e.g. when the USB
++# port is a host: "fastboot -s tcp:<board address> flash userdata ..."
++netfastboot=usb start && dhcp && fastboot tcp
 +
 +# Reboot into the fastboot mode of LK (restart reason in IMEM)
 +lk_fastboot=mw.l 0xfe80565c 0x77665500; reset
@@ -203,15 +234,15 @@ index 00000000..eabd9ddc
 +	fi; \
 +	sysboot mmc 0:${ud_part} any ${scriptaddr} /extlinux/extlinux.conf
 +
-+boot_os=bootflow scan -b; run boot_userdata
++boot_os=run select_targets; bootflow scan -b; run boot_userdata
 +
 +# Expose only userdata, never the whole eMMC with the bootloaders, as a USB
 +# disk. Ejecting it on the host or any key, Power included, ends it.
-+ums_mode=run map_userdata && \
++ums_mode=usb stop; run map_userdata && \
 +	echo "USB disk: userdata. Eject it or press any key to leave"; \
 +	ums 0 blkmap ${ud_dev}
 +
-+fastboot_mode=echo "USB fastboot. Press any key to leave"; run fastboot
++fastboot_mode=usb stop; echo "USB fastboot. Press any key to leave"; run fastboot
 +
 +# From the USB serial console: hand USB over to another function, then
 +# show the boot menu.
@@ -243,10 +274,10 @@ index 00000000..d41fe478
 +obj-y := fairphone-fp2.o
 diff --git a/board/qualcomm/fairphone-fp2/fairphone-fp2.c b/board/qualcomm/fairphone-fp2/fairphone-fp2.c
 new file mode 100644
-index 00000000..024f9f25
+index 00000000..f87ead1e
 --- /dev/null
 +++ b/board/qualcomm/fairphone-fp2/fairphone-fp2.c
-@@ -0,0 +1,85 @@
+@@ -0,0 +1,110 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/*
 + * Fairphone 2
@@ -262,6 +293,7 @@ index 00000000..024f9f25
 +#include <asm/io.h>
 +#include <linux/bitops.h>
 +#include <linux/libfdt.h>
++#include <power/pmic.h>
 +
 +/* MMCC: power domain and bus clock of the display subsystem */
 +#define MMCC_MDSS_GDSCR		0xfd8c2304
@@ -296,11 +328,35 @@ index 00000000..024f9f25
 +		device_unbind(dev);
 +}
 +
-+/* Without a display, the environment skips the key menu meant for the screen */
++/* PM8941 MISC: real time state of the USB ID line, high while floating */
++#define PM8941_MISC_INT_RT_STS	0x910
++#define USB_ID_RT_STS		BIT(0)
++
++/* An OTG adapter grounds the USB ID line: the phone is the USB host */
++static bool fp2_usb_id_grounded(void)
++{
++	struct udevice *pmic;
++	int val;
++
++	if (uclass_get_device_by_name(UCLASS_PMIC, "pm8941@0", &pmic))
++		return false;
++
++	val = pmic_reg_read(pmic, PM8941_MISC_INT_RT_STS);
++
++	return val >= 0 && !(val & USB_ID_RT_STS);
++}
++
++/*
++ * Variables describing this boot only, which a saved environment must not
++ * carry over: without a display, the environment skips the key menu meant
++ * for the screen; the USB role decides the boot order; the userdata block
++ * map is created again.
++ */
 +void qcom_late_init(void)
 +{
-+	if (!fp2_display_on())
-+		env_set("headless", "1");
++	env_set("headless", fp2_display_on() ? NULL : "1");
++	env_set("usb_id_host", fp2_usb_id_grounded() ? "1" : NULL);
++	env_set("ud_dev", NULL);
 +}
 +
 +/*
@@ -334,10 +390,10 @@ index 00000000..024f9f25
 +}
 diff --git a/configs/fairphone-fp2_defconfig b/configs/fairphone-fp2_defconfig
 new file mode 100644
-index 00000000..a7b78994
+index 00000000..db7cb00c
 --- /dev/null
 +++ b/configs/fairphone-fp2_defconfig
-@@ -0,0 +1,90 @@
+@@ -0,0 +1,97 @@
 +CONFIG_ARM=y
 +CONFIG_SYS_BOARD="fairphone-fp2"
 +CONFIG_SYS_CONFIG_NAME="qcom"
@@ -348,6 +404,8 @@ index 00000000..a7b78994
 +CONFIG_NR_DRAM_BANKS=8
 +CONFIG_HAS_CUSTOM_SYS_INIT_SP_ADDR=y
 +CONFIG_CUSTOM_SYS_INIT_SP_ADDR=0x00400000
++CONFIG_ENV_SIZE=0x20000
++CONFIG_ENV_OFFSET=0x0
 +CONFIG_DEFAULT_DEVICE_TREE="qcom/qcom-msm8974pro-fairphone-fp2"
 +CONFIG_SYS_LOAD_ADDR=0x10000000
 +CONFIG_SNAPDRAGON_ARMV7=y
@@ -380,8 +438,12 @@ index 00000000..a7b78994
 +CONFIG_CMD_LOG=y
 +CONFIG_PARTITION_TYPE_GUID=y
 +CONFIG_OF_UPSTREAM_BUILD_VENDOR=y
++CONFIG_ENV_IS_IN_MMC=y
++CONFIG_ENV_REDUNDANT=y
++CONFIG_ENV_MMC_USE_DT=y
 +CONFIG_ENV_USE_DEFAULT_ENV_TEXT_FILE=y
 +CONFIG_ENV_DEFAULT_ENV_TEXT_FILE="board/qualcomm/fairphone-fp2.env"
++CONFIG_PROT_TCP=y
 +CONFIG_NET_RANDOM_ETHADDR=y
 +CONFIG_BLKMAP=y
 +CONFIG_BUTTON_REMAP_PHONE_KEYS=y
@@ -390,6 +452,8 @@ index 00000000..a7b78994
 +CONFIG_CLK_STUB=y
 +CONFIG_CLK_QCOM_MSM8974=y
 +CONFIG_USB_FUNCTION_FASTBOOT=y
++CONFIG_UDP_FUNCTION_FASTBOOT=y
++CONFIG_TCP_FUNCTION_FASTBOOT=y
 +CONFIG_FASTBOOT_BUF_ADDR=0x40000000
 +CONFIG_FASTBOOT_BUF_SIZE=0x20000000
 +CONFIG_FASTBOOT_FLASH=y
@@ -426,14 +490,13 @@ index 00000000..a7b78994
 +CONFIG_VIDEO_FONT_16X32=y
 +CONFIG_SYS_WHITE_ON_BLACK=y
 +CONFIG_VIDEO_QCOM_MDP5_SPLASH=y
-+CONFIG_PANIC_HANG=y
 +# CONFIG_TOOLS_MKEFICAPSULE is not set
 diff --git a/doc/board/qualcomm/fairphone-fp2.rst b/doc/board/qualcomm/fairphone-fp2.rst
 new file mode 100644
-index 00000000..26d87057
+index 00000000..dbd8dd31
 --- /dev/null
 +++ b/doc/board/qualcomm/fairphone-fp2.rst
-@@ -0,0 +1,109 @@
+@@ -0,0 +1,120 @@
 +.. SPDX-License-Identifier: GPL-2.0+
 +.. sectionauthor:: Marc Lainez <marc.lainez@gmail.com>
 +
@@ -504,14 +567,25 @@ index 00000000..26d87057
 +MCS7830) is found by ``usb start``, then ``dhcp`` and ``tftpboot`` can be
 +used, e.g. ``tftpboot ${kernel_addr_r} zImage``.
 +
++``saveenv`` stores the environment, in two copies, at the end of the
++``boot`` partition, after the U-Boot image. Flashing U-Boot keeps it,
++erasing ``boot`` clears it. A saved environment replaces the built-in one,
++also after an update of U-Boot: ``env default -a; saveenv`` goes back to the
++built-in one.
++
 +On a board without a panel LK leaves the display subsystem off: U-Boot then
 +leaves it alone, sets ``headless=1`` and skips the screen and key menu, only
 +the boot delay remains on the UART.
 +
 +Without a key pressed, U-Boot boots the first operating system it finds:
 +
-+* standard boot (a ``boot.scr``, else an ``extlinux.conf``) on the first
-+  partition of the eMMC, the only one it scans as none is marked bootable,
++* standard boot (a ``boot.scr``, else an ``extlinux.conf``) on the microSD
++  card, then on the first partition of the eMMC, the only one it scans as
++  none is marked bootable. When the phone is the USB host, standard boot
++  first tries USB storage, then the network (a ``boot.scr`` over TFTP, or a
++  PXE ``extlinux`` configuration). The USB ID line, grounded by an OTG
++  adapter, gives the role; ``usb_mode=host`` or ``usb_mode=device`` forces
++  it, e.g. on a carrier board that does not ground ID,
 +* an image with its own partition table written to the ``userdata``
 +  partition, booted with the ``boot.scr`` or the ``extlinux.conf`` of its
 +  first partition. A ``boot.scr`` can choose between A/B slots of that

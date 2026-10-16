@@ -23,14 +23,32 @@ It reuses what LK leaves running and drives:
 - the eMMC and the microSD slot, GPT, ext2/3/4 and FAT;
 - the keys: Volume Up/Down (PM8941 GPIOs) and Power (PON);
 - USB in device mode: fastboot, mass storage (userdata only) and a serial console (CDC ACM);
+- USB in host mode, through a powered hub (the phone does not supply VBUS): USB storage and Ethernet dongles (ASIX
+  AX88772/AX88179, Realtek RTL8152/8153, SMSC95xx, MCS7830) for DHCP/TFTP;
 - reset, power off and reboot to the bootloader's fastboot mode.
 
-Boot: during the first five seconds, Volume Up opens the boot menu and Volume Down starts U-Boot fastboot. Otherwise U-Boot boots
-the first system it finds and opens the menu if there is none:
+Boot: during the first five seconds, Volume Up opens the boot menu and Volume Down starts U-Boot fastboot (only when LK lit
+a panel: without one, `headless=1` and only the boot delay on the UART remains). Otherwise U-Boot boots the first system it
+finds and opens the menu if there is none. Standard boot (`bootmeths=script extlinux pxe`) tries, in order:
 
-1. standard boot on the eMMC partitions (`boot_targets=mmc0`, `bootmeths=script extlinux`): a `boot.scr` in `/` or `/boot`;
-   `fairphone2_uboot` installs `board/fairphone2/uboot/boot.cmd` as `/boot/boot.scr` in its root filesystem;
-2. the image in userdata (`blkmap`): the `boot.scr` of its first partition, as in `fairphone2_uboot_rauc`.
+| Role | `boot_targets` |
+|---|---|
+| phone (USB device) | `mmc1 mmc0`: the microSD card, then the eMMC |
+| USB host | `usb dhcp mmc1 mmc0`: USB storage, the network (`boot.scr` over TFTP, or a PXE `extlinux` configuration), the microSD card, then the eMMC |
+
+The role comes from the USB ID line (an OTG adapter grounds it), read at boot; `usb_mode=host` or `usb_mode=device` forces
+it, e.g. on a carrier board that routes the USB to a hub without grounding ID: `setenv usb_mode host; saveenv`. Each target
+is searched for a `boot.scr` (in `/` or `/boot`), then an `extlinux.conf`; `fairphone2_uboot` installs
+`board/fairphone2/uboot/boot.cmd` as `/boot/boot.scr` in its root filesystem. On the eMMC standard boot only finds the first
+partition, so U-Boot then boots the system in userdata: the `boot.scr` of the first partition of an image written there
+(`blkmap`, as in `fairphone2_uboot_rauc`), or `/boot/boot.scr` of a bare filesystem.
+
+`saveenv` keeps the environment, in two copies, in the last 256 KiB of the `boot` partition: flashing U-Boot keeps it,
+erasing `boot` clears it. A saved environment replaces the built-in one, also after updating U-Boot: `env default -a;
+saveenv` goes back to it.
+
+U-Boot runs with the MMU off and turns off the branch prediction LK leaves enabled: on Krait it makes the SoC hang until the
+secure watchdog resets it, at points that depend on the build. A panic resets the phone.
 
 U-Boot loads the kernel, device tree and initramfs at fixed addresses in lowmem (`kernel_addr_r`, `fdt_addr_r`,
 `ramdisk_addr_r` from `0x12000000`) and boots them in place: Linux does not start when they are loaded between
@@ -62,6 +80,39 @@ fastboot -s <serial> flash boot output/images/u-boot-fp2.img           # then in
 ```
 
 U-Boot reports the same fastboot serial as LK (the eMMC serial number).
+
+When the USB port is a host (OTG adapter or carrier board hub), fastboot also runs over a USB Ethernet dongle: `run
+netfastboot` at the U-Boot prompt (`usb start`, `dhcp`, `fastboot tcp`), then `fastboot -s tcp:<board address> flash
+userdata ...` from the computer. Kernels and device trees can also be tried without flashing with `tftpboot` and `bootz`.
+
+`fastboot tcp` is slow (under 0.5 MB/s), so a full image is better written by the network flasher in
+`board/fairphone2/netflash`: a small initramfs that U-Boot boots over TFTP, which receives an image over TCP and writes
+it to userdata. Build it from an output directory into the TFTP server's directory:
+
+```
+board/fairphone2/netflash/mkrescue.sh output /srv/tftp
+```
+
+Then at the U-Boot prompt (`serverip` is the TFTP server; `tftpblocksize`/`tftpwindowsize` need a server with RFC 7440
+window support and can be left out otherwise):
+
+```
+usb start; dhcp; setenv serverip <server>; setenv tftpblocksize 1468; setenv tftpwindowsize 16
+tftpboot ${kernel_addr_r} zImage; tftpboot ${fdt_addr_r} netflash.dtb; tftpboot ${ramdisk_addr_r} netflash.cpio.gz
+setenv bootargs console=ttyMSM0,115200 rdinit=/init panic=10 flash.verify=1 flash.reboot=1
+bootz ${kernel_addr_r} ${ramdisk_addr_r}:${filesize} ${fdt_addr_r}
+```
+
+and send the image from the computer to the address the flasher prints, on the port for its format:
+
+```
+lzop -1 -c output/images/sdcard.img | nc -N <board> 5002      # 5000 raw, 5001 gzip, 5002 lzop
+```
+
+LZO is the fastest: it shrinks what crosses the 100 Mbit link and is cheap to decompress, where gzip is limited by the
+CPU. A 419 MB image takes 21 s, against 45 s raw, 38 s gzip and 24.5 s for USB fastboot in phone mode. `flash.verify=1` prints the MD5 of what was written, `flash.reboot=1`
+reboots into the new system once it is written, and any connection to port 5009 reboots the board. The flasher's
+messages go to the kernel log, and a shell runs on the serial console.
 
 Like the lk2nd setup, the system brings up USB networking: the phone is `10.0.42.1` and gives the computer an address,
 `ssh root@10.0.42.1` (password `root`).

@@ -1,0 +1,9 @@
+#!/bin/sh
+# Minimal udhcpc hook: configure the address and the default route.
+case "$1" in
+bound|renew)
+	ip addr flush dev "$interface"
+	ip addr add "$ip/${mask:-24}" dev "$interface"
+	[ -n "$router" ] && ip route add default via "${router%% *}" dev "$interface"
+	;;
+esac

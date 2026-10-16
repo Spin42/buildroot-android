@@ -12,20 +12,24 @@ points at the appended device tree, keep r2 for board_fdt_blob_setup() and
 keep the arm64 only parts (PSCI, Linux Image header, page table) out of
 32-bit builds.
 
+LK leaves branch prediction enabled with the MMU off. On Krait this hangs
+the SoC until the secure watchdog resets it, at points that move with the
+code layout, so turn it off on entry.
+
 Assisted-by: Claude:claude-opus-5-5
 ---
- arch/arm/Kconfig                              | 10 +++++-----
- arch/arm/mach-snapdragon/Kconfig              | 10 ++++++++++
- arch/arm/mach-snapdragon/Makefile             |  3 ++-
- arch/arm/mach-snapdragon/armv7.S              | 19 +++++++++++++++++++
- arch/arm/mach-snapdragon/board.c              | 11 +++++++++--
+ arch/arm/Kconfig                              | 10 +++---
+ arch/arm/mach-snapdragon/Kconfig              | 10 ++++++
+ arch/arm/mach-snapdragon/Makefile             |  3 +-
+ arch/arm/mach-snapdragon/armv7.S              | 33 +++++++++++++++++++
+ arch/arm/mach-snapdragon/board.c              | 11 +++++--
  arch/arm/mach-snapdragon/dram.c               |  2 +-
- arch/arm/mach-snapdragon/include/mach/boot0.h | 13 ++++++++++++-
- drivers/clk/qcom/clock-qcom.c                 |  4 ++--
+ arch/arm/mach-snapdragon/include/mach/boot0.h | 13 +++++++-
+ drivers/clk/qcom/clock-qcom.c                 |  4 +--
  drivers/soc/qcom/Kconfig                      |  2 +-
- drivers/soc/qcom/smem.c                       | 10 +++++++---
- drivers/spmi/spmi-msm.c                       |  6 +++---
- 11 files changed, 71 insertions(+), 19 deletions(-)
+ drivers/soc/qcom/smem.c                       | 10 ++++--
+ drivers/spmi/spmi-msm.c                       |  6 ++--
+ 11 files changed, 85 insertions(+), 19 deletions(-)
  create mode 100644 arch/arm/mach-snapdragon/armv7.S
 
 diff --git a/arch/arm/Kconfig b/arch/arm/Kconfig
@@ -95,19 +99,33 @@ index 2360b7c6..d7572a80 100644
  obj-y += board_spl.o
 diff --git a/arch/arm/mach-snapdragon/armv7.S b/arch/arm/mach-snapdragon/armv7.S
 new file mode 100644
-index 00000000..0cb2f9dd
+index 00000000..b91eae70
 --- /dev/null
 +++ b/arch/arm/mach-snapdragon/armv7.S
-@@ -0,0 +1,19 @@
+@@ -0,0 +1,33 @@
 +/* SPDX-License-Identifier: GPL-2.0+ */
 +/*
 + * LK enters 32-bit kernels with r0 = 0, r1 = the machine type and r2 = the
 + * device tree. Keep r2 for board_fdt_blob_setup().
++ *
++ * LK also leaves branch prediction enabled while the MMU is off. U-Boot
++ * keeps the MMU off, and on Krait predicted fetches then reach addresses the
++ * secure world blocks: the SoC hangs until the secure watchdog resets it,
++ * at points that move with the code layout. Turn branch prediction off and
++ * drop what LK left in the predictor.
 + */
 +
 +#include <linux/linkage.h>
++#include <asm/system.h>
 +
 +ENTRY(save_boot_params)
++	mrc	p15, 0, r3, c1, c0, 0		@ SCTLR
++	bic	r3, r3, #CR_Z
++	mcr	p15, 0, r3, c1, c0, 0
++	mov	r3, #0
++	mcr	p15, 0, r3, c7, c5, 6		@ BPIALL
++	dsb
++	isb
 +	ldr	r3, =qcom_prev_bl_fdt
 +	str	r2, [r3]
 +	b	save_boot_params_ret
