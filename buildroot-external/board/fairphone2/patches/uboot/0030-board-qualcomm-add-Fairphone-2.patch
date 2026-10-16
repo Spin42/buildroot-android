@@ -9,16 +9,16 @@ Standard boot tries the microSD card, then the eMMC; as USB host (ID grounded, o
 
 Assisted-by: Claude:claude-opus-5-5
 ---
- .../qcom-msm8974pro-fairphone-fp2-u-boot.dtsi |  42 ++++++
+ .../qcom-msm8974pro-fairphone-fp2-u-boot.dtsi |  42 +++++
  board/qualcomm/MAINTAINERS                    |  11 ++
  board/qualcomm/debug-msm8974.config           |   8 +
- board/qualcomm/fairphone-fp2.env              | 142 ++++++++++++++++++
+ board/qualcomm/fairphone-fp2.env              | 146 ++++++++++++++++++
  board/qualcomm/fairphone-fp2/Makefile         |   3 +
- board/qualcomm/fairphone-fp2/fairphone-fp2.c  | 110 ++++++++++++++
- configs/fairphone-fp2_defconfig               |  94 ++++++++++++
- doc/board/qualcomm/fairphone-fp2.rst          | 120 +++++++++++++++
+ board/qualcomm/fairphone-fp2/fairphone-fp2.c  | 110 +++++++++++++
+ configs/fairphone-fp2_defconfig               |  97 ++++++++++++
+ doc/board/qualcomm/fairphone-fp2.rst          | 120 ++++++++++++++
  doc/board/qualcomm/index.rst                  |   1 +
- 9 files changed, 531 insertions(+)
+ 9 files changed, 538 insertions(+)
  create mode 100644 arch/arm/dts/qcom-msm8974pro-fairphone-fp2-u-boot.dtsi
  create mode 100644 board/qualcomm/debug-msm8974.config
  create mode 100644 board/qualcomm/fairphone-fp2.env
@@ -113,10 +113,10 @@ index 00000000..1ac28754
 +CONFIG_DEBUG_UART_CLOCK=0
 diff --git a/board/qualcomm/fairphone-fp2.env b/board/qualcomm/fairphone-fp2.env
 new file mode 100644
-index 00000000..3e957fc7
+index 00000000..420cae39
 --- /dev/null
 +++ b/board/qualcomm/fairphone-fp2.env
-@@ -0,0 +1,142 @@
+@@ -0,0 +1,146 @@
 +# Fairphone 2
 +#
 +# The console is on the display (over the boot splash left by LK), on the
@@ -164,6 +164,10 @@ index 00000000..3e957fc7
 +netretry=no
 +tftptimeout=1000
 +tftptimeoutcountmax=3
++
++# Fastboot over the network, through the Ethernet dongle, e.g. when the USB
++# port is a host: "fastboot -s tcp:<board address> flash userdata ..."
++netfastboot=usb start && dhcp && fastboot tcp
 +
 +# Reboot into the fastboot mode of LK (restart reason in IMEM)
 +lk_fastboot=mw.l 0xfe80565c 0x77665500; reset
@@ -386,10 +390,10 @@ index 00000000..f87ead1e
 +}
 diff --git a/configs/fairphone-fp2_defconfig b/configs/fairphone-fp2_defconfig
 new file mode 100644
-index 00000000..e0a447d0
+index 00000000..db7cb00c
 --- /dev/null
 +++ b/configs/fairphone-fp2_defconfig
-@@ -0,0 +1,94 @@
+@@ -0,0 +1,97 @@
 +CONFIG_ARM=y
 +CONFIG_SYS_BOARD="fairphone-fp2"
 +CONFIG_SYS_CONFIG_NAME="qcom"
@@ -439,6 +443,7 @@ index 00000000..e0a447d0
 +CONFIG_ENV_MMC_USE_DT=y
 +CONFIG_ENV_USE_DEFAULT_ENV_TEXT_FILE=y
 +CONFIG_ENV_DEFAULT_ENV_TEXT_FILE="board/qualcomm/fairphone-fp2.env"
++CONFIG_PROT_TCP=y
 +CONFIG_NET_RANDOM_ETHADDR=y
 +CONFIG_BLKMAP=y
 +CONFIG_BUTTON_REMAP_PHONE_KEYS=y
@@ -447,6 +452,8 @@ index 00000000..e0a447d0
 +CONFIG_CLK_STUB=y
 +CONFIG_CLK_QCOM_MSM8974=y
 +CONFIG_USB_FUNCTION_FASTBOOT=y
++CONFIG_UDP_FUNCTION_FASTBOOT=y
++CONFIG_TCP_FUNCTION_FASTBOOT=y
 +CONFIG_FASTBOOT_BUF_ADDR=0x40000000
 +CONFIG_FASTBOOT_BUF_SIZE=0x20000000
 +CONFIG_FASTBOOT_FLASH=y

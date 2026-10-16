@@ -81,6 +81,10 @@ fastboot -s <serial> flash boot output/images/u-boot-fp2.img           # then in
 
 U-Boot reports the same fastboot serial as LK (the eMMC serial number).
 
+When the USB port is a host (OTG adapter or carrier board hub), fastboot also runs over a USB Ethernet dongle: `run
+netfastboot` at the U-Boot prompt (`usb start`, `dhcp`, `fastboot tcp`), then `fastboot -s tcp:<board address> flash
+userdata ...` from the computer. Kernels and device trees can also be tried without flashing with `tftpboot` and `bootz`.
+
 Like the lk2nd setup, the system brings up USB networking: the phone is `10.0.42.1` and gives the computer an address,
 `ssh root@10.0.42.1` (password `root`).
 
