@@ -1,0 +1,209 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Mon, 12 Oct 2026 12:47:41 +0200
+Subject: [PATCH 3/8] usb: musb-new: mt85xx: add MT8127 support
+
+The MT8127 has the same MUSB block with an 8 KiB FIFO RAM, as in Linux
+for MT2701. Its USB2 PHY sits at another address and needs the vendor
+power-on sequence also used by the Linux MT8127 PHY driver, with the
+USB0 clock and the 48 MHz USB clock ungated directly, as there is no
+clock driver: take the PHY, PERICFG and APMIXEDSYS from extra "reg"
+entries. The MT8518 path keeps its fixed PHY address and sequence.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/usb/musb-new/mt85xx.c | 120 ++++++++++++++++++++++++++++++++--
+ 1 file changed, 114 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/usb/musb-new/mt85xx.c b/drivers/usb/musb-new/mt85xx.c
+index 14b28bbae6b..e910abd3606 100644
+--- a/drivers/usb/musb-new/mt85xx.c
++++ b/drivers/usb/musb-new/mt85xx.c
+@@ -25,8 +25,14 @@
+ #define DBG_I(fmt, ...) \
+ 	pr_info(fmt, ##__VA_ARGS__)
+ 
++struct mtk_musb_glue;
++
+ struct mtk_musb_config {
+ 	struct musb_hdrc_config *config;
++	/* PHY power-on at probe; the MT8518 sequence when not set */
++	int (*phy_power_on)(struct mtk_musb_glue *glue);
++	/* no PHY sequence in enable()/disable() */
++	bool static_phy;
+ };
+ 
+ struct mtk_musb_glue {
+@@ -36,6 +42,7 @@ struct mtk_musb_glue {
+ 	struct clk usbclk;
+ 	struct mtk_musb_config *cfg;
+ 	struct device dev;
++	struct udevice *udev;
+ };
+ 
+ #define to_mtk_musb_glue(d)	container_of(d, struct mtk_musb_glue, dev)
+@@ -43,11 +50,13 @@ struct mtk_musb_glue {
+ /******************************************************************************
+  * phy settings
+  ******************************************************************************/
+-#define USB20_PHY_BASE			0x11110800
++/* MT8518 default; the device tree may give the PHY as a second "reg" */
++static ulong usb20_phy_base = 0x11110800;
++
+ #define USBPHY_READ8(offset)	 \
+-	readb((void *)(USB20_PHY_BASE + (offset)))
++	readb((void *)(usb20_phy_base + (offset)))
+ #define USBPHY_WRITE8(offset, value)	\
+-	writeb(value, (void *)(USB20_PHY_BASE + (offset)))
++	writeb(value, (void *)(usb20_phy_base + (offset)))
+ #define USBPHY_SET8(offset, mask)	\
+ 	USBPHY_WRITE8(offset, (USBPHY_READ8(offset)) | (mask))
+ #define USBPHY_CLR8(offset, mask)	\
+@@ -172,6 +181,61 @@ static void mt_usb_phy_recover(void)
+ 	USBPHY_SET8(0x00, 0x20);
+ }
+ 
++/*
++ * MT8127: the vendor power-on sequence, also used by Linux (phy-mt8127-usb2).
++ * There is no clock driver: ungate the USB0 clock in PERICFG and enable the
++ * 48 MHz USB clock in APMIXEDSYS, given as the third and fourth "reg".
++ */
++#define MT8127_PERI_PDN0_CLR		0x010
++#define MT8127_PERI_PDN0_USB0		BIT(10)
++#define MT8127_APMIXED_USB_CLK		0x220
++#define MT8127_APMIXED_USB_CLK_EN	BIT(26)
++
++static int mt8127_usb_phy_power_on(struct mtk_musb_glue *glue)
++{
++	fdt_addr_t pericfg = dev_read_addr_index(glue->udev, 2);
++	fdt_addr_t apmixed = dev_read_addr_index(glue->udev, 3);
++
++	if (pericfg == FDT_ADDR_T_NONE || apmixed == FDT_ADDR_T_NONE)
++		return -EINVAL;
++
++	writel(MT8127_PERI_PDN0_USB0, (void *)(pericfg + MT8127_PERI_PDN0_CLR));
++	setbits_le32((void *)(apmixed + MT8127_APMIXED_USB_CLK),
++		     MT8127_APMIXED_USB_CLK_EN);
++	udelay(1500);
++
++	USBPHY_CLR8(0x1d, 0x10);
++	USBPHY_CLR8(0x6b, 0x04);
++	USBPHY_CLR8(0x6e, 0x01);
++	USBPHY_CLR8(0x6a, 0x04);
++	USBPHY_CLR8(0x68, 0xf4);
++	USBPHY_CLR8(0x69, 0x3c);
++	USBPHY_CLR8(0x6a, 0xba);
++	USBPHY_CLR8(0x1a, 0x80);
++	USBPHY_SET8(0x1a, 0x10);
++	mdelay(20);
++
++	/* force device mode */
++	USBPHY_CLR8(0x6c, 0x10);
++	USBPHY_SET8(0x6c, 0x2e);
++	USBPHY_SET8(0x6d, 0x3e);
++
++	/* frequency meter off, default trim */
++	USBPHY_WRITE8(0x15, 0x00);
++	USBPHY_CLR8(0x703, 0x01);
++	USBPHY_CLR8(0x711, 0x01);
++
++	USBPHY_CLR8(0x05, 0x70);
++	USBPHY_WRITE8(0x05, 0x40);
++	USBPHY_CLR8(0x00, 0x20);
++
++	USBPHY_SET8(0x1a, 0x80);
++	udelay(50);
++	USBPHY_CLR8(0x1a, 0x80);
++
++	return 0;
++}
++
+ /******************************************************************************
+  * MUSB Glue code
+  ******************************************************************************/
+@@ -214,7 +278,8 @@ static int mtk_musb_enable(struct musb *musb)
+ 	if (enabled)
+ 		return 0;
+ 
+-	mt_usb_phy_recover();
++	if (!glue->cfg->static_phy)
++		mt_usb_phy_recover();
+ 
+ 	enabled = true;
+ 
+@@ -231,7 +296,8 @@ static void mtk_musb_disable(struct musb *musb)
+ 	if (!enabled)
+ 		return;
+ 
+-	mt_usb_phy_savecurrent();
++	if (!glue->cfg->static_phy)
++		mt_usb_phy_savecurrent();
+ 
+ 	enabled = false;
+ }
+@@ -332,6 +398,10 @@ static int musb_usb_probe(struct udevice *dev)
+ 	glue->cfg = (struct mtk_musb_config *)dev_get_driver_data(dev);
+ 	if (!glue->cfg)
+ 		return -EINVAL;
++	glue->udev = dev;
++
++	if (dev_read_addr_index(dev, 1) != FDT_ADDR_T_NONE)
++		usb20_phy_base = dev_read_addr_index(dev, 1);
+ 
+ 	ret = clk_get_by_name(dev, "usbpll", &glue->usbpllclk);
+ 	if (ret) {
+@@ -374,7 +444,10 @@ static int musb_usb_probe(struct udevice *dev)
+ 	printf("MTK MUSB OTG (Peripheral)\n");
+ #endif
+ 
+-	mt_usb_phy_poweron();
++	if (glue->cfg->phy_power_on)
++		ret = glue->cfg->phy_power_on(glue);
++	else
++		mt_usb_phy_poweron();
+ 
+ 	return ret;
+ }
+@@ -395,7 +468,42 @@ static const struct mtk_musb_config mt8518_cfg = {
+ 	.config = &musb_config,
+ };
+ 
++/* As Linux for MT2701/MT8127: 8 endpoints, 8 KiB FIFO RAM */
++static struct musb_fifo_cfg mt8127_musb_mode_cfg[] = {
++	MUSB_EP_FIFO_SINGLE(1, FIFO_TX, 512),
++	MUSB_EP_FIFO_SINGLE(1, FIFO_RX, 512),
++	MUSB_EP_FIFO_SINGLE(2, FIFO_TX, 512),
++	MUSB_EP_FIFO_SINGLE(2, FIFO_RX, 512),
++	MUSB_EP_FIFO_SINGLE(3, FIFO_TX, 512),
++	MUSB_EP_FIFO_SINGLE(3, FIFO_RX, 512),
++	MUSB_EP_FIFO_SINGLE(4, FIFO_TX, 512),
++	MUSB_EP_FIFO_SINGLE(4, FIFO_RX, 512),
++	MUSB_EP_FIFO_SINGLE(5, FIFO_TX, 512),
++	MUSB_EP_FIFO_SINGLE(5, FIFO_RX, 512),
++	MUSB_EP_FIFO_SINGLE(6, FIFO_TX, 1024),
++	MUSB_EP_FIFO_SINGLE(6, FIFO_RX, 1024),
++	MUSB_EP_FIFO_SINGLE(7, FIFO_TX, 512),
++	MUSB_EP_FIFO_SINGLE(7, FIFO_RX, 64),
++};
++
++static struct musb_hdrc_config mt8127_musb_config = {
++	.fifo_cfg       = mt8127_musb_mode_cfg,
++	.fifo_cfg_size  = ARRAY_SIZE(mt8127_musb_mode_cfg),
++	.multipoint	= true,
++	.dyn_fifo	= true,
++	.num_eps	= MTK_MUSB_MAX_EP_NUM,
++	.ram_bits	= 11,
++};
++
++static const struct mtk_musb_config mt8127_cfg = {
++	.config = &mt8127_musb_config,
++	.phy_power_on = mt8127_usb_phy_power_on,
++	.static_phy = true,
++};
++
+ static const struct udevice_id mtk_musb_ids[] = {
++	{ .compatible = "mediatek,mt8127-musb",
++	  .data = (ulong)&mt8127_cfg },
+ 	{ .compatible = "mediatek,mt8518-musb",
+ 	  .data = (ulong)&mt8518_cfg },
+ 	{ }

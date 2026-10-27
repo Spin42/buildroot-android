@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Mon, 12 Oct 2026 15:10:11 +0200
+Subject: [PATCH 15/17] cmd: button: fail when the button cannot be read
+
+An error from the driver made "button" return 0, which a script reads
+as a pressed button.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ cmd/button.c             | 7 ++++++-
+ doc/usage/cmd/button.rst | 2 ++
+ 2 files changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/cmd/button.c b/cmd/button.c
+index 3e6db3f5b8e..9f984989f8b 100644
+--- a/cmd/button.c
++++ b/cmd/button.c
+@@ -73,8 +73,13 @@ int do_button(struct cmd_tbl *cmdtp, int flag, int argc, char *const argv[])
+ 	}
+ 
+ 	ret = show_button_state(dev);
++	if (ret < 0) {
++		printf("Button '%s' cannot be read (err=%d)\n", button_label,
++		       ret);
++		return CMD_RET_FAILURE;
++	}
+ 
+-	return !ret;
++	return ret == BUTTON_ON ? CMD_RET_SUCCESS : CMD_RET_FAILURE;
+ }
+ 
+ U_BOOT_CMD(
+diff --git a/doc/usage/cmd/button.rst b/doc/usage/cmd/button.rst
+index 0b58b91e8da..30b696e3d0a 100644
+--- a/doc/usage/cmd/button.rst
++++ b/doc/usage/cmd/button.rst
+@@ -63,5 +63,7 @@ The variable *$?* takes the following values
+ +---+-----------------------------+
+ | 1 | button not found            |
+ +---+-----------------------------+
++| 1 | button state cannot be read |
+++---+-----------------------------+
+ | 1 | invalid arguments           |
+ +---+-----------------------------+

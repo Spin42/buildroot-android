@@ -1,0 +1,65 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Mon, 12 Oct 2026 13:19:24 +0200
+Subject: [PATCH 5/8] fastboot: getvar: report partition sizes above 4 GiB on
+ 32-bit
+
+partition-size was computed in size_t: a 5 GiB eMMC region came back
+as its size modulo 4 GiB on 32-bit ARM. Compute and print it as u64.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/fastboot/fb_getvar.c | 12 ++++++------
+ 1 file changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/fastboot/fb_getvar.c b/drivers/fastboot/fb_getvar.c
+index e8aa0e09aa6..ea8b8d30e56 100644
+--- a/drivers/fastboot/fb_getvar.c
++++ b/drivers/fastboot/fb_getvar.c
+@@ -109,7 +109,7 @@ static const struct {
+  * Return: Partition number or negative value on error
+  */
+ static int getvar_get_part_info(const char *part_name, char *response,
+-				size_t *size)
++				u64 *size)
+ {
+ 	int r;
+ 	struct blk_desc *dev_desc;
+@@ -120,12 +120,12 @@ static int getvar_get_part_info(const char *part_name, char *response,
+ 		r = fastboot_block_get_part_info(part_name, &dev_desc, &disk_part,
+ 						 response);
+ 		if (r >= 0 && size)
+-			*size = disk_part.size * disk_part.blksz;
++			*size = (u64)disk_part.size * disk_part.blksz;
+ 	} else if (IS_ENABLED(CONFIG_FASTBOOT_FLASH_MMC)) {
+ 		r = fastboot_mmc_get_part_info(part_name, &dev_desc, &disk_part,
+ 					       response);
+ 		if (r >= 0 && size)
+-			*size = disk_part.size * disk_part.blksz;
++			*size = (u64)disk_part.size * disk_part.blksz;
+ 	} else if (IS_ENABLED(CONFIG_FASTBOOT_FLASH_NAND)) {
+ 		r = fastboot_nand_get_part_info(part_name, &part_info, response);
+ 		if (r >= 0 && size)
+@@ -134,7 +134,7 @@ static int getvar_get_part_info(const char *part_name, char *response,
+ 		r = fastboot_spi_flash_get_part_info(part_name, &disk_part,
+ 						     response);
+ 		if (r >= 0 && size)
+-			*size = disk_part.size * disk_part.blksz;
++			*size = (u64)disk_part.size * disk_part.blksz;
+ 	} else {
+ 		fastboot_fail("this storage is not supported in bootloader", response);
+ 		r = -ENODEV;
+@@ -252,11 +252,11 @@ static void __maybe_unused getvar_partition_type(char *part_name, char *response
+ static void __maybe_unused getvar_partition_size(char *part_name, char *response)
+ {
+ 	int r;
+-	size_t size;
++	u64 size;
+ 
+ 	r = getvar_get_part_info(part_name, response, &size);
+ 	if (r >= 0)
+-		fastboot_response("OKAY", response, "0x%016zx", size);
++		fastboot_response("OKAY", response, "0x%016llx", size);
+ }
+ 
+ static void getvar_is_userspace(char *var_parameter, char *response)

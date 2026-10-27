@@ -1,0 +1,92 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Mon, 12 Oct 2026 12:47:41 +0200
+Subject: [PATCH 4/8] fastboot: mmc: add an option to allow only raw partitions
+
+On boards whose eMMC holds vendor data that must never be written, the
+partition table names, dev:part numbers and the MBR, GPT and zImage
+targets make any region writable from the host. With
+FASTBOOT_MMC_RAW_PARTITIONS_ONLY only the regions listed in
+fastboot_raw_partition_<name> variables can be flashed or erased.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/fastboot/Kconfig  | 12 ++++++++++++
+ drivers/fastboot/fb_mmc.c | 19 +++++++++++++++----
+ 2 files changed, 27 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/fastboot/Kconfig b/drivers/fastboot/Kconfig
+index 1887f78bcec..d9ae2ac3c5e 100644
+--- a/drivers/fastboot/Kconfig
++++ b/drivers/fastboot/Kconfig
+@@ -225,6 +225,18 @@ config FASTBOOT_FLASH_BLOCK_DEVICE_ID
+ 	  Device identifiers are numbered starting from 0 and the most
+ 	  common case is to use the first controller on the system.
+ 
++config FASTBOOT_MMC_RAW_PARTITIONS_ONLY
++	bool "Only allow partitions defined by fastboot_raw_partition_*"
++	depends on FASTBOOT_FLASH_MMC
++	help
++	  Restrict "flash", "erase" and partition getvars to the partitions
++	  described by fastboot_raw_partition_<name> environment variables
++	  (and their fastboot_partition_alias_<name> aliases). Partition
++	  table names, "dev:part" numbers and the GPT, MBR and zImage
++	  targets are refused. Use this on boards whose eMMC holds vendor
++	  data that must never be written, so that only an explicit list of
++	  regions is writable.
++
+ config FASTBOOT_GPT_NAME
+ 	string "Target name for updating GPT"
+ 	depends on FASTBOOT_FLASH_MMC && EFI_PARTITION
+diff --git a/drivers/fastboot/fb_mmc.c b/drivers/fastboot/fb_mmc.c
+index 9bc782ccd02..4c97f586f38 100644
+--- a/drivers/fastboot/fb_mmc.c
++++ b/drivers/fastboot/fb_mmc.c
+@@ -74,8 +74,16 @@ static int do_get_part_info(struct blk_desc **dev_desc, const char *name,
+ {
+ 	int ret;
+ 
+-	/* First try partition names on the default device */
+ 	*dev_desc = blk_get_dev("mmc", CONFIG_FASTBOOT_FLASH_MMC_DEV);
++
++	if (IS_ENABLED(CONFIG_FASTBOOT_MMC_RAW_PARTITIONS_ONLY)) {
++		if (!*dev_desc)
++			return -ENODEV;
++		return raw_part_get_info_by_name(*dev_desc, name, info) < 0 ?
++			-ENOENT : 0;
++	}
++
++	/* First try partition names on the default device */
+ 	if (*dev_desc) {
+ 		ret = part_get_info_by_name(*dev_desc, name, info);
+ 		if (ret >= 0)
+@@ -388,7 +396,8 @@ void fastboot_mmc_flash_write(const char *cmd, void *download_buffer,
+ #endif
+ 
+ #if CONFIG_IS_ENABLED(EFI_PARTITION)
+-	if (strcmp(cmd, CONFIG_FASTBOOT_GPT_NAME) == 0) {
++	if (!IS_ENABLED(CONFIG_FASTBOOT_MMC_RAW_PARTITIONS_ONLY) &&
++	    strcmp(cmd, CONFIG_FASTBOOT_GPT_NAME) == 0) {
+ 		dev_desc = fastboot_mmc_get_dev(response);
+ 		if (!dev_desc)
+ 			return;
+@@ -415,7 +424,8 @@ void fastboot_mmc_flash_write(const char *cmd, void *download_buffer,
+ #endif
+ 
+ #if CONFIG_IS_ENABLED(DOS_PARTITION)
+-	if (strcmp(cmd, CONFIG_FASTBOOT_MBR_NAME) == 0) {
++	if (!IS_ENABLED(CONFIG_FASTBOOT_MMC_RAW_PARTITIONS_ONLY) &&
++	    strcmp(cmd, CONFIG_FASTBOOT_MBR_NAME) == 0) {
+ 		dev_desc = fastboot_mmc_get_dev(response);
+ 		if (!dev_desc)
+ 			return;
+@@ -441,7 +451,8 @@ void fastboot_mmc_flash_write(const char *cmd, void *download_buffer,
+ #endif
+ 
+ #ifdef CONFIG_ANDROID_BOOT_IMAGE
+-	if (strncasecmp(cmd, "zimage", 6) == 0) {
++	if (!IS_ENABLED(CONFIG_FASTBOOT_MMC_RAW_PARTITIONS_ONLY) &&
++	    strncasecmp(cmd, "zimage", 6) == 0) {
+ 		dev_desc = fastboot_mmc_get_dev(response);
+ 		if (dev_desc)
+ 			fb_mmc_update_zimage(dev_desc, download_buffer,

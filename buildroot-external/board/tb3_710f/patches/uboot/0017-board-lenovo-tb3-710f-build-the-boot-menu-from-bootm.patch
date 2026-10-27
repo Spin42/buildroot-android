@@ -1,0 +1,461 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Mon, 12 Oct 2026 15:11:20 +0200
+Subject: [PATCH 17/17] board: lenovo: tb3-710f: build the boot menu from
+ bootmenu and buttons
+
+The key window, the menu and the way out of fastboot and the USB disk
+mode now use the button drivers, button_kbd, bootmenu and the keyed
+abort of fastboot and ums. The board code keeps the boot-once guard,
+the boot-mode bits, the reboot-bootloader flag and the fastboot hooks.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ board/lenovo/tb3-710f/tb3-710f.c   | 201 +++--------------------------
+ board/lenovo/tb3-710f/tb3-710f.env |  75 +++++++++--
+ configs/mt8127_tb3_710f_defconfig  |  14 ++
+ 3 files changed, 90 insertions(+), 200 deletions(-)
+
+diff --git a/board/lenovo/tb3-710f/tb3-710f.c b/board/lenovo/tb3-710f/tb3-710f.c
+index 61938a7c622..5567e8a01cb 100644
+--- a/board/lenovo/tb3-710f/tb3-710f.c
++++ b/board/lenovo/tb3-710f/tb3-710f.c
+@@ -17,16 +17,14 @@
+  * the log of the U-Boot run that started Linux can be read with /dev/mem.
+  * LK clears that memory at boot: the log does not survive a reset.
+  *
+- * Keys at start: Volume-Down (or "fastboot reboot-bootloader") stays in
+- * U-Boot fastboot, Volume-Up reboots into recovery. The keys are on the
+- * keypad columns KCOL0 (Volume-Up, GPIO36) and KCOL1 (Volume-Down, GPIO37),
+- * which LK leaves in keypad mode with pull-ups: the pad input reads 0 while
+- * a key is held.
++ * The keys, the boot menu and the key window at start are in the default
++ * environment, built on the button drivers, button_kbd and bootmenu.
+  *
+  * The PMIC is reached through the PMIC wrapper (pwrap) WACS2 channel, which
+  * the preloader has already initialised.
+  */
+ 
++#include <button.h>
+ #include <command.h>
+ #include <console.h>
+ #include <env.h>
+@@ -42,7 +40,6 @@
+ #include <init.h>
+ #include <time.h>
+ #include <asm/processor.h>
+-#include <linux/delay.h>
+ #include <asm/io.h>
+ #include <asm/cache.h>
+ #include <asm/system.h>
+@@ -90,15 +87,6 @@ struct tb3_log {
+ 
+ #define TB3_LOG_TEXT_MAX	(TB3_LOG_SIZE - sizeof(struct tb3_log))
+ 
+-#define MT8127_GPIO_DIN2	0x10005520	/* GPIO32..47 input level */
+-#define TB3_KEY_VOLUP		BIT(36 - 32)
+-#define TB3_KEY_VOLDOWN		BIT(37 - 32)
+-#define TB3_KEY_WINDOW_MS	3000
+-
+-/* MT6323 CHRSTATUS: PWRKEY_DEB reads 0 while the power key is held */
+-#define MT6323_CHRSTATUS	0x0142
+-#define MT6323_PWRKEY_DEB	BIT(1)
+-
+ /*
+  * "fastboot reboot-bootloader" flag: DRAM keeps it across the watchdog
+  * reset and LK does not touch this word, in the CONSYS area U-Boot does not
+@@ -251,9 +239,6 @@ int board_early_init_f(void)
+ 	return 0;
+ }
+ 
+-static int tb3keys_tstc(struct stdio_dev *dev);
+-static int tb3keys_getc(struct stdio_dev *dev);
+-
+ int board_early_init_r(void)
+ {
+ 	struct stdio_dev dev = {
+@@ -263,21 +248,9 @@ int board_early_init_r(void)
+ 		.puts = tb3_log_puts,
+ 	};
+ 
+-	struct stdio_dev keys = {
+-		.name = "tb3keys",
+-		.flags = DEV_FLAGS_INPUT,
+-		.tstc = tb3keys_tstc,
+-		.getc = tb3keys_getc,
+-	};
+-	int ret;
+-
+ 	tb3_stage(3);
+ 
+-	ret = stdio_register(&dev);
+-	if (!ret)
+-		ret = stdio_register(&keys);
+-
+-	return ret;
++	return stdio_register(&dev);
+ }
+ 
+ int board_init(void)
+@@ -300,52 +273,6 @@ int board_init(void)
+ 	return 0;
+ }
+ 
+-static u32 tb3_keys(void)
+-{
+-	u32 din = readl(MT8127_GPIO_DIN2);
+-
+-	return ~din & (TB3_KEY_VOLUP | TB3_KEY_VOLDOWN);
+-}
+-
+-static bool tb3_power_key(void)
+-{
+-	u16 sta;
+-
+-	if (pmic_read(MT6323_CHRSTATUS, &sta))
+-		return false;
+-
+-	return !(sta & MT6323_PWRKEY_DEB);
+-}
+-
+-/*
+- * "tb3keys" input device: a power key press reads as Ctrl-C, which ends
+- * "fastboot usb" and "ums". A press only counts after the key has been seen
+- * released, so the press that selected a menu entry does not end it.
+- */
+-static bool tb3keys_armed;
+-static ulong tb3keys_last;
+-
+-static int tb3keys_tstc(struct stdio_dev *dev)
+-{
+-	/* polled in USB loops: keep the PMIC traffic low */
+-	if (get_timer(tb3keys_last) < 20)
+-		return 0;
+-	tb3keys_last = get_timer(0);
+-
+-	if (!tb3_power_key()) {
+-		tb3keys_armed = true;
+-		return 0;
+-	}
+-
+-	return tb3keys_armed;
+-}
+-
+-static int tb3keys_getc(struct stdio_dev *dev)
+-{
+-	tb3keys_armed = false;
+-
+-	return 0x03;
+-}
+ static bool tb3_take_reboot_flag(void)
+ {
+ 	u32 *flag = (u32 *)TB3_REBOOT_FLAG;
+@@ -399,11 +326,19 @@ static void tb3_set_serial(void)
+ 	env_set("serial#", serial);
+ }
+ 
++/* bootmenu is left with the power key only: tell the menu script if it works */
++static void tb3_check_power_key(void)
++{
++	struct udevice *dev;
++	bool ok;
++
++	ok = !button_get_by_label("Power", &dev) && button_get_state(dev) >= 0;
++	env_set("tb3_power_key", ok ? "ok" : "unreadable");
++}
++
+ int board_late_init(void)
+ {
+ 	u64 t0;
+-	u32 keys;
+-	ulong start;
+ 	int i;
+ 
+ 	tb3_stage(4);
+@@ -425,39 +360,12 @@ int board_late_init(void)
+ 		console_record_reset_enable();
+ 
+ 	tb3_set_serial();
++	tb3_check_power_key();
+ 	env_set("fastboot.uboot-log", "fastboot oem console");
+ 
+-	/* Give the user a window to press a key: LK hands over quickly. */
+-	printf("Volume-Down: boot menu, Volume-Up: recovery. Booting in");
+-	start = get_timer(0);
+-	i = -1;
+-	do {
+-		keys = tb3_keys();
+-		if (keys)
+-			break;
+-		if (get_timer(start) / 1000 != i) {
+-			i = get_timer(start) / 1000;
+-			printf(" %d", TB3_KEY_WINDOW_MS / 1000 - i);
+-		}
+-		mdelay(20);
+-	} while (get_timer(start) < TB3_KEY_WINDOW_MS);
+-	printf("\n");
+-	env_set("fastboot.keys", keys & TB3_KEY_VOLDOWN ? "volume-down" :
+-		keys & TB3_KEY_VOLUP ? "volume-up" : "none");
+-
+-	if (keys & TB3_KEY_VOLUP) {
+-		printf("Volume-Up held: rebooting into recovery\n");
+-		tb3_set_bootmode(TB3_BOOT_RECOVERY, NULL);
+-		mdelay(1000);
+-		do_reset(NULL, 0, 0, NULL);
+-	}
+-
+ 	if (tb3_take_reboot_flag()) {
+ 		env_set("tb3_mode", "fastboot");
+ 		env_set("fastboot.boot_path", "reboot-bootloader");
+-	} else if (keys & TB3_KEY_VOLDOWN) {
+-		env_set("tb3_mode", "menu");
+-		env_set("fastboot.boot_path", "volume-down");
+ 	}
+ 
+ 	return 0;
+@@ -475,85 +383,6 @@ void board_prep_linux(struct bootm_headers *images)
+ 		printf("Boot-once guard: disarmed (RTC PDN1 0x%04x)\n", pdn1);
+ }
+ 
+-/* Boot menu: Volume-Up/Down move, the power key selects. */
+-static const struct {
+-	const char *label;
+-	const char *cmd;
+-} tb3_menu[] = {
+-	{ "Fastboot (USB)", "run fastboot_mode" },
+-	{ "USB disk: userdata", "run ums_mode" },
+-	{ "Recovery (TWRP)", "bootmode recovery; reset" },
+-	{ "LK fastboot", "bootmode fastboot; reset" },
+-	{ "Continue boot", NULL },
+-};
+-
+-#define TB3_KEY_POWER		BIT(31)
+-
+-static u32 tb3_all_keys(void)
+-{
+-	return tb3_keys() | (tb3_power_key() ? TB3_KEY_POWER : 0);
+-}
+-
+-/* Next key press, debounced; returns once all keys were released before. */
+-static u32 tb3_wait_key(void)
+-{
+-	u32 k;
+-
+-	while (tb3_all_keys())
+-		mdelay(10);
+-	for (;;) {
+-		k = tb3_all_keys();
+-		if (k) {
+-			mdelay(30);
+-			if (tb3_all_keys() == k)
+-				return k;
+-		}
+-		mdelay(10);
+-	}
+-}
+-
+-static void tb3_menu_draw(int sel)
+-{
+-	int i;
+-
+-	printf("\e[2J\e[1;1H\n  TB3-710F U-Boot menu\n\n");
+-	for (i = 0; i < ARRAY_SIZE(tb3_menu); i++)
+-		printf("  %s %-24s \e[0m\n", i == sel ? "\e[7m>" : " ",
+-		       tb3_menu[i].label);
+-	printf("\n  Volume-Up/Down: move   Power: select\n");
+-}
+-
+-static int do_tb3menu(struct cmd_tbl *cmdtp, int flag, int argc,
+-		      char *const argv[])
+-{
+-	int sel = 0;
+-	u32 k;
+-
+-	/* The guard would send a reset during a long menu wait to recovery */
+-	tb3_set_bootmode(TB3_BOOT_NORMAL, NULL);
+-	for (;;) {
+-		tb3_menu_draw(sel);
+-		k = tb3_wait_key();
+-		if (k & TB3_KEY_VOLUP)
+-			sel = (sel + ARRAY_SIZE(tb3_menu) - 1) % ARRAY_SIZE(tb3_menu);
+-		else if (k & TB3_KEY_VOLDOWN)
+-			sel = (sel + 1) % ARRAY_SIZE(tb3_menu);
+-		else if (k & TB3_KEY_POWER) {
+-			if (!tb3_menu[sel].cmd)
+-				break;
+-			printf("\e[2J\e[1;1H");
+-			run_command_list(tb3_menu[sel].cmd, -1, 0);
+-		}
+-	}
+-	printf("\e[2J\e[1;1H");
+-	tb3_set_bootmode(TB3_BOOT_RECOVERY, NULL);
+-
+-	return CMD_RET_SUCCESS;
+-}
+-
+-U_BOOT_CMD(tb3menu, 1, 0, do_tb3menu,
+-	   "boot menu driven by the volume and power keys", "");
+-
+ /* "fastboot oem board:ums" leaves fastboot for the USB disk mode */
+ static struct cyclic_info tb3_detach_cyclic;
+ 
+diff --git a/board/lenovo/tb3-710f/tb3-710f.env b/board/lenovo/tb3-710f/tb3-710f.env
+index b15f95afc20..78a1778a015 100644
+--- a/board/lenovo/tb3-710f/tb3-710f.env
++++ b/board/lenovo/tb3-710f/tb3-710f.env
+@@ -43,6 +43,53 @@ boot_buildroot=if test -e ${bootif} ${bootdevnum}:${bootpart} ${extlinux}; then
+ boot_failed=echo == Nothing to boot;
+ 	setenv fastboot.boot_path nothing-bootable; run fastboot_mode; reset
+ 
++/*
++ * Keys (DT gpio-keys and the MT6323 power key): "button" reads them, and
++ * button_kbd turns them into Up/Down/Enter for bootmenu while stdin
++ * includes button-kbd. Keys report on release, so stdin only takes
++ * button-kbd once the key that opened the menu is released; any key ends
++ * fastboot or the USB disk mode (CMD_*_ABORT_KEYED).
++ *
++ * Key window: for 3 s, Volume-Down opens the menu, Volume-Up reboots into
++ * recovery. LK reads Volume-Down at power-on as factory mode, so the keys
++ * are only read once U-Boot runs. "silent" hides the "on"/"off" of button.
++ */
++keys_read=setenv silent 1;
++	if button "Volume Down"; then setenv tb3_key volume-down;
++	elif button "Volume Up"; then setenv tb3_key volume-up; fi;
++	setenv silent
++key_window=setenv tb3_key;
++	echo "Volume key pads (GPIO36 up, GPIO37 down), 0 = pressed:";
++	gpio input mt8127_pinctrl36; gpio input mt8127_pinctrl37;
++	echo -n "Volume-Down: boot menu, Volume-Up: recovery. Booting in";
++	for s in 3 2 1; do if test -z "${tb3_key}"; then echo -n " ${s}";
++	for t in 1 2 3 4 5 6 7 8 9 10; do if test -z "${tb3_key}"; then
++	run keys_read; sleep 0.1; fi; done; fi; done; echo;
++	if test -z "${tb3_key}"; then setenv tb3_key none; fi;
++	setenv fastboot.keys ${tb3_key}
++key_release=setenv silent 1; if button "Volume Down"; then
++	setenv silent; echo Release the key; setenv silent 1;
++	while button "Volume Down"; do sleep 0.05; done; fi; setenv silent
++/* drop key codes left over from a mode a key ended */
++keys_flush=sleep 0.2
++
++/*
++ * Boot menu: Volume-Up/Down move, Power selects. The boot-once guard is
++ * off while the menu is up; fastboot and the USB disk mode come back to it.
++ * Without a readable power key the menu could not be left: fastboot instead.
++ */
++bootmenu_0=Fastboot (USB)=run fastboot_session; setenv tb3_menu 1
++bootmenu_1=USB disk: userdata=run ums_session; setenv tb3_menu 1
++bootmenu_2=Recovery (TWRP)=bootmode recovery; reset
++bootmenu_3=LK fastboot=bootmode fastboot; reset
++bootmenu_4=Continue boot=echo Continuing boot
++menu=run key_release; if test "${tb3_power_key}" != ok; then
++	echo Power key unreadable: fastboot instead of the menu; run fastboot_mode;
++	else bootmode normal; setenv stdin nulldev,button-kbd;
++	setenv tb3_menu 1; while test "${tb3_menu}" = 1; do
++	setenv tb3_menu 0; bootmenu -1; done;
++	setenv stdin nulldev; bootmode recovery; fi
++
+ /*
+  * U-Boot fastboot over USB. Only "boot" (the Android boot image region,
+  * where this U-Boot lives) and "userdata" (up to the BMT pool) can be
+@@ -52,30 +99,30 @@ boot_failed=echo == Nothing to boot;
+ board=tb3-710f-uboot
+ fastboot_raw_partition_boot=0xec00 0x8000
+ fastboot_raw_partition_userdata=0x465000 0xa21a00
+-/*
+- * The power key reads as Ctrl-C while stdin includes tb3keys: it ends
+- * "fastboot usb" and "ums". "fastboot oem board:ums" switches from fastboot
+- * to the USB disk mode and back.
+- */
++/* "fastboot oem board:ums" switches from fastboot to the USB disk mode and back */
+ fastboot_banner=echo; echo ======== U-Boot fastboot mode (${fastboot.boot_path}) ========;
+ 	echo fastboot -s ${serial#} getvar product = ${board};
+ 	echo flash boot / userdata, boot, oem console, oem board:ums, continue, reboot;
+ 	echo reboot-bootloader: here again, reboot-recovery: TWRP, reboot-fastboot: LK fastboot;
+-	echo Power key: leave fastboot
+-fastboot_mode=bootmode normal; setenv stdin nulldev,tb3keys; setenv tb3_next fastboot;
++	echo Any key: leave fastboot
++fastboot_session=setenv tb3_next fastboot;
+ 	while test "${tb3_next}" != done; do
+ 	if test "${tb3_next}" = ums; then run ums_session; fi;
+-	setenv tb3_next done; run fastboot_banner; fastboot usb 0; done;
++	setenv tb3_next done; run fastboot_banner; fastboot usb 0; run keys_flush; done
++fastboot_mode=bootmode normal; run key_release; setenv stdin nulldev,button-kbd; run fastboot_session;
+ 	setenv stdin nulldev; bootmode recovery
+ 
+ /* USB disk: userdata up to the BMT pool (mmcblk0p7, 10623488 blocks) */
+ ums_session=echo; echo ======== USB disk: userdata (mmc 0 blocks 4608000 + 10623488) ========;
+-	echo Power key: leave the USB disk mode;
++	echo Any key: leave the USB disk mode;
+ 	blkmap create userdata && blkmap map userdata 0 0xa21a00 linear mmc 0 0x465000 &&
+-	blkmap get userdata dev ums_dev && ums 0 blkmap ${ums_dev}; blkmap destroy userdata
+-ums_mode=bootmode normal; setenv stdin nulldev,tb3keys; run ums_session;
+-	setenv stdin nulldev; bootmode recovery
++	blkmap get userdata dev ums_dev && ums 0 blkmap ${ums_dev}; blkmap destroy userdata;
++	run keys_flush
+ 
+-bootcmd=if test "${tb3_mode}" = menu; then tb3menu; fi;
+-	if test "${tb3_mode}" = fastboot; then run fastboot_mode; fi;
++bootcmd=run key_window;
++	if test "${tb3_key}" = volume-up; then
++	echo Volume-Up held: rebooting into recovery; bootmode recovery; sleep 1; reset; fi;
++	if test "${tb3_mode}" = fastboot; then run fastboot_mode;
++	elif test "${tb3_key}" = volume-down; then
++	setenv fastboot.boot_path volume-down; run menu; fi;
+ 	run nerves_map; run boot_nerves; run boot_buildroot; run boot_failed
+diff --git a/configs/mt8127_tb3_710f_defconfig b/configs/mt8127_tb3_710f_defconfig
+index 7e31a7bfebf..21023682ed8 100644
+--- a/configs/mt8127_tb3_710f_defconfig
++++ b/configs/mt8127_tb3_710f_defconfig
+@@ -8,6 +8,7 @@ CONFIG_SYS_MALLOC_F_LEN=0x4000
+ CONFIG_NR_DRAM_BANKS=1
+ CONFIG_HAS_CUSTOM_SYS_INIT_SP_ADDR=y
+ CONFIG_CUSTOM_SYS_INIT_SP_ADDR=0x80e00000
++CONFIG_DM_GPIO=y
+ CONFIG_DEFAULT_DEVICE_TREE="mt8127-lenovo-tb3-710f"
+ CONFIG_TARGET_MT8127=y
+ CONFIG_SYS_BOOTM_LEN=0x4000000
+@@ -20,6 +21,7 @@ CONFIG_SUPPORT_RAW_INITRD=y
+ CONFIG_BOOTDELAY=0
+ CONFIG_CONSOLE_RECORD=y
+ CONFIG_CONSOLE_RECORD_OUT_SIZE=0x10000
++CONFIG_SILENT_CONSOLE=y
+ CONFIG_PRE_CONSOLE_BUFFER=y
+ CONFIG_SYS_DEVICE_NULLDEV=y
+ CONFIG_BOARD_EARLY_INIT_F=y
+@@ -28,9 +30,13 @@ CONFIG_BOARD_LATE_INIT=y
+ CONFIG_HUSH_PARSER=y
+ CONFIG_SYS_PROMPT="tb3=> "
+ CONFIG_CMD_BOOTZ=y
++CONFIG_CMD_BOOTMENU=y
++CONFIG_CMD_FASTBOOT_ABORT_KEYED=y
++CONFIG_CMD_GPIO=y
+ CONFIG_CMD_MMC=y
+ CONFIG_CMD_PART=y
+ CONFIG_CMD_USB_MASS_STORAGE=y
++CONFIG_CMD_UMS_ABORT_KEYED=y
+ CONFIG_CMD_WDT=y
+ CONFIG_CMD_CACHE=y
+ CONFIG_CMD_SYSBOOT=y
+@@ -39,6 +45,8 @@ CONFIG_CMD_FAT=y
+ CONFIG_CMD_FS_GENERIC=y
+ CONFIG_NO_NET=y
+ CONFIG_BLKMAP=y
++CONFIG_BUTTON_REMAP_PHONE_KEYS=y
++CONFIG_BUTTON_MTK_PMIC=y
+ CONFIG_CLK=y
+ CONFIG_USB_FUNCTION_FASTBOOT=y
+ CONFIG_FASTBOOT_BUF_ADDR=0x88000000
+@@ -48,7 +56,13 @@ CONFIG_FASTBOOT_FLASH_MMC_DEV=0
+ CONFIG_FASTBOOT_MMC_RAW_PARTITIONS_ONLY=y
+ CONFIG_FASTBOOT_CMD_OEM_CONSOLE=y
+ CONFIG_FASTBOOT_OEM_BOARD=y
++CONFIG_DM_KEYBOARD=y
++CONFIG_BUTTON_KEYBOARD=y
+ CONFIG_MMC_MTK=y
++CONFIG_PINCTRL=y
++CONFIG_PINCTRL_MT8127=y
++CONFIG_DM_PMIC=y
++CONFIG_DM_PMIC_MTK_PWRAP=y
+ # CONFIG_REQUIRE_SERIAL_CONSOLE is not set
+ CONFIG_DM_SERIAL=y
+ CONFIG_SYSRESET=y

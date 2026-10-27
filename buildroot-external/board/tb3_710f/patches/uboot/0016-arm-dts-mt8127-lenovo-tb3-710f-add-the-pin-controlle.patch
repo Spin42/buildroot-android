@@ -1,0 +1,112 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Mon, 12 Oct 2026 15:09:02 +0200
+Subject: [PATCH 16/17] arm: dts: mt8127-lenovo-tb3-710f: add the pin
+ controller and the keys
+
+The volume keys are GPIO keys on the keypad columns (GPIO36/37), the
+power key is the MT6323 PMIC key behind the PMIC wrapper.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ arch/arm/dts/mt8127-lenovo-tb3-710f.dts | 59 +++++++++++++++++++++++++
+ 1 file changed, 59 insertions(+)
+
+diff --git a/arch/arm/dts/mt8127-lenovo-tb3-710f.dts b/arch/arm/dts/mt8127-lenovo-tb3-710f.dts
+index 10b2887098c..9475c8743ff 100644
+--- a/arch/arm/dts/mt8127-lenovo-tb3-710f.dts
++++ b/arch/arm/dts/mt8127-lenovo-tb3-710f.dts
+@@ -10,6 +10,8 @@
+ 
+ /dts-v1/;
+ 
++#include <dt-bindings/gpio/gpio.h>
++#include <dt-bindings/input/input.h>
+ #include <dt-bindings/interrupt-controller/irq.h>
+ #include <dt-bindings/interrupt-controller/arm-gic.h>
+ 
+@@ -89,6 +91,13 @@
+ 		bootph-all;
+ 	};
+ 
++	/* PMIC wrapper clocks, left running by LK */
++	pwrap_clk: pwrap-clk {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++		clock-frequency = <26000000>;
++	};
++
+ 	/* USB clocks are ungated by the MUSB glue; these only satisfy it */
+ 	usb_clk: usb-clk {
+ 		compatible = "fixed-clock";
+@@ -96,6 +105,28 @@
+ 		clock-frequency = <48000000>;
+ 	};
+ 
++	/*
++	 * The volume keys are on the keypad columns, which LK leaves with
++	 * pull-ups: a pressed key reads low.
++	 */
++	gpio-keys {
++		compatible = "gpio-keys";
++
++		key-volume-up {
++			label = "Volume Up";
++			gpios = <&pio 36 GPIO_ACTIVE_LOW>;
++			linux,code = <KEY_VOLUMEUP>;
++			debounce-interval = <20>;
++		};
++
++		key-volume-down {
++			label = "Volume Down";
++			gpios = <&pio 37 GPIO_ACTIVE_LOW>;
++			linux,code = <KEY_VOLUMEDOWN>;
++			debounce-interval = <20>;
++		};
++	};
++
+ 	wdt-reboot {
+ 		compatible = "wdt-reboot";
+ 		wdt = <&watchdog>;
+@@ -109,6 +140,19 @@
+ 		ranges;
+ 		bootph-all;
+ 
++		syscfg_pctl_a: syscon@10005000 {
++			compatible = "mediatek,mt8127-pctl-a-syscfg", "syscon";
++			reg = <0 0x10005000 0 0x1000>;
++		};
++
++		pio: pinctrl@1000b000 {
++			compatible = "mediatek,mt8127-pinctrl";
++			reg = <0 0x1000b000 0 0x1000>;
++			mediatek,pctl-regmap = <&syscfg_pctl_a>;
++			gpio-controller;
++			#gpio-cells = <2>;
++		};
++
+ 		watchdog: watchdog@10007000 {
+ 			compatible = "mediatek,mt8127-wdt", "mediatek,mt6589-wdt";
+ 			reg = <0 0x10007000 0 0x100>;
+@@ -119,6 +163,21 @@
+ 			compatible = "mediatek,mt8127-pwrap";
+ 			reg = <0 0x1000d000 0 0x1000>;
+ 			reg-names = "pwrap";
++			clocks = <&pwrap_clk>, <&pwrap_clk>;
++			clock-names = "spi", "wrap";
++
++			pmic {
++				compatible = "mediatek,mt6323";
++
++				keys {
++					compatible = "mediatek,mt6323-keys";
++
++					power {
++						label = "Power";
++						linux,keycodes = <KEY_POWER>;
++					};
++				};
++			};
+ 		};
+ 
+ 		/* Device mode only: PHY, PERICFG and APMIXEDSYS for the glue */

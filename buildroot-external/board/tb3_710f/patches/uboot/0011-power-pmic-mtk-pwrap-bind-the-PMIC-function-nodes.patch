@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Marc Lainez <marc.lainez@gmail.com>
+Date: Mon, 12 Oct 2026 15:07:19 +0200
+Subject: [PATCH 11/17] power: pmic: mtk-pwrap: bind the PMIC function nodes
+
+Bind the drivers of the PMIC sub-nodes (keys, RTC...) so that they can
+reach the PMIC through the wrapper.
+
+Assisted-by: Claude:claude-opus-5-5
+---
+ drivers/power/pmic/mtk-pwrap.c | 14 ++++++++++++--
+ 1 file changed, 12 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/power/pmic/mtk-pwrap.c b/drivers/power/pmic/mtk-pwrap.c
+index 84686308339..4c0f8ede1b4 100644
+--- a/drivers/power/pmic/mtk-pwrap.c
++++ b/drivers/power/pmic/mtk-pwrap.c
+@@ -10,6 +10,7 @@
+ #include <clk.h>
+ #include <dm.h>
+ #include <dm/device_compat.h>
++#include <dm/lists.h>
+ #include <linux/bitfield.h>
+ #include <linux/err.h>
+ #include <power/pmic.h>
+@@ -873,8 +874,8 @@ static int mtk_pwrap_probe(struct udevice *dev)
+ 
+ static int mtk_pwrap_bind(struct udevice *dev)
+ {
+-	ofnode pmic_node, regulators_node;
+-	int children;
++	ofnode pmic_node, regulators_node, node;
++	int children, ret;
+ 	const struct pmic_child_info *pmic_children_info;
+ 
+ 	pmic_node = dev_read_first_subnode(dev);
+@@ -904,6 +905,15 @@ static int mtk_pwrap_bind(struct udevice *dev)
+ 		dev_dbg(dev, "regulators subnode not found\n");
+ 	}
+ 
++	/* PMIC functions with a driver of their own, such as keys */
++	ofnode_for_each_subnode(node, pmic_node) {
++		if (!ofnode_is_enabled(node))
++			continue;
++		ret = lists_bind_fdt(dev, node, NULL, NULL, false);
++		if (ret)
++			return ret;
++	}
++
+ 	return 0;
+ }
+ 
