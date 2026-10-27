@@ -165,9 +165,9 @@ index 00000000..420cae39
 +tftptimeout=1000
 +tftptimeoutcountmax=3
 +
-+# Fastboot over the network, through the Ethernet dongle, e.g. when the USB
-+# port is a host: "fastboot -s tcp:<board address> flash userdata ..."
-+netfastboot=usb start && dhcp && fastboot tcp
++# Fastboot over the network (UDP: fastboot over TCP cannot download), e.g.
++# when the USB port is a host: "fastboot -s udp:<board address> flash ..."
++netfastboot=usb start && dhcp && fastboot udp
 +
 +# Reboot into the fastboot mode of LK (restart reason in IMEM)
 +lk_fastboot=mw.l 0xfe80565c 0x77665500; reset

@@ -82,12 +82,14 @@ fastboot -s <serial> flash boot output/images/u-boot-fp2.img           # then in
 U-Boot reports the same fastboot serial as LK (the eMMC serial number).
 
 When the USB port is a host (OTG adapter or carrier board hub), fastboot also runs over a USB Ethernet dongle: `run
-netfastboot` at the U-Boot prompt (`usb start`, `dhcp`, `fastboot tcp`), then `fastboot -s tcp:<board address> flash
-userdata ...` from the computer. Kernels and device trees can also be tried without flashing with `tftpboot` and `bootz`.
+netfastboot` at the U-Boot prompt (`usb start`, `dhcp`, `fastboot udp`), then `fastboot -s udp:<board address> flash
+userdata ...` from the computer. It has to be UDP: U-Boot's fastboot over TCP (`fastboot tcp`) answers commands but has
+no download path, so a `flash` over TCP never completes. Kernels and device trees can also be tried without flashing with
+`tftpboot` and `bootz`.
 
-`fastboot tcp` is slow (under 0.5 MB/s), so a full image is better written by the network flasher in
-`board/fairphone2/netflash`: a small initramfs that U-Boot boots over TFTP, which receives an image over TCP and writes
-it to userdata. Build it from an output directory into the TFTP server's directory:
+`fastboot udp` downloads at about 1.1 MB/s (a 110 MB sparse image in 96 s), so a full image is better written by the
+network flasher in `board/fairphone2/netflash`: a small initramfs that U-Boot boots over TFTP, which receives an image
+over TCP and writes it to userdata. Build it from an output directory into the TFTP server's directory:
 
 ```
 board/fairphone2/netflash/mkrescue.sh output /srv/tftp
