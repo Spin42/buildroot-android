@@ -4,11 +4,9 @@
 #
 ################################################################################
 
-TB3_FIRMWARE_SITE = $(call qstrip,$(BR2_PACKAGE_TB3_FIRMWARE_DIR))
-# The local site method requires a non-empty _SITE even when the package is disabled.
-ifeq ($(BR2_PACKAGE_TB3_FIRMWARE),y)
+# The option exists only when the package is selected; every other defconfig still parses this file
+TB3_FIRMWARE_SITE = $(or $(call qstrip,$(BR2_PACKAGE_TB3_FIRMWARE_DIR)),$(BR2_EXTERNAL_ANDROID_PATH)/board/tb3_710f/firmware)
 TB3_FIRMWARE_SITE_METHOD = local
-endif
 TB3_FIRMWARE_LICENSE = proprietary
 
 define TB3_FIRMWARE_INSTALL_TARGET_CMDS

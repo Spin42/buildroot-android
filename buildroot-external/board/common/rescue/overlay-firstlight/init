@@ -1,0 +1,26 @@
+#!/bin/sh
+# /init of the first-light initramfs: proves the kernel and userspace run, in RAM only. It mounts
+# no storage and writes to no block device. It reports on the screen (/dev/tty0), in the kernel log
+# (/dev/kmsg, kept by ramoops), and to the host over USB: an ACM console (banner, dmesg, a shell)
+# and NCM networking with a telnet/ssh server at 10.0.42.1. A hang, a panic (panic=10) or a
+# missing USB gadget brings the phone back to its flash mode without keys.
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+. /usr/lib/kit-common.sh
+
+kit_mount
+kit_signals
+kit_watchdog
+kit_banner | while IFS= read -r l; do kit_say "$l"; done
+kit_start_usb
+
+# A ticking screen line shows the system is not frozen; the kernel log gets one line a minute
+n=0
+while true; do
+	line="alive: uptime $(cut -d' ' -f1 /proc/uptime)s"
+	echo "$line" > /dev/tty0 2>/dev/null
+	[ $((n % 12)) -eq 0 ] && echo "$KIT_IMAGE: $line" > /dev/kmsg
+	n=$((n + 1))
+	# `wait` returns on a signal, so the traps run at once
+	sleep 5 &
+	wait $!
+done

@@ -1,0 +1,60 @@
+# Generic first-light and rescue initramfs per architecture, used by the porting kit (nervesinator).
+# Every push builds them; a tag test-images-v* publishes them as release assets with SHA256SUMS.
+name: test-images
+
+on:
+  push:
+    branches: [main]
+    tags: ["test-images-v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [firstlight, rescue]
+        arch: [aarch64, armv7]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Host packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential bc bison flex cpio unzip rsync file wget libncurses-dev
+      - uses: actions/cache@v4
+        with:
+          path: dl
+          key: dl-${{ matrix.image }}-${{ matrix.arch }}-${{ hashFiles('buildroot-external/configs/*_defconfig') }}
+          restore-keys: dl-
+      - name: Build
+        env:
+          BR2_DL_DIR: ${{ github.workspace }}/dl
+        run: |
+          make -C buildroot BR2_EXTERNAL=../buildroot-external O=$PWD/out ${{ matrix.image }}_${{ matrix.arch }}_defconfig
+          make -C buildroot O=$PWD/out -j$(nproc)
+          cp out/images/rootfs.cpio.gz ${{ matrix.image }}-${{ matrix.arch }}.cpio.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.image }}-${{ matrix.arch }}
+          path: ${{ matrix.image }}-${{ matrix.arch }}.cpio.gz
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/test-images-v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - name: SHA256SUMS
+        run: cd assets && sha256sum *.cpio.gz > SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: assets/*

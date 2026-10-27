@@ -1,0 +1,10 @@
+# Applets the kit's test images use (kit-common.sh, usb-gadget.sh, the shells)
+CONFIG_TELNETD=y
+CONFIG_FEATURE_TELNETD_STANDALONE=y
+CONFIG_UDHCPD=y
+CONFIG_WATCHDOG=y
+CONFIG_SETSID=y
+CONFIG_IP=y
+CONFIG_DEVMEM=y
+CONFIG_LSUSB=y
+CONFIG_LSPCI=y

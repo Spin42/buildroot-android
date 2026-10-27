@@ -1,0 +1,28 @@
+#!/bin/sh
+# /init of the rescue initramfs: a RAM-only system with USB networking (ssh root@10.0.42.1), an
+# ACM console, and the same key-free way back to the flash mode as first light.
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+. /usr/lib/kit-common.sh
+
+kit_mount
+kit_signals
+kit_watchdog
+hostname rescue
+kit_banner | while IFS= read -r l; do kit_say "$l"; done
+# The previous kernel's last words (warm reboot after a crash)
+ls /sys/fs/pstore/* >/dev/null 2>&1 && kit_say "pstore has logs from the previous boot: /sys/fs/pstore"
+kit_start_usb
+
+# A shell on the screen console too
+(
+	while true; do
+		setsid sh -c 'exec sh </dev/tty0 >/dev/tty0 2>&1' 2>/dev/null || sh </dev/tty0 >/dev/tty0 2>&1
+		sleep 1
+	done
+) &
+
+# PID 1 never exits; `wait` returns on a signal, so the traps run at once
+while true; do
+	sleep 60 &
+	wait $!
+done
