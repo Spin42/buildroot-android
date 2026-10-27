@@ -3,7 +3,7 @@ From: Marc Lainez <marc.lainez@gmail.com>
 Date: Wed, 14 Oct 2026 00:46:12 +0200
 Subject: [PATCH] board: qualcomm: add Fairphone 2
 
-U-Boot is chainloaded by the stock LK or lk2nd from the boot partition and takes over the display, eMMC, keys and USB they leave set up. Like lk2nd, it gives the OS device tree the compatible of the panel fitted, which the generic Fairphone 2 panel node lacks.
+U-Boot is chainloaded by the stock LK from the boot partition and takes over the display, eMMC, keys and USB it leaves set up. Like lk2nd, it gives the OS device tree the compatible of the panel fitted, which the generic Fairphone 2 panel node lacks.
 
 Standard boot tries the microSD card, then the eMMC; as USB host (ID grounded, or usb_mode=host) it first tries USB storage and the network. The environment is saved at the end of the boot partition, after the U-Boot image.
 
@@ -113,7 +113,7 @@ index 00000000..1ac28754
 +CONFIG_DEBUG_UART_CLOCK=0
 diff --git a/board/qualcomm/fairphone-fp2.env b/board/qualcomm/fairphone-fp2.env
 new file mode 100644
-index 00000000..420cae39
+index 00000000..cbb9dde5
 --- /dev/null
 +++ b/board/qualcomm/fairphone-fp2.env
 @@ -0,0 +1,146 @@
@@ -493,7 +493,7 @@ index 00000000..db7cb00c
 +# CONFIG_TOOLS_MKEFICAPSULE is not set
 diff --git a/doc/board/qualcomm/fairphone-fp2.rst b/doc/board/qualcomm/fairphone-fp2.rst
 new file mode 100644
-index 00000000..dbd8dd31
+index 00000000..0e2e444b
 --- /dev/null
 +++ b/doc/board/qualcomm/fairphone-fp2.rst
 @@ -0,0 +1,120 @@
@@ -506,9 +506,9 @@ index 00000000..dbd8dd31
 +The Fairphone 2 is a smartphone based on the 32-bit Qualcomm MSM8974AB
 +(Snapdragon 801) SoC, with 2 GiB of RAM and 32 GiB of eMMC.
 +
-+U-Boot runs as a second stage bootloader: the stock LK bootloader (or lk2nd)
-+loads it from the ``boot`` partition as an Android boot image, like a 32-bit
-+Linux kernel. It takes the place lk2nd usually has on this phone.
++U-Boot runs as a second stage bootloader, in the place lk2nd usually has on
++this phone: the stock LK bootloader loads it from the ``boot`` partition as an
++Android boot image, like a 32-bit Linux kernel.
 +
 +U-Boot reuses what LK leaves running: the display, the eMMC and the PMICs.
 +It drives the eMMC, the PM8941 keys, the display console (through the MDP
@@ -546,7 +546,7 @@ index 00000000..dbd8dd31
 +------------
 +
 +The bootloader has to be unlocked. Try U-Boot from RAM first, from the
-+fastboot mode of LK or lk2nd::
++fastboot mode of LK::
 +
 +  $ fastboot boot u-boot-fp2.img
 +
@@ -609,7 +609,7 @@ index 00000000..dbd8dd31
 +  ``userdata`` partition, never the whole eMMC with the bootloaders,
 +* USB fastboot,
 +* USB serial console (``minicom -D /dev/ttyACM0`` on the host),
-+* Reboot to bootloader fastboot (LK or lk2nd), Reboot and Power off.
++* Reboot to bootloader fastboot (LK), Reboot and Power off.
 +
 +Any key, Power included, leaves the USB disk and fastboot modes and returns
 +to the menu. Ejecting the disk on the host also ends the USB disk mode.

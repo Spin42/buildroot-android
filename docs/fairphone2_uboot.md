@@ -1,7 +1,7 @@
 # Fairphone 2 with U-Boot
 
-U-Boot replaces lk2nd as the second stage bootloader of the Fairphone 2 (MSM8974AB, 32-bit). The stock LK (or lk2nd while
-testing) loads it from the `boot` partition as an Android boot image, and U-Boot boots Linux from the `userdata` partition.
+U-Boot replaces lk2nd as the second stage bootloader of the Fairphone 2 (MSM8974AB, 32-bit). The stock LK loads it from
+the `boot` partition as an Android boot image, and U-Boot boots Linux from the `userdata` partition.
 U-Boot is built by Buildroot together with the system, from upstream U-Boot plus the patches in
 `buildroot-external/board/fairphone2/patches/uboot` (the Fairphone 3 series they build on, then the MSM8974 support and the
 Fairphone 2 board).
@@ -71,7 +71,7 @@ Outputs in `output/images`:
 
 ## Install
 
-From the fastboot mode of the bootloader (stock LK or lk2nd), always with the serial of the phone:
+From the fastboot mode of the stock LK, always with the serial of the phone:
 
 ```
 fastboot -s <serial> flash userdata output/images/sdcard.img           # or userdata-rauc.img
