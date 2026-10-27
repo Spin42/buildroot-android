@@ -3,7 +3,7 @@ From: Marc Lainez <marc.lainez@gmail.com>
 Date: Wed, 14 Oct 2026 00:46:12 +0200
 Subject: [PATCH] board: qualcomm: add Fairphone 2
 
-U-Boot is chainloaded by the stock LK from the boot partition and takes over the display, eMMC, keys and USB it leaves set up. Like lk2nd, it gives the OS device tree the compatible of the panel fitted, which the generic Fairphone 2 panel node lacks.
+U-Boot is chainloaded by the stock LK from the boot partition and takes over the display, eMMC, keys and USB it leaves set up. Like lk2nd, it gives the OS device tree the compatible of the panel fitted, which the generic Fairphone 2 panel node lacks, and WLAN and Bluetooth addresses derived from the serial number, without which Linux cannot bring the WCNSS interfaces up.
 
 Standard boot tries the microSD card, then the eMMC; as USB host (ID grounded, or usb_mode=host) it first tries USB storage and the network. The environment is saved at the end of the boot partition, after the U-Boot image.
 
@@ -12,13 +12,13 @@ Assisted-by: Claude:claude-opus-5-5
  .../qcom-msm8974pro-fairphone-fp2-u-boot.dtsi |  42 +++++
  board/qualcomm/MAINTAINERS                    |  11 ++
  board/qualcomm/debug-msm8974.config           |   8 +
- board/qualcomm/fairphone-fp2.env              | 146 ++++++++++++++++++
+ board/qualcomm/fairphone-fp2.env              | 146 ++++++++++++++++
  board/qualcomm/fairphone-fp2/Makefile         |   3 +
- board/qualcomm/fairphone-fp2/fairphone-fp2.c  | 110 +++++++++++++
- configs/fairphone-fp2_defconfig               |  97 ++++++++++++
- doc/board/qualcomm/fairphone-fp2.rst          | 120 ++++++++++++++
+ board/qualcomm/fairphone-fp2/fairphone-fp2.c  | 165 ++++++++++++++++++
+ configs/fairphone-fp2_defconfig               |  97 ++++++++++
+ doc/board/qualcomm/fairphone-fp2.rst          | 120 +++++++++++++
  doc/board/qualcomm/index.rst                  |   1 +
- 9 files changed, 538 insertions(+)
+ 9 files changed, 593 insertions(+)
  create mode 100644 arch/arm/dts/qcom-msm8974pro-fairphone-fp2-u-boot.dtsi
  create mode 100644 board/qualcomm/debug-msm8974.config
  create mode 100644 board/qualcomm/fairphone-fp2.env
@@ -274,10 +274,10 @@ index 00000000..d41fe478
 +obj-y := fairphone-fp2.o
 diff --git a/board/qualcomm/fairphone-fp2/fairphone-fp2.c b/board/qualcomm/fairphone-fp2/fairphone-fp2.c
 new file mode 100644
-index 00000000..f87ead1e
+index 00000000..233c406e
 --- /dev/null
 +++ b/board/qualcomm/fairphone-fp2/fairphone-fp2.c
-@@ -0,0 +1,110 @@
+@@ -0,0 +1,165 @@
 +// SPDX-License-Identifier: GPL-2.0+
 +/*
 + * Fairphone 2
@@ -294,6 +294,7 @@ index 00000000..f87ead1e
 +#include <linux/bitops.h>
 +#include <linux/libfdt.h>
 +#include <power/pmic.h>
++#include <vsprintf.h>
 +
 +/* MMCC: power domain and bus clock of the display subsystem */
 +#define MMCC_MDSS_GDSCR		0xfd8c2304
@@ -365,7 +366,7 @@ index 00000000..f87ead1e
 + * of the Linux device tree. Like lk2nd, give the OS the compatible of the
 + * panel LK set up, which the mode of the display controller tells apart.
 + */
-+int ft_board_setup(void *blob, struct bd_info *bd)
++static int fp2_fixup_panel(void *blob)
 +{
 +	const char *panel;
 +	u32 top;
@@ -387,6 +388,60 @@ index 00000000..f87ead1e
 +	log_info("Panel: %s\n", panel);
 +
 +	return fdt_setprop_string(blob, node, "compatible", panel);
++}
++
++/*
++ * The WCNSS has no address of its own: the bootloader gives the WLAN and
++ * Bluetooth nodes one, without which Linux cannot bring wlan0 up. Like
++ * lk2nd, derive stable, locally administered addresses from the serial
++ * number (02:00:<serial> for WLAN, 02:01:<serial> for Bluetooth, whose
++ * property is least significant byte first).
++ */
++static int fp2_fixup_wcnss(void *blob)
++{
++	const char *serial = env_get("serial#");
++	u8 mac[6], bd[6];
++	u32 sn;
++	int node, ret, i;
++
++	if (!serial)
++		return 0;
++
++	sn = hextoul(serial, NULL);
++	mac[0] = 0x02;
++	mac[1] = 0x00;
++	mac[2] = sn >> 24;
++	mac[3] = sn >> 16;
++	mac[4] = sn >> 8;
++	mac[5] = sn;
++
++	node = fdt_node_offset_by_compatible(blob, -1, "qcom,wcnss-wlan");
++	if (node >= 0) {
++		ret = fdt_setprop(blob, node, "local-mac-address", mac, sizeof(mac));
++		if (ret)
++			return ret;
++	}
++
++	mac[1] = 0x01;
++	for (i = 0; i < sizeof(bd); i++)
++		bd[i] = mac[sizeof(mac) - 1 - i];
++
++	node = fdt_node_offset_by_compatible(blob, -1, "qcom,wcnss-bt");
++	if (node >= 0)
++		return fdt_setprop(blob, node, "local-bd-address", bd, sizeof(bd));
++
++	return 0;
++}
++
++int ft_board_setup(void *blob, struct bd_info *bd)
++{
++	int ret;
++
++	ret = fp2_fixup_wcnss(blob);
++	if (ret)
++		return ret;
++
++	return fp2_fixup_panel(blob);
 +}
 diff --git a/configs/fairphone-fp2_defconfig b/configs/fairphone-fp2_defconfig
 new file mode 100644
